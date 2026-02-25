@@ -236,7 +236,7 @@ IMPORTANT:
         Ok(SourceProfile::default())
     }
 
-    /// Update profile based on user query (learning loop)
+    /// Update profile based on user query (learning loop).
     pub async fn update_profile_from_query(
         &self,
         query: &str,
@@ -287,5 +287,91 @@ Current Profile:
         } else {
             Ok(None)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use uuid::Uuid;
+
+    fn make_chunk(doc_id: &str, file_path: &str, content: &str) -> Chunk {
+        Chunk {
+            id: Uuid::new_v4(),
+            source_id: "test-source".into(),
+            document_id: doc_id.into(),
+            content: content.into(),
+            embedding: None,
+            metadata: serde_json::json!({"file_path": file_path}),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_generate_profile_no_llm_with_readme() {
+        let mgr = ProfileManager::new(None);
+        let chunks = vec![
+            make_chunk("src/main.rs", "src/main.rs", "fn main() { println!(\"hello\"); }"),
+            make_chunk("README.md", "README.md", "# My Project\nThis is a great project.\nIt does things."),
+        ];
+        let profile = mgr.generate_initial_profile(chunks).await.unwrap();
+        assert!(profile.profile_name.contains("README.md"));
+        assert!(profile.description.contains("My Project"));
+    }
+
+    #[tokio::test]
+    async fn test_generate_profile_no_llm_no_readme() {
+        let mgr = ProfileManager::new(None);
+        let chunks = vec![
+            make_chunk("src/lib.rs", "src/lib.rs", "pub fn hello() {}\npub fn world() {}"),
+        ];
+        let profile = mgr.generate_initial_profile(chunks).await.unwrap();
+        assert!(profile.profile_name.contains("src/lib.rs"));
+        assert!(profile.description.contains("pub fn hello"));
+    }
+
+    #[tokio::test]
+    async fn test_generate_profile_no_llm_empty_chunks() {
+        let mgr = ProfileManager::new(None);
+        let profile = mgr.generate_initial_profile(vec![]).await.unwrap();
+        assert_eq!(profile.profile_name, "");
+        assert_eq!(profile.description, "");
+    }
+
+    #[tokio::test]
+    async fn test_generate_profile_groups_chunks_by_file() {
+        let mgr = ProfileManager::new(None);
+        let chunks = vec![
+            make_chunk("src/main.rs", "src/main.rs", "fn main() {}"),
+            make_chunk("src/main.rs", "src/main.rs", "fn helper() {}"),
+            make_chunk("README.md", "README.md", "# Title\nBody text"),
+        ];
+        let profile = mgr.generate_initial_profile(chunks).await.unwrap();
+        // README should be preferred
+        assert!(profile.profile_name.contains("README.md"));
+    }
+
+    #[tokio::test]
+    async fn test_generate_profile_readme_sorting() {
+        let mgr = ProfileManager::new(None);
+        let chunks = vec![
+            make_chunk("z_file.rs", "z_file.rs", "code"),
+            make_chunk("a_file.rs", "a_file.rs", "code"),
+            make_chunk("README.md", "README.md", "# Project\nDescription line 1"),
+        ];
+        let profile = mgr.generate_initial_profile(chunks).await.unwrap();
+        // README should be first (sorted before others)
+        assert!(profile.profile_name.contains("README.md"));
+    }
+
+    #[tokio::test]
+    async fn test_update_profile_no_llm() {
+        let mgr = ProfileManager::new(None);
+        let current = SourceProfile::new("Test".into(), "A project".into());
+        let result = mgr
+            .update_profile_from_query("tell me about the auth system", &current)
+            .await
+            .unwrap();
+        // Without LLM, should always return None
+        assert!(result.is_none());
     }
 }

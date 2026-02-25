@@ -1,24 +1,21 @@
-# Linggen Release Process
+# Linggen Memory Release Process
 
-This document describes how to create and publish new releases of Linggen.
+This document describes how to create and publish new releases of Linggen Memory.
 
 ## Overview
 
-Linggen uses a single repository release strategy:
+Linggen Memory releases to its own GitHub repository (`linggen/linggen-memory`).
 
-- **Main repository** (`linggen`): Source code, development, and published releases.
-
-The CLI handles updates by checking the `linggen` repository for new versions and automatically downloading and installing updates.
+The single binary `ling-mem` includes the HTTP API server, MCP endpoint, and embedded Web UI.
 
 ## Version Management
 
 Version numbers follow semantic versioning (MAJOR.MINOR.PATCH) and must be kept in sync across:
 
-1. `linggen-cli/Cargo.toml` - `version` field
-2. `frontend/package.json` - `version` field
-3. `backend/Cargo.toml` - workspace version
+1. `backend/Cargo.toml` — workspace version
+2. `frontend/package.json` — version field
 
-**Current version:** `0.6.1`
+Use `scripts/sync-version.sh` to update both at once.
 
 ## Prerequisites
 
@@ -32,14 +29,13 @@ Ensure you have the `gh` CLI installed and authenticated.
 1. **Update version numbers** using the sync script:
 
    ```bash
-   ./scripts/sync-version.sh v0.7.0
+   ./scripts/sync-version.sh 0.7.0
    ```
 
 2. **Test locally**:
 
    ```bash
-   # Build everything
-   ./scripts/build.sh v0.7.0
+   ./scripts/build.sh v0.7.0 --skip-linux
    ```
 
 3. **Commit changes**:
@@ -70,15 +66,20 @@ Use `--draft` if you want to inspect the release before publishing:
 ./scripts/release.sh v0.7.0 --draft
 ```
 
+Use `--skip-linux` to skip multi-arch Linux builds (requires Docker):
+
+```bash
+./scripts/release.sh v0.7.0 --skip-linux
+```
+
 ### Step 4: Verify Release
 
-1. Check `linggen` repository for new release
+1. Check `linggen/linggen-memory` repository for new release
 2. Verify these files are present:
 
-   - `linggen-cli-macos-aarch64.tar.gz` (macOS CLI)
-   - `linggen-server-macos.tar.gz` (macOS Server)
-   - `linggen-cli-linux-x86_64.tar.gz` (Linux CLI)
-   - `linggen-server-linux-x86_64.tar.gz` (Linux Server)
+   - `ling-mem-macos-aarch64.tar.gz` (macOS Apple Silicon)
+   - `ling-mem-linux-x86_64.tar.gz` (Linux x86_64)
+   - `ling-mem-linux-aarch64.tar.gz` (Linux ARM64)
    - `manifest.json` (Update manifest)
 
 ## Script Architecture
@@ -86,9 +87,33 @@ Use `--draft` if you want to inspect the release before publishing:
 - **`scripts/lib-common.sh`**: Shared helpers for platform detection and signing.
 - **`scripts/build.sh`**: Master build orchestrator.
 - **`scripts/build-mac.sh`**: macOS-specific build logic.
-- **`scripts/build-linux.sh`**: Linux-specific build logic (Docker).
+- **`scripts/build-linux.sh`**: Linux multi-arch build via Docker Buildx.
 - **`scripts/release.sh`**: Orchestrates packaging and GitHub publishing.
 - **`scripts/sync-version.sh`**: Ensures version consistency across all files.
+- **`scripts/install-cli.sh`**: End-user installer (`curl | bash`).
+
+## Release Artifacts
+
+Each release produces a single `ling-mem` binary per platform:
+
+| Artifact | Platform |
+|---|---|
+| `ling-mem-macos-aarch64.tar.gz` | macOS Apple Silicon |
+| `ling-mem-macos-x86_64.tar.gz` | macOS Intel |
+| `ling-mem-linux-x86_64.tar.gz` | Linux x86_64 |
+| `ling-mem-linux-aarch64.tar.gz` | Linux ARM64 |
+
+## End-User Install
+
+```bash
+curl -fsSL https://linggen.dev/install-mem.sh | bash
+```
+
+Or install a specific version:
+
+```bash
+curl -fsSL https://linggen.dev/install-mem.sh | bash -s -- --version v0.7.0
+```
 
 ## Security Notes
 

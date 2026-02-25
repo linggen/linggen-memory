@@ -1,3 +1,3 @@
 # Claude Code Instructions
 
-Please read `.claude/skills/linggen/SKILL.md` on load to understand the Linggen project structure and context management system.
+Please read `.claude/skills/memory/SKILL.md` on load to understand the Linggen Memory skill and context management system.

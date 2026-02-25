@@ -1,10 +1,10 @@
-## Linggen Architect – Short Product Definition
+## Linggen Memory – Short Product Definition
 
 ### 1. Product vision
 
-- **Vision**: Become the **system-definition layer above LLMs** – the place where developers and architects define how a system should work, so tools like Cursor or Claude can reliably implement and evolve it.
-- **Role in the toolchain**: IDE/LLM (Cursor, Claude, Copilot) are where you **write and edit code**. Linggen is where you **understand the existing system and specify the next version** in a structured, machine-consumable way.
-- **Form factor**: A **local-first, code-aware architecture IDE** with Obsidian-like usability and exportable specs for LLMs.
+- **Vision**: Become the **persistent memory layer for AI coding tools** – the service that ensures LLMs remember your project's architecture, decisions, and constraints across sessions and tools.
+- **Role in the toolchain**: IDE/LLM (Cursor, Claude, Copilot) are where you **write and edit code**. Linggen Memory is where you **index, search, and retrieve project knowledge** so AI tools have the right context at the right time.
+- **Form factor**: A **local-first, standalone memory service** (`ling-mem`) with semantic search, RAG, code indexing, and MCP/skill integration for any AI agent.
 
 ---
 
@@ -17,80 +17,80 @@
 - **Architects / tech leads / system designers**
   - "I want a single workspace to design, document, and enforce architecture, and then drive LLMs from that spec."
 
-Linggen should:
+Linggen Memory should:
 
-- Shorten **onboarding time**.
-- Reduce **risk of unintended side-effects** from changes.
-- Provide a **single, living specification** that connects docs, structure, and code.
+- Shorten **onboarding time** by providing instant project context.
+- Reduce **risk of unintended side-effects** by surfacing constraints and decisions.
+- Provide a **persistent, searchable knowledge base** that connects docs, structure, and code.
 
 ---
 
-### 3. Core concept – System definition layer for LLMs
+### 3. Core concept – Persistent memory layer for AI
 
-- Linggen maintains a **code-backed model of the system**:
+- Linggen Memory maintains a **searchable knowledge base** of your system:
+  - Indexed code with semantic embeddings (LanceDB).
   - File/module dependency graph.
-  - Components/services and their responsibilities.
-  - Interfaces (endpoints, events, data models) and key constraints.
-- On top of this, users create **human-readable design docs** (markdown) and **lightweight structured specs** (YAML/JSON-like definitions).
-- Linggen can then **export LLM-ready briefs**, e.g.:
-  - "Implement `UserService` according to this spec and these dependencies."
-  - "Apply this schema change through all layers described in the spec."
+  - Stored memories: decisions, constraints, architectural notes.
+- AI tools retrieve context automatically via **MCP server** or **skill scripts**.
+- Context is injected at the right moment — when AI touches relevant code.
 
-LLMs remain the code generator; Linggen becomes the **source of truth for what should exist and how it should fit together**.
+LLMs remain the code generator; Linggen Memory becomes the **persistent context source** that ensures AI understands your system across sessions.
 
 ---
 
-### 4. Current product (v1) – File dependency graph
+### 4. Current product (v1) – Memory service + code indexing
 
-**Goal**: Give developers a fast, accurate way to see **how files and modules depend on each other**, and use that as the foundation for system specs.
+**Goal**: Give developers and AI tools a fast, persistent way to **index, search, and retrieve project knowledge**.
 
-- **Analysis**
+- **Semantic Search & RAG**
 
-  - Use Tree-sitter to build a **file-level dependency graph** for supported languages (Rust today; TS/JS, Go, Python next).
-  - Nodes: files/modules with metadata (`id`, `label`, `language`, `folder`).
-  - Edges: static "uses/imports" relationships (`import`, `use`, `mod`, etc.).
+  - Index codebases and documentation into vector embeddings (LanceDB).
+  - Hybrid search: semantic (vector) + keyword (BM25) for precision.
+  - Code-aware chunking that keeps functions and structures together.
+
+- **Dependency Graph**
+
+  - Tree-sitter-based file dependency graph for supported languages (Rust today; TS/JS, Go, Python next).
   - Graphs are cached per source and can be rebuilt on demand.
 
-- **API & UI**
-  - Backend endpoints to get **graph status**, **graph data**, and **trigger rebuilds**.
-  - Frontend `GraphView` renders an Obsidian-like, zoomable dependency graph with:
-    - Search by file name.
-    - Filtering by folder.
-    - Hover/selection to show local neighborhoods and connections.
+- **Interfaces**
+  - `ling-mem serve` — HTTP API + MCP server + web dashboard.
+  - AI skill scripts — Shell-based integration for Claude Code, Codex, Linggen Agent.
+  - VS Code extension — "Chat with your codebase" via the memory service.
 
-This gives users a **live system map** they can trust before any higher-level spec or design work.
+This gives AI tools a **persistent, searchable knowledge base** they can query for context.
 
 ---
 
-### 5. Next steps (v2) – Design workspace & specs
+### 5. Next steps (v2) – Enhanced memory & cross-project context
 
-- **Design notes (markdown)**
+- **Structured memories**
 
-  - Built-in editor for system / component design docs.
-  - Notes can link to graph nodes (files, folders, components) and vice versa.
+  - Store decisions, constraints, and architectural notes as first-class objects.
+  - Auto-surface relevant memories when AI touches related code.
 
-- **Lightweight structured specs**
+- **Cross-project memory**
 
-  - Simple schemas for components, interfaces, data models, and constraints.
-  - Stored alongside notes and linked to real code via the graph.
+  - Maintain separate project memories per workspace.
+  - Reuse personal patterns and preferences across projects.
 
-- **LLM exports**
-  - Generate **prompt bundles / briefs** for specific components or views:
-    - Include structured spec + selected code context + relevant design notes.
-  - Designed to be pasted into Cursor/Claude today; later, integrate via APIs.
+- **Prompt enhancement**
+  - Generate **context-enriched prompts** for specific tasks:
+    - Include relevant code chunks + stored memories + project constraints.
+  - Works with any AI tool via MCP or skill scripts.
 
 ---
 
 ### 6. Non-goals (for now)
 
-- Linggen is **not** a full UML / enterprise modeling suite.
-- Linggen is **not** a general-purpose wiki or note app.
-- Linggen does **not** replace the IDE; it **guides** IDE+LLM work by providing a shared, structured understanding of the system.
+- Linggen Memory is **not** an AI agent — it's a memory service that agents consume.
+- Linggen Memory is **not** a general-purpose wiki or note app.
+- Linggen Memory does **not** replace the IDE; it **provides context** to IDE+LLM tools so they work better.
 
 ---
 
 ### 7. Success criteria
 
-- Developers and architects **keep Linggen open** while reading, designing, or reviewing systems.
-- Teams start **from Linggen specs** when asking LLMs to implement or refactor features.
-- New engineers report that the **graph + design workspace** helped them understand a service materially faster than reading code alone.
+- AI tools **always have the right context** when working on indexed projects.
+- Teams report that **returning to old projects** feels seamless because memory persists.
+- New engineers **onboard faster** because the memory service surfaces project knowledge automatically.

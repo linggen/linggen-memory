@@ -234,16 +234,16 @@ try {
 
 ```bash
 # Test full graph
-curl "http://localhost:3030/api/sources/my-source/graph/with_status"
+curl "http://localhost:8787/api/sources/my-source/graph/with_status"
 
 # Test focused graph (1 hop from lib.rs)
-curl "http://localhost:3030/api/sources/my-source/graph/with_status?focus=src/lib.rs&hops=1"
+curl "http://localhost:8787/api/sources/my-source/graph/with_status?focus=src/lib.rs&hops=1"
 
 # Test folder filter
-curl "http://localhost:3030/api/sources/my-source/graph/with_status?folder=src/components"
+curl "http://localhost:8787/api/sources/my-source/graph/with_status?folder=src/components"
 
 # Test combined (focus + folder)
-curl "http://localhost:3030/api/sources/my-source/graph/with_status?focus=src/lib.rs&folder=src&hops=2"
+curl "http://localhost:8787/api/sources/my-source/graph/with_status?focus=src/lib.rs&folder=src&hops=2"
 ```
 
 ## Future Optimizations

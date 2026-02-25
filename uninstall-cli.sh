@@ -1,28 +1,29 @@
 #!/bin/bash
 set -e
 
-# Uninstall Linggen CLI symlink
+# Uninstall ling-mem binary
 
-CLI_NAME="linggen"
+CLI_NAME="ling-mem"
 INSTALL_DIR="/usr/local/bin"
-SYMLINK_PATH="${INSTALL_DIR}/${CLI_NAME}"
+FALLBACK_DIR="$HOME/.local/bin"
 
-# Colors
-GREEN='\033[0;32m'
-RED='\033[0;31m'
-YELLOW='\033[1;33m'
-NC='\033[0m'
+removed=false
 
-echo "🗑️  Uninstalling Linggen CLI..."
-echo ""
+for dir in "$INSTALL_DIR" "$FALLBACK_DIR"; do
+  path="${dir}/${CLI_NAME}"
+  if [ -L "$path" ] || [ -f "$path" ]; then
+    echo "Removing $path..."
+    if [ -w "$dir" ]; then
+      rm -f "$path"
+    else
+      sudo rm -f "$path"
+    fi
+    removed=true
+  fi
+done
 
-if [ ! -L "$SYMLINK_PATH" ] && [ ! -f "$SYMLINK_PATH" ]; then
-    echo -e "${YELLOW}No installation found at $SYMLINK_PATH${NC}"
-    exit 0
+if [ "$removed" = true ]; then
+  echo "ling-mem uninstalled."
+else
+  echo "No ling-mem installation found."
 fi
-
-echo "Removing $SYMLINK_PATH..."
-sudo rm -f "$SYMLINK_PATH"
-
-echo ""
-echo -e "${GREEN}✅ Linggen CLI uninstalled successfully${NC}"

@@ -1,35 +1,39 @@
-# Cursor MCP Setup for Linggen
+# Cursor MCP Setup for Linggen Memory
 
-This guide explains how to configure Cursor to use Linggen's MCP tools for code search and prompt enhancement.
+This guide explains how to configure Cursor to use Linggen Memory's MCP tools for code search and prompt enhancement.
 
 ## Quick Setup (Recommended)
 
-### 1. Start Linggen Server
+### 1. Start Linggen Memory Server
 
-The Linggen API server includes the MCP endpoint. No separate server needed!
+The `ling-mem` server includes the MCP endpoint. No separate server needed!
 
 ```bash
+# If installed via install script
+ling-mem serve
+
+# Or run from source
 cd backend
 cargo run -p api --release
 ```
 
 This starts:
 
-- **API server** on `http://localhost:7000/api/*`
-- **MCP endpoint** on `http://localhost:7000/mcp/*`
-- **Frontend** (if built) on `http://localhost:7000/`
+- **API server** on `http://localhost:8787/api/*`
+- **MCP endpoint** on `http://localhost:8787/mcp/*`
+- **Frontend** (if built) on `http://localhost:8787/`
 
 ### 2. Global Configuration
 
-Add Linggen to your global Cursor MCP configuration so it's available in all projects.
+Add Linggen Memory to your global Cursor MCP configuration so it's available in all projects.
 
 Create or edit `~/.cursor/mcp.json`:
 
 ```json
 {
   "mcpServers": {
-    "linggen": {
-      "url": "http://localhost:7000/mcp/sse"
+    "linggen-memory": {
+      "url": "http://localhost:8787/mcp/sse"
     }
   }
 }
@@ -43,18 +47,18 @@ After saving the configuration, restart Cursor to load the new MCP server.
 
 1. Open Cursor Settings (`Cmd+Shift+J` on Mac, `Ctrl+Shift+J` on Windows/Linux)
 2. Go to **Features > Model Context Protocol**
-3. You should see "linggen" listed as an available server
+3. You should see "linggen-memory" listed as an available server
 4. The tools should appear under "Available Tools" in chat
 
 ## Team/LAN Setup
 
-For teams sharing a central Linggen server:
+For teams sharing a central Linggen Memory server:
 
 ```json
 {
   "mcpServers": {
-    "linggen": {
-      "url": "http://linggen.your-company.internal:7000/mcp/sse"
+    "linggen-memory": {
+      "url": "http://linggen.your-company.internal:8787/mcp/sse"
     }
   }
 }
@@ -66,13 +70,13 @@ Replace `linggen.your-company.internal` with your actual server hostname or IP.
 
 ## Project-Specific Configuration
 
-If you want Linggen only for specific projects, create `.cursor/mcp.json` in the project root:
+If you want Linggen Memory only for specific projects, create `.cursor/mcp.json` in the project root:
 
 ```json
 {
   "mcpServers": {
-    "linggen": {
-      "url": "http://localhost:7000/mcp/sse"
+    "linggen-memory": {
+      "url": "http://localhost:8787/mcp/sse"
     }
   }
 }
@@ -89,7 +93,7 @@ Once connected, these tools are available in Cursor chat:
 | `search_codebase` | Search for relevant code snippets | "Search for authentication code"         |
 | `enhance_prompt`  | Enhance your prompt with context  | "Enhance: How does the user login work?" |
 | `list_sources`    | List indexed codebases            | "What sources are indexed?"              |
-| `get_status`      | Check Linggen server status       | "What's the Linggen status?"             |
+| `get_status`      | Check server status               | "What's the server status?"              |
 
 ## Access Control (Optional)
 
@@ -97,7 +101,7 @@ For additional security on your LAN, set an access token:
 
 ```bash
 export LINGGEN_ACCESS_TOKEN="your-secret-token"
-cargo run -p api --release
+ling-mem serve
 ```
 
 Then add the token to your Cursor config:
@@ -105,8 +109,8 @@ Then add the token to your Cursor config:
 ```json
 {
   "mcpServers": {
-    "linggen": {
-      "url": "http://linggen.your-company.internal:7000/mcp/sse",
+    "linggen-memory": {
+      "url": "http://linggen.your-company.internal:8787/mcp/sse",
       "headers": {
         "X-Linggen-Token": "your-secret-token"
       }
@@ -119,10 +123,10 @@ Then add the token to your Cursor config:
 
 ### Server not appearing in Cursor
 
-1. Check that the Linggen server is running:
+1. Check that the server is running:
 
    ```bash
-   curl http://localhost:7000/mcp/health
+   curl http://localhost:8787/mcp/health
    ```
 
    Should return JSON with status "ok".
@@ -133,10 +137,10 @@ Then add the token to your Cursor config:
 
 ### Tools not working
 
-1. Check that the Linggen API is ready:
+1. Check that the API is ready:
 
    ```bash
-   curl http://localhost:7000/api/status
+   curl http://localhost:8787/api/status
    ```
 
 2. Check server logs for errors.
@@ -159,13 +163,13 @@ In Cursor:
 │  └─────────┘              │                                     │
 │                           ▼                                     │
 │                    ┌─────────────────────────────────────────┐  │
-│                    │           Linggen API Server            │  │
+│                    │       Linggen Memory Server (ling-mem)  │  │
 │                    │  /api/*  - REST API                     │  │
 │                    │  /mcp/*  - MCP SSE endpoint             │  │
 │                    │  /       - Frontend (if built)          │  │
 │                    └─────────────────────────────────────────┘  │
-│                              localhost:7000                     │
+│                              localhost:8787                     │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-For team setups, the Linggen server runs on a shared machine, and each developer's Cursor connects via the network. **No local installation needed!**
+For team setups, the server runs on a shared machine, and each developer's Cursor connects via the network. **No local installation needed!**

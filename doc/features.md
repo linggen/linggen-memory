@@ -1,4 +1,4 @@
-# Linggen Features
+# Linggen Memory Features
 
 ## 1. Universal Ingestion Engine
 - [ ] **Git Integration**: Index full repositories, tracking commits and branches.
@@ -11,8 +11,10 @@
 - **Long-term Memory**: Store TBs of history on disk using LanceDB without RAM bloat.
 
 ## 3. Interfaces
-- **Desktop Dashboard**: Manage sources, view stats, manual query.
-- **Chat API**: Standard API for chat apps to query "context".
+- **Web Dashboard**: Manage sources, view stats, manual query (served by `ling-mem serve`).
+- **MCP Server**: Standard MCP protocol for Cursor, Zed, Claude Desktop integration.
+- **AI Skill**: Shell scripts + SKILL.md for Claude Code, Codex, Linggen Agent.
+- **REST API**: HTTP endpoints for programmatic access.
 - **IDE Bridge**: VS Code extension to "Chat with your codebase".
 
 ## 4. Privacy & Performance

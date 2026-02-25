@@ -264,3 +264,57 @@ impl PromptEnhancer {
         Ok(enhanced)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_prompt_strategy_serde() {
+        let strategies = [
+            (PromptStrategy::FullCode, "\"full_code\""),
+            (PromptStrategy::ReferenceOnly, "\"reference_only\""),
+            (PromptStrategy::Architectural, "\"architectural\""),
+        ];
+        for (strategy, expected) in &strategies {
+            let json = serde_json::to_string(strategy).unwrap();
+            assert_eq!(&json, expected);
+            let parsed: PromptStrategy = serde_json::from_str(expected).unwrap();
+            assert_eq!(&parsed, strategy);
+        }
+    }
+
+    #[test]
+    fn test_enhanced_prompt_serde() {
+        let ep = EnhancedPrompt {
+            original_query: "What is this?".into(),
+            enhanced_prompt: "Enhanced...".into(),
+            intent: Intent::AskQuestion,
+            context_chunks: vec!["chunk1".into()],
+            context_metadata: vec![ContextChunkMeta {
+                source_id: "s1".into(),
+                document_id: "d1".into(),
+                file_path: "src/main.rs".into(),
+            }],
+            preferences_applied: true,
+        };
+        let json = serde_json::to_string(&ep).unwrap();
+        let parsed: EnhancedPrompt = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.original_query, "What is this?");
+        assert!(parsed.preferences_applied);
+        assert_eq!(parsed.context_metadata.len(), 1);
+    }
+
+    #[test]
+    fn test_context_chunk_meta_serde() {
+        let meta = ContextChunkMeta {
+            source_id: "src-1".into(),
+            document_id: "doc-1".into(),
+            file_path: "path/to/file.rs".into(),
+        };
+        let json = serde_json::to_string(&meta).unwrap();
+        let parsed: ContextChunkMeta = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.source_id, "src-1");
+        assert_eq!(parsed.file_path, "path/to/file.rs");
+    }
+}

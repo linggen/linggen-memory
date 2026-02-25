@@ -1,4 +1,4 @@
-# Dockerfile for Headless Linux builds (CLI and Server with embedded Web UI)
+# Dockerfile for Linux builds of ling-mem (with embedded Web UI)
 # This Dockerfile is designed to be used with docker buildx
 
 # Stage 1: Build the backend and frontend
@@ -54,59 +54,38 @@ RUN mkdir -p backend/api/src && echo "fn main() {}" > backend/api/src/main.rs &&
     mkdir -p backend/mcp-server/src && echo "fn main() {}" > backend/mcp-server/src/main.rs
 
 WORKDIR /app/backend
-RUN cargo build --release -p api
+RUN cargo build --release --bin ling-mem
 
-# 2. Pre-build CLI dependencies for caching
-WORKDIR /app
-COPY linggen-cli/Cargo.toml linggen-cli/Cargo.lock linggen-cli/
-RUN mkdir -p linggen-cli/src && echo "fn main() {}" > linggen-cli/src/main.rs
-WORKDIR /app/linggen-cli
-RUN cargo build --release
-
-# 3. Now copy the whole project
+# 2. Now copy the whole project
 WORKDIR /app
 COPY . .
 
-# 4. Build the frontend assets (MUST happen before server build for embedding)
+# 3. Build the frontend assets (MUST happen before server build for embedding)
 WORKDIR /app/frontend
 # Remove lockfile to avoid architecture mismatches during multi-arch builds
 RUN rm -f package-lock.json && npm install
-RUN npm run build && [ "$(ls -A dist)" ] || (echo "❌ Error: Frontend build produced no assets" && exit 1)
+RUN npm run build && [ "$(ls -A dist)" ] || (echo "Error: Frontend build produced no assets" && exit 1)
 
-# 5. Build the real binaries
+# 4. Build the real binary
 # Invalidate cache for final builds if version changes
 ARG BUILD_VERSION
 ENV LINGGEN_BUILD_VERSION=$BUILD_VERSION
 
-# Build the real backend binary (with embedded UI)
 WORKDIR /app/backend
-RUN find . -name "*.rs" -exec touch {} + && cargo build --release -p api
+RUN find . -name "*.rs" -exec touch {} + && cargo build --release --bin ling-mem
 
-# Build the real CLI binary
-WORKDIR /app/linggen-cli
-RUN find src -name "*.rs" -exec touch {} + && cargo build --release
-
-# 6. Prepare portable artifacts
+# 5. Prepare portable artifacts
 WORKDIR /app
 RUN mkdir -p /app/dist-temp && \
     if [ "$TARGETARCH" = "amd64" ]; then SLUG="x86_64"; else SLUG="aarch64"; fi && \
-    # CLI validation
-    CLI_BIN="/app/linggen-cli/target/release/linggen" && \
-    CLI_SIZE=$(stat -c%s "$CLI_BIN") && \
-    if [ "$CLI_SIZE" -lt 1000000 ]; then echo "❌ Error: CLI binary too small ($CLI_SIZE bytes)" && exit 1; fi && \
-    # CLI Tarball (Flat)
-    mkdir -p /app/dist-temp/cli-flat && \
-    cp "$CLI_BIN" /app/dist-temp/cli-flat/ && \
-    cd /app/dist-temp/cli-flat && tar -czf /app/dist-temp/linggen-cli-linux-${SLUG}.tar.gz linggen && \
-    # Server validation
-    SRV_BIN="/app/backend/target/release/linggen-server" && \
-    SRV_SIZE=$(stat -c%s "$SRV_BIN") && \
-    if [ "$SRV_SIZE" -lt 10000000 ]; then echo "❌ Error: Server binary too small ($SRV_SIZE bytes)" && exit 1; fi && \
-    # Server Tarball (Portable with root folder)
-    SRV_DIST_NAME="linggen-server-linux-${SLUG}" && \
-    mkdir -p /app/dist-temp/${SRV_DIST_NAME} && \
-    cp "$SRV_BIN" /app/dist-temp/${SRV_DIST_NAME}/ && \
-    cd /app/dist-temp && tar -czf /app/dist-temp/linggen-server-linux-${SLUG}.tar.gz ${SRV_DIST_NAME}
+    # Binary validation
+    BIN="/app/backend/target/release/ling-mem" && \
+    BIN_SIZE=$(stat -c%s "$BIN") && \
+    if [ "$BIN_SIZE" -lt 10000000 ]; then echo "Error: ling-mem binary too small ($BIN_SIZE bytes)" && exit 1; fi && \
+    # Tarball (flat — binary at root of archive)
+    mkdir -p /app/dist-temp/flat && \
+    cp "$BIN" /app/dist-temp/flat/ && \
+    cd /app/dist-temp/flat && tar -czf /app/dist-temp/ling-mem-linux-${SLUG}.tar.gz ling-mem
 
 # Stage 2: Artifact extraction
 FROM scratch AS artifacts

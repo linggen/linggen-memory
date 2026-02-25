@@ -14,5 +14,5 @@ I use the Linggen VS Code extension to "init my day." It calls the Linggen MCP t
 
 Linggen saves me hours. I’d love to hear how you manage complex system context!
 
-Repo: https://github.com/linggen/linggen
+Repo: https://github.com/linggen/linggen-memory
 Website: https://linggen.dev

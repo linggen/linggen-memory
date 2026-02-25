@@ -1,13 +1,13 @@
 #!/bin/bash
 set -euo pipefail
 
-# Release orchestrator script for Linggen
+# Release orchestrator script for Linggen Memory
 # Usage: ./scripts/release.sh <version> [--draft] [--skip-linux]
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 source "$ROOT_DIR/scripts/lib-common.sh"
 
-REPO="linggen/linggen"
+REPO="linggen/linggen-memory"
 VERSION=""
 KEEP_DRAFT=false
 PASS_ARGS=()
@@ -38,55 +38,43 @@ VERSION_NUM="${VERSION#v}"
 DIST_DIR="$ROOT_DIR/dist"
 
 # Step 1: Build everything
-echo "📦 Step 1: Building all artifacts..."
+echo "Step 1: Building all artifacts..."
 "$ROOT_DIR/scripts/build.sh" "$VERSION" ${PASS_ARGS[@]+"${PASS_ARGS[@]}"}
 
 SLUG=$(detect_platform)
-OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
-ARCH="$(uname -m)"
 
 # Step 2: Create GitHub Release
 echo ""
-echo "🚀 Step 2: Creating GitHub Release..."
+echo "Step 2: Creating GitHub Release..."
 if gh release view "$VERSION" --repo "$REPO" &>/dev/null; then
-  echo "✅ Release ${VERSION} already exists"
+  echo "Release ${VERSION} already exists"
 else
   gh release create "$VERSION" \
     --repo "$REPO" \
-    --title "Linggen ${VERSION}" \
-    --notes "Release ${VERSION} - Automated upload" \
+    --title "Linggen Memory ${VERSION}" \
+    --notes "Release ${VERSION}" \
     --draft
-  echo "✅ Created draft release ${VERSION}"
+  echo "Created draft release ${VERSION}"
 fi
 
 # Step 3: Upload Artifacts
 echo ""
-echo "📤 Step 3: Uploading artifacts..."
+echo "Step 3: Uploading artifacts..."
 
 delete_asset() {
   local name="$1"
   gh release delete-asset "$VERSION" "$name" --repo "$REPO" --yes 2>/dev/null || true
 }
 
-# CLI Tarball (Local Platform)
-CLI_TARBALL="$DIST_DIR/linggen-cli-${SLUG}.tar.gz"
-if [ -f "$CLI_TARBALL" ]; then
-  echo "  Uploading CLI: $(basename "$CLI_TARBALL")"
-  delete_asset "$(basename "$CLI_TARBALL")"
-  gh release upload "$VERSION" "$CLI_TARBALL" --repo "$REPO"
+# ling-mem binary tarball (local platform)
+TARBALL="$DIST_DIR/ling-mem-${SLUG}.tar.gz"
+if [ -f "$TARBALL" ]; then
+  echo "  Uploading: $(basename "$TARBALL")"
+  delete_asset "$(basename "$TARBALL")"
+  gh release upload "$VERSION" "$TARBALL" --repo "$REPO"
 fi
 
-# Server Tarball (macOS)
-if [ "$OS" = "darwin" ]; then
-  SRV_TARBALL="$DIST_DIR/linggen-server-macos.tar.gz"
-  if [ -f "$SRV_TARBALL" ]; then
-    echo "  Uploading Server: $(basename "$SRV_TARBALL")"
-    delete_asset "$(basename "$SRV_TARBALL")"
-    gh release upload "$VERSION" "$SRV_TARBALL" --repo "$REPO"
-  fi
-fi
-
-# Linux Artifacts (Multi-Arch from Docker)
+# Linux Artifacts (multi-arch from Docker)
 if [ -d "$DIST_DIR/linux" ]; then
   echo "  Uploading Linux artifacts..."
   for file in "$DIST_DIR/linux"/*; do
@@ -98,63 +86,39 @@ if [ -d "$DIST_DIR/linux" ]; then
   done
 fi
 
-# Step 4: Generate and Upload Manifests
+# Step 4: Generate and Upload Manifest
 echo ""
-echo "📄 Step 4: Generating and uploading manifests..."
+echo "Step 4: Generating and uploading manifest..."
 BASE_URL="https://github.com/${REPO}/releases/download/${VERSION}"
 
-# Start building manifest artifacts with jq
-# Initialize with current host CLI artifact
-CLI_SIG=""
-if [ -f "$DIST_DIR/linggen-cli-${SLUG}.tar.gz.sig.txt" ]; then
-  CLI_SIG=$(cat "$DIST_DIR/linggen-cli-${SLUG}.tar.gz.sig.txt")
-fi
+# Build assets array for the manifest
+ASSETS="[]"
 
-MANIFEST_JSON=$(jq -n \
-  --arg version "${VERSION_NUM}" \
-  --arg cli_url "${BASE_URL}/linggen-cli-${SLUG}.tar.gz" \
-  --arg cli_key "cli-${SLUG}" \
-  --arg cli_sig "$CLI_SIG" \
-  '{version: $version, artifacts: {($cli_key): {url: $cli_url, signature: (if $cli_sig != "" then $cli_sig else null end)}}}')
-
-# Add server-macos if it exists (macOS only)
-if [ "$OS" = "darwin" ]; then
-  SRV_TAR="linggen-server-macos.tar.gz"
-  if [ -f "$DIST_DIR/$SRV_TAR" ]; then
-    SRV_SIG=""
-    if [ -f "$DIST_DIR/${SRV_TAR}.sig.txt" ]; then
-      SRV_SIG=$(cat "$DIST_DIR/${SRV_TAR}.sig.txt")
-    fi
-
-    MANIFEST_JSON=$(echo "$MANIFEST_JSON" | jq \
-      --arg url "${BASE_URL}/$SRV_TAR" \
-      --arg key "server-macos" \
-      --arg sig "$SRV_SIG" \
-      '.artifacts[$key] = {url: $url, signature: (if $sig != "" then $sig else null end)}')
-  fi
+# Add current host artifact
+if [ -f "$DIST_DIR/ling-mem-${SLUG}.tar.gz" ]; then
+  ASSETS=$(echo "$ASSETS" | jq \
+    --arg name "ling-mem-${SLUG}" \
+    --arg url "${BASE_URL}/ling-mem-${SLUG}.tar.gz" \
+    '. + [{"name": $name, "url": $url}]')
 fi
 
 # Add Linux artifacts if they exist
 if [ -d "$DIST_DIR/linux" ]; then
   for arch in x86_64 aarch64; do
-    # CLI
-    CLI_TAR="linggen-cli-linux-${arch}.tar.gz"
-    if [ -f "$DIST_DIR/linux/$CLI_TAR" ]; then
-      MANIFEST_JSON=$(echo "$MANIFEST_JSON" | jq \
-        --arg url "${BASE_URL}/$CLI_TAR" \
-        --arg key "cli-linux-${arch}" \
-        '.artifacts[$key] = {url: $url}')
-    fi
-    # Server
-    SRV_TAR="linggen-server-linux-${arch}.tar.gz"
-    if [ -f "$DIST_DIR/linux/$SRV_TAR" ]; then
-      MANIFEST_JSON=$(echo "$MANIFEST_JSON" | jq \
-        --arg url "${BASE_URL}/$SRV_TAR" \
-        --arg key "server-linux-${arch}" \
-        '.artifacts[$key] = {url: $url}')
+    TAR="ling-mem-linux-${arch}.tar.gz"
+    if [ -f "$DIST_DIR/linux/$TAR" ]; then
+      ASSETS=$(echo "$ASSETS" | jq \
+        --arg name "ling-mem-linux-${arch}" \
+        --arg url "${BASE_URL}/$TAR" \
+        '. + [{"name": $name, "url": $url}]')
     fi
   done
 fi
+
+MANIFEST_JSON=$(jq -n \
+  --arg version "${VERSION_NUM}" \
+  --argjson assets "$ASSETS" \
+  '{version: $version, assets: $assets}')
 
 echo "$MANIFEST_JSON" > "$DIST_DIR/manifest.json"
 
@@ -163,10 +127,10 @@ gh release upload "$VERSION" "$DIST_DIR/manifest.json" --repo "$REPO"
 
 # Step 5: Finalize
 if [ "$KEEP_DRAFT" = "true" ]; then
-  echo "⚠️  Draft release ${VERSION} created."
+  echo "Draft release ${VERSION} created."
 else
-  echo "🚀 Publishing release..."
+  echo "Publishing release..."
   gh release edit "$VERSION" --draft=false --latest --repo "$REPO"
-  echo "✅ Release ${VERSION} published!"
-  echo "curl -sSL https://linggen.dev/install-cli.sh | bash";
+  echo "Release ${VERSION} published!"
+  echo "To install: ling install --memory  (or: ling-mem install)"
 fi

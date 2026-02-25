@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-# Build script for macOS (CLI and Server with embedded Web UI)
+# Build script for macOS — builds the 'ling-mem' binary with embedded Web UI
 # Usage: ./scripts/build-mac.sh <version>
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -20,73 +20,40 @@ mkdir -p "$DIST_DIR"
 SLUG=$(detect_platform)
 ARCH="$(uname -m)"
 
-echo "🚀 Building Linggen ${VERSION} for macOS (${ARCH})"
+echo "Building ling-mem ${VERSION} for macOS (${ARCH})"
 echo "=========================================="
 
 # Step 1: Build Frontend
-echo "1️⃣  Building Frontend..."
+echo "1. Building Frontend..."
 cd "$ROOT_DIR/frontend"
 if [ -f "package-lock.json" ]; then npm ci; else npm install; fi
 npm run build
-echo "✅ Frontend built"
+echo "   Frontend built"
 
-# Step 2: Build CLI
+# Step 2: Build ling-mem binary (with embedded UI via rust-embed)
 echo ""
-echo "2️⃣  Building CLI..."
-cd "$ROOT_DIR/linggen-cli"
-cargo clean -p linggen-cli
-cargo build --release
-BUILT_VER=$(target/release/linggen --version | awk '{print $2}')
-if [ "$BUILT_VER" != "$VERSION_NUM" ]; then
-  echo "❌ Error: Built CLI version ($BUILT_VER) does not match target version ($VERSION_NUM)" >&2
-  exit 1
-fi
-tar -C target/release -czf "$DIST_DIR/linggen-cli-${SLUG}.tar.gz" linggen
-echo "✅ CLI built: dist/linggen-cli-${SLUG}.tar.gz"
-
-# Step 3: Build Server (with embedded UI)
-echo ""
-echo "3️⃣  Building Server..."
+echo "2. Building ling-mem binary..."
 cd "$ROOT_DIR/backend"
 cargo clean -p api
-cargo build --release --bin linggen-server
-SRV_VER=$(target/release/linggen-server --version | awk '{print $2}')
-if [ "$SRV_VER" != "$VERSION_NUM" ]; then
-  echo "❌ Error: Built server version ($SRV_VER) does not match target version ($VERSION_NUM)" >&2
+cargo build --release --bin ling-mem
+BUILT_VER=$(target/release/ling-mem --version | awk '{print $2}')
+if [ "$BUILT_VER" != "$VERSION_NUM" ]; then
+  echo "Error: Built version ($BUILT_VER) does not match target version ($VERSION_NUM)" >&2
   exit 1
 fi
+tar -C target/release -czf "$DIST_DIR/ling-mem-${SLUG}.tar.gz" ling-mem
+echo "   ling-mem built: dist/ling-mem-${SLUG}.tar.gz"
 
-# Create server tarball (portable)
-SRV_DIST_NAME="linggen-server-macos"
-SRV_TEMP_DIR="$ROOT_DIR/dist-temp/$SRV_DIST_NAME"
-rm -rf "$SRV_TEMP_DIR"
-mkdir -p "$SRV_TEMP_DIR"
-cp target/release/linggen-server "$SRV_TEMP_DIR/"
-cd "$ROOT_DIR/dist-temp"
-tar -czf "$DIST_DIR/${SRV_DIST_NAME}.tar.gz" "$SRV_DIST_NAME"
-rm -rf "$SRV_TEMP_DIR"
-
-echo "✅ Server built: dist/${SRV_DIST_NAME}.tar.gz"
-
-# Step 4: Signing
+# Step 3: Signing
 echo ""
-echo "4️⃣  Signing Artifacts..."
+echo "3. Signing Artifacts..."
 
-# Sign CLI
-CLI_TARBALL="$DIST_DIR/linggen-cli-${SLUG}.tar.gz"
-CLI_SIG=$(sign_file "$CLI_TARBALL" "$ROOT_DIR") || true
-if [ -n "$CLI_SIG" ]; then
-  echo "$CLI_SIG" > "${CLI_TARBALL}.sig.txt"
-  echo "  ✅ CLI tarball signed"
-fi
-
-# Sign Server
-SRV_TARBALL="$DIST_DIR/${SRV_DIST_NAME}.tar.gz"
-SRV_SIG=$(sign_file "$SRV_TARBALL" "$ROOT_DIR") || true
-if [ -n "$SRV_SIG" ]; then
-  echo "$SRV_SIG" > "${SRV_TARBALL}.sig.txt"
-  echo "  ✅ Server tarball signed"
+TARBALL="$DIST_DIR/ling-mem-${SLUG}.tar.gz"
+SIG=$(sign_file "$TARBALL" "$ROOT_DIR") || true
+if [ -n "$SIG" ]; then
+  echo "$SIG" > "${TARBALL}.sig.txt"
+  echo "   Tarball signed"
 fi
 
 echo ""
-echo "✅ macOS build complete! Artifacts are in $DIST_DIR"
+echo "macOS build complete! Artifacts are in $DIST_DIR"

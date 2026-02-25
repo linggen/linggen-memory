@@ -1,9 +1,46 @@
 # Changelog
 
+## [0.7.0] - 2026-02-19
+
+### Added
+
+- **CLI subcommands**: `ling-mem` now has built-in subcommands — `stop`, `status`, `index`, `install`, `update`. No separate CLI binary needed.
+  - `ling-mem serve` / `ling-mem serve --daemon` — start server (foreground or background)
+  - `ling-mem stop` — stop background daemon
+  - `ling-mem status` — show server status
+  - `ling-mem index [path]` — index a directory (supports `--mode`, `--name`, `--include`, `--exclude`, `--no-wait`)
+  - `ling-mem install` / `ling-mem update` — self-install or self-update to latest version
+- **Skill split**: The monolithic `linggen` skill is now split into `memory` (RAG, search, indexing) and `skiller` (marketplace, skill install).
+- **Memory skill**: 11 shell scripts for semantic search, code search, memory storage/retrieval, prompt enhancement, indexing, and server management.
+
+### Changed
+
+- **Renamed binary**: `linggen-server` → `ling-mem`. Single binary with embedded Web UI, HTTP API, and MCP server.
+- **Standalone release**: Releases independently to `linggen/linggen-memory` GitHub repo (previously part of `linggen/linggen`).
+- **Removed linggen-cli**: The CLI (`linggen`) has been moved to [linggen-agent](https://github.com/linggen/linggen-agent) as the `ling` binary.
+- **Removed cf-worker**: Cloudflare worker code moved out of this repo.
+- **Updated build scripts**: All scripts produce a single `ling-mem` binary per platform. Artifact names changed from `linggen-cli-*` + `linggen-server-*` to `ling-mem-*`.
+- **Updated install script**: Fetches from `linggen/linggen-memory` releases and installs `ling-mem`.
+- **Updated Dockerfile**: Linux builds produce `ling-mem-linux-{arch}.tar.gz` instead of separate CLI and server tarballs.
+- **Updated documentation**: All docs updated for new binary name, port 8787, standalone service identity.
+
+### Release Artifacts
+
+- `ling-mem-macos-aarch64.tar.gz`
+- `ling-mem-macos-x86_64.tar.gz`
+- `ling-mem-linux-x86_64.tar.gz`
+- `ling-mem-linux-aarch64.tar.gz`
+- `manifest.json`
+
+## [0.6.5] - 2026-02-03
+
+- Version alignment release for linggen-agent integration.
+- Last release under the old `linggen/linggen` repo with dual `linggen-cli` + `linggen-server` artifacts.
+
 ## [0.6.3] - 2026-01-29
 
 - Enhanced skills, more skills in online registry.
-- Bootstap Linggen by skill.
+- Bootstrap Linggen by skill.
 
 ## [0.6.2] - 2026-01-27
 

@@ -1,8 +1,8 @@
-# Linggen Framework Architecture
+# Linggen Memory Framework Architecture
 
 ## High-Level Architecture
 
-The system consists of a Rust backend service that handles data ingestion, embedding generation, and vector storage (LanceDB). A React frontend provides the user interface, and external tools (VS Code, Chat Apps) connect via REST API.
+The system consists of a Rust backend service (`ling-mem`) that handles data ingestion, embedding generation, and vector storage (LanceDB). A React frontend provides the web dashboard, and external tools (VS Code, Cursor, Claude Code) connect via REST API or MCP.
 
 ```mermaid
 graph TD

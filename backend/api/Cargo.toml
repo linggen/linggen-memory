@@ -5,7 +5,7 @@ authors = { workspace = true }
 edition = { workspace = true }
 
 [[bin]]
-name = "linggen-server"
+name = "ling-mem"
 path = "src/main.rs"
 
 [dependencies]
@@ -44,4 +44,4 @@ rust-embed = "8.0"
 mime_guess = "2.0"
 zip = "0.6"
 
-# CLI dependencies were moved to the standalone linggen-cli crate
+clap = { version = "4", features = ["derive"] }

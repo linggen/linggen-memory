@@ -1,4 +1,4 @@
-# Linggen Artifact Signing Setup
+# Linggen Memory Artifact Signing Setup
 
 This guide shows how to set up code signing for Linggen updates using `minisign`.
 

@@ -1,4 +1,4 @@
-# Linggen: Project Memory & Long-Term Context for AI
+# Linggen Memory: Project Memory & Long-Term Context for AI
 
 This document describes the **core use cases, concepts, and workflows** behind Linggen.
 
@@ -157,6 +157,6 @@ these could be saved in file and RAG like :
 
 ---
 
-## Project Memory File (`LINGGEN_MEMORY.md`)
+## Project Memory
 
-Each project has a **single, short, human-editable memory file**:
+Memories are stored in the Linggen Memory server (LanceDB) and retrieved via semantic search. They can also be managed through the AI skill scripts (`store_memory.sh`, `search_memory.sh`, `fetch_memory.sh`).

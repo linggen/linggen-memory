@@ -35,10 +35,10 @@ sign_file() {
   local file_path="$1"
   local root_dir="$2"
   local sig_file="${file_path}.sig"
-  
+
   # Check if minisign is installed
   if ! command -v minisign >/dev/null 2>&1; then
-    echo "⚠️  minisign not found. Skipping signing." >&2
+    echo "minisign not found. Skipping signing." >&2
     return 1
   fi
 
@@ -49,7 +49,7 @@ sign_file() {
     password=$(grep -E "^SIGNING_KEY_PASSWORD=" "$config_file" | grep -v "^#" | cut -d'=' -f2- | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | tr -d '"' | tr -d "'")
   fi
   password="${password:-${SIGNING_KEY_PASSWORD:-}}"
-  
+
   # Locate private key
   local key_file=""
   if [ -f "$root_dir/linggen.key" ]; then
@@ -57,10 +57,10 @@ sign_file() {
   elif [ -f "$HOME/.linggen/linggen.key" ]; then
     key_file="$HOME/.linggen/linggen.key"
   else
-    echo "⚠️  No signing key found. Set SIGNING_KEY_PATH or create ~/.linggen/linggen.key" >&2
+    echo "No signing key found. Set SIGNING_KEY_PATH or create ~/.linggen/linggen.key" >&2
     return 1
   fi
-  
+
   # Sign the file
   if [ -n "$password" ]; then
     echo "$password" | minisign -S -s "$key_file" -m "$file_path" -x "$sig_file" >/dev/null 2>&1
@@ -72,7 +72,7 @@ sign_file() {
     # Return the signature content (base64 encoded full signature)
     base64 -i "$sig_file" | tr -d '\n'
   else
-    echo "⚠️  Signing failed for $file_path" >&2
+    echo "Signing failed for $file_path" >&2
     return 1
   fi
 }
