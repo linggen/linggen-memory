@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 // ---------------------------------------------------------------------------
-// HTTP client helpers (lightweight, no dependency on linggen-agent)
+// HTTP client helpers (lightweight, no dependency on linggen)
 // ---------------------------------------------------------------------------
 
 struct MemClient {

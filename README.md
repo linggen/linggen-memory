@@ -126,7 +126,7 @@ curl "http://localhost:8787/api/status"
 
 ## Integration with Linggen Agent
 
-If you use [Linggen Agent](https://github.com/linggen/linggen-agent) (`ling`), it manages `ling-mem` for you:
+If you use [Linggen Agent](https://github.com/linggen/linggen) (`ling`), it manages `ling-mem` for you:
 
 ```bash
 ling memory start    # starts ling-mem daemon
@@ -148,7 +148,7 @@ ling install --memory
 | Project | Description |
 |---|---|
 | [linggen-memory](https://github.com/linggen/linggen-memory) | Semantic memory engine, RAG backend, MCP server (this repo) |
-| [linggen-agent](https://github.com/linggen/linggen-agent) | Multi-agent coding assistant with TUI and Web UI |
+| [linggen](https://github.com/linggen/linggen) | Multi-agent coding assistant with TUI and Web UI |
 | [linggen-vscode](https://github.com/linggen/linggen-vscode) | VS Code extension for graph view and MCP setup |
 
 ---

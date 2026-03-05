@@ -17,7 +17,7 @@
 
 - **Renamed binary**: `linggen-server` → `ling-mem`. Single binary with embedded Web UI, HTTP API, and MCP server.
 - **Standalone release**: Releases independently to `linggen/linggen-memory` GitHub repo (previously part of `linggen/linggen`).
-- **Removed linggen-cli**: The CLI (`linggen`) has been moved to [linggen-agent](https://github.com/linggen/linggen-agent) as the `ling` binary.
+- **Removed linggen-cli**: The CLI (`linggen`) has been moved to [linggen](https://github.com/linggen/linggen) as the `ling` binary.
 - **Removed cf-worker**: Cloudflare worker code moved out of this repo.
 - **Updated build scripts**: All scripts produce a single `ling-mem` binary per platform. Artifact names changed from `linggen-cli-*` + `linggen-server-*` to `ling-mem-*`.
 - **Updated install script**: Fetches from `linggen/linggen-memory` releases and installs `ling-mem`.
@@ -34,7 +34,7 @@
 
 ## [0.6.5] - 2026-02-03
 
-- Version alignment release for linggen-agent integration.
+- Version alignment release for linggen integration.
 - Last release under the old `linggen/linggen` repo with dual `linggen-cli` + `linggen-server` artifacts.
 
 ## [0.6.3] - 2026-01-29

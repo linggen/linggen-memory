@@ -90,7 +90,7 @@ Use `--skip-linux` to skip multi-arch Linux builds (requires Docker):
 - **`scripts/build-linux.sh`**: Linux multi-arch build via Docker Buildx.
 - **`scripts/release.sh`**: Orchestrates packaging and GitHub publishing.
 - **`scripts/sync-version.sh`**: Ensures version consistency across all files.
-- **`scripts/install-cli.sh`**: End-user installer (`curl | bash`).
+- **`scripts/install.sh`**: End-user installer (`curl | bash`).
 
 ## Release Artifacts
 
