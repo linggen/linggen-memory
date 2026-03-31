@@ -13,6 +13,10 @@ mod server;
 #[command(name = "ling-mem", version)]
 #[command(about = "Linggen Memory — semantic memory and RAG server", long_about = None)]
 struct Cli {
+    /// Host address to bind to (default: 127.0.0.1)
+    #[arg(long, global = true)]
+    host: Option<String>,
+
     /// Port to listen on
     #[arg(long, short, global = true)]
     port: Option<u16>,
@@ -70,6 +74,11 @@ enum Command {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
+    let host = cli
+        .host
+        .or_else(|| std::env::var("LINGGEN_HOST").ok())
+        .unwrap_or_else(|| "127.0.0.1".to_string());
+
     let port = cli
         .port
         .or_else(|| {
@@ -119,5 +128,5 @@ async fn main() -> Result<()> {
     }
 
     // Default: start server in foreground
-    server::start_server(port, cli.parent_pid).await
+    server::start_server(&host, port, cli.parent_pid).await
 }

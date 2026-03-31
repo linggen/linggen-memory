@@ -104,7 +104,7 @@ fn pid_is_alive(_pid: u32) -> bool {
     true
 }
 
-pub async fn start_server(port: u16, parent_pid: Option<u32>) -> anyhow::Result<()> {
+pub async fn start_server(host: &str, port: u16, parent_pid: Option<u32>) -> anyhow::Result<()> {
     setup_tracing();
     info!(
         "Linggen Backend API v{} starting on port {}...",
@@ -177,11 +177,10 @@ pub async fn start_server(port: u16, parent_pid: Option<u32>) -> anyhow::Result<
     let app = create_router(app_state);
 
     // Run it
-    // Bind to 0.0.0.0 to allow both local and remote access
-    let addr = SocketAddr::from(([0, 0, 0, 0], port));
-    info!("listening on {}", addr);
-    info!("Remote access available at http://<your-ip>:{}", port);
-    let listener = tokio::net::TcpListener::bind(addr).await?;
+    let bind_addr = format!("{}:{}", host, port);
+    let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
+    let actual_addr = listener.local_addr()?;
+    info!("listening on {}", actual_addr);
     axum::serve(listener, app).await?;
 
     Ok(())
