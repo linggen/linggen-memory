@@ -66,14 +66,11 @@ async fn index_handler() -> Response {
 
 use crate::analytics;
 use crate::handlers::{
-    add_resource, cancel_job, chat_stream, classify_intent, clear_all_data, create_folder,
-    create_pack, delete_folder, delete_pack, delete_uploaded_file, download_skill, enhance_prompt,
-    get_app_status, get_graph, get_graph_status, get_graph_with_status, get_pack, index_source,
-    list_jobs, list_library, list_resources, list_uploaded_files,
-    mcp::{mcp_health_handler, mcp_message_handler, mcp_sse_handler, McpAppState, McpState},
-    rebuild_graph, remove_resource, rename_folder, rename_pack, rename_resource, retry_init,
-    save_pack, shutdown_server, update_resource_patterns, upload_file, upload_file_stream,
-    AppState,
+    add_resource, cancel_job, clear_all_data, create_folder, create_pack, delete_folder,
+    delete_pack, delete_uploaded_file, download_skill, get_app_status, get_pack, list_jobs,
+    list_library, list_resources, list_uploaded_files, remove_resource, rename_folder, rename_pack,
+    rename_resource, save_pack, shutdown_server, update_resource_patterns, upload_file,
+    upload_file_stream, AppState,
 };
 use crate::job_manager::JobManager;
 
@@ -128,19 +125,9 @@ pub async fn start_server(host: &str, port: u16, parent_pid: Option<u32>) -> any
 
     let (vector_store, internal_index_store) = init_vector_stores(&lancedb_path).await;
 
-    init_llm(&metadata_store).await;
-
     cleanup_interrupted_jobs(&metadata_store);
 
     let job_manager = Arc::new(JobManager::new(1)); // Limit to 1 concurrent job
-
-    // Initialize graph cache for architect feature
-    let graph_cache_dir = base_data_dir.join("graph_cache");
-    info!("Using graph cache at {:?}", graph_cache_dir);
-    let graph_cache = Arc::new(
-        linggen_architect::GraphCache::new(&graph_cache_dir)
-            .expect("Failed to initialize graph cache"),
-    );
 
     let (linggen_dir, memory_dir) = init_memory_store(&base_data_dir);
     let memory_store = Arc::new(
@@ -159,7 +146,6 @@ pub async fn start_server(host: &str, port: u16, parent_pid: Option<u32>) -> any
         memory_store: memory_store.clone(),
         cancellation_flags: DashMap::new(),
         job_manager: job_manager.clone(),
-        graph_cache: graph_cache.clone(),
         broadcast_tx: broadcast_tx.clone(),
         library_path: library_path.clone(),
     });
@@ -462,77 +448,6 @@ async fn init_vector_stores(
     (vector_store, internal_index_store)
 }
 
-async fn init_llm(metadata_store: &Arc<MetadataStore>) {
-    let app_settings = metadata_store.get_app_settings().unwrap_or_default();
-    if !app_settings.llm_enabled {
-        info!("LLM is disabled in settings, skipping model initialization");
-        return;
-    }
-
-    info!("LLM is enabled, checking model initialization...");
-    let model_manager = linggen_llm::ModelManager::new().expect("Failed to create ModelManager");
-    let model_status = model_manager
-        .get_model_status("qwen3-4b")
-        .unwrap_or(linggen_llm::ModelStatus::NotFound);
-
-    match model_status {
-        linggen_llm::ModelStatus::Ready => {
-            info!("LLM model already initialized and ready, loading into singleton...");
-            let _ = metadata_store.set_setting("llm_model_initialized", "true");
-            let config = linggen_llm::LLMConfig::default();
-            tokio::spawn(async move {
-                if let Err(e) = linggen_llm::LLMSingleton::initialize(config).await {
-                    info!("Failed to load LLM singleton: {}", e);
-                }
-            });
-        }
-        linggen_llm::ModelStatus::NotFound | linggen_llm::ModelStatus::Corrupted => {
-            if model_status == linggen_llm::ModelStatus::Corrupted {
-                info!("LLM model corrupted, will attempt to use anyway...");
-            } else {
-                info!("LLM model not found, will attempt initialization...");
-            }
-
-            let metadata_store_clone = metadata_store.clone();
-            tokio::spawn(async move {
-                let metadata_store_for_progress = metadata_store_clone.clone();
-                let progress_callback = move |msg: &str| {
-                    info!("Model init progress: {}", msg);
-                    let _ = metadata_store_for_progress.set_setting("llm_init_progress", msg);
-                };
-
-                let config = linggen_llm::LLMConfig::default();
-                match linggen_llm::LLMSingleton::initialize_with_progress(config, progress_callback)
-                    .await
-                {
-                    Ok(_) => {
-                        info!("LLM singleton initialized successfully");
-                        if let Ok(mm) = linggen_llm::ModelManager::new() {
-                            let _ = mm.register_model(
-                                "qwen3-4b",
-                                "Qwen3-4B-Instruct-2507",
-                                "main",
-                                std::collections::HashMap::new(),
-                            );
-                        }
-                        let _ = metadata_store_clone.set_setting("llm_model_initialized", "true");
-                        let _ = metadata_store_clone.set_setting("llm_init_progress", "");
-                    }
-                    Err(e) => {
-                        let error_msg = format!("Failed to initialize LLM model: {}", e);
-                        info!("{}", error_msg);
-                        let _ = metadata_store_clone.set_setting("llm_init_error", &error_msg);
-                        let _ = metadata_store_clone.set_setting("llm_model_initialized", "error");
-                    }
-                }
-            });
-        }
-        linggen_llm::ModelStatus::Downloading => {
-            info!("LLM model is currently downloading...");
-        }
-    }
-}
-
 fn cleanup_interrupted_jobs(metadata_store: &Arc<MetadataStore>) {
     info!("Checking for interrupted jobs...");
     if let Ok(jobs) = metadata_store.get_jobs(None) {
@@ -629,12 +544,6 @@ fn init_watchers(
 }
 
 fn create_router(app_state: Arc<AppState>) -> Router {
-    let mcp_state = Arc::new(McpState::new());
-    let mcp_app_state = Arc::new(McpAppState {
-        app: app_state.clone(),
-        mcp: mcp_state,
-    });
-
     let cors = tower_http::cors::CorsLayer::new()
         .allow_origin(tower_http::cors::Any)
         .allow_methods([
@@ -658,10 +567,6 @@ fn create_router(app_state: Arc<AppState>) -> Router {
         .route("/api/events", get(crate::handlers::events_handler))
         .route("/api/status", get(get_app_status))
         .route("/api/shutdown", post(shutdown_server))
-        .route("/api/retry_init", post(retry_init))
-        .route("/api/index_source", post(index_source))
-        .route("/api/classify", post(classify_intent))
-        .route("/api/enhance", post(enhance_prompt))
         .route("/api/query", post(crate::handlers::search::search))
         .route("/api/search", post(crate::handlers::search::search))
         .route(
@@ -692,7 +597,6 @@ fn create_router(app_state: Arc<AppState>) -> Router {
             "/api/memory/delete",
             post(crate::handlers::memory::delete_memory),
         )
-        .route("/api/chat/stream", post(chat_stream))
         .route("/api/jobs", get(list_jobs))
         .route("/api/jobs/cancel", post(cancel_job))
         .route("/api/resources", post(add_resource))
@@ -718,29 +622,6 @@ fn create_router(app_state: Arc<AppState>) -> Router {
                 .put(crate::handlers::settings::update_settings),
         )
         .route("/api/clear_all_data", post(clear_all_data))
-        .route(
-            "/api/sources/:source_id/profile",
-            get(crate::handlers::profile::get_profile)
-                .put(crate::handlers::profile::update_profile),
-        )
-        .route(
-            "/api/sources/:source_id/profile/generate",
-            post(crate::handlers::profile::generate_profile),
-        )
-        .route("/api/sources/:source_id/graph", get(get_graph))
-        .route(
-            "/api/sources/:source_id/graph/focus",
-            get(crate::handlers::graph::get_graph_focus),
-        )
-        .route(
-            "/api/sources/:source_id/graph/status",
-            get(get_graph_status),
-        )
-        .route(
-            "/api/sources/:source_id/graph/with_status",
-            get(get_graph_with_status),
-        )
-        .route("/api/sources/:source_id/graph/rebuild", post(rebuild_graph))
         .route(
             "/api/sources/:source_id/notes",
             get(crate::handlers::notes::list_notes),
@@ -789,15 +670,8 @@ fn create_router(app_state: Arc<AppState>) -> Router {
         )
         .with_state(app_state);
 
-    let mcp_routes = Router::new()
-        .route("/mcp/sse", get(mcp_sse_handler).post(mcp_message_handler))
-        .route("/mcp/message", post(mcp_message_handler))
-        .route("/mcp/health", get(mcp_health_handler))
-        .with_state(mcp_app_state);
-
     let combined_routes = api_routes
         .merge(upload_routes)
-        .merge(mcp_routes)
         .layer(cors)
         .layer(DefaultBodyLimit::max(10 * 1024 * 1024));
 

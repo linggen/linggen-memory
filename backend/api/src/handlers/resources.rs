@@ -275,11 +275,6 @@ pub async fn remove_resource(
         );
     }
 
-    // Delete graph cache
-    if let Err(e) = state.graph_cache.delete(&req.id) {
-        tracing::warn!("Failed to remove graph cache for source {}: {}", req.id, e);
-    }
-
     tracing::info!(
         "Successfully removed source {} and all associated data",
         req.id

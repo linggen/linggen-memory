@@ -8,7 +8,6 @@ members = [
     "api",
     "core",
     "embeddings",
-    "enhancement",
     "ingestion",
     "storage",
     "mcp-server",

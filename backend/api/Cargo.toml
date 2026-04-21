@@ -13,7 +13,6 @@ linggen-core = { path = "../core" }
 ingestion = { path = "../ingestion" }
 embeddings = { path = "../embeddings" }
 storage = { path = "../storage" }
-linggen-enhancement = { path = "../enhancement" }
 
 tokio = { version = "1.40", features = ["full"] }
 axum = { version = "0.7", features = ["multipart"] }
