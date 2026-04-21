@@ -103,6 +103,63 @@ pub enum SortOrder {
     Oldest,
 }
 
+/// Per-field changes for [`FactsStore::update`].
+///
+/// Each field carries **three** states: `None` means "leave unchanged";
+/// `Some(value)` applies the value. For nullable schema fields (`outcome`,
+/// `cwd`, `occurred_at`, `source_session`, `vector`) the inner value is
+/// itself an `Option` — `Some(Some(x))` sets, `Some(None)` clears to null.
+#[derive(Debug, Clone, Default)]
+pub struct FactPatch {
+    pub content: Option<String>,
+    pub contexts: Option<Vec<String>>,
+    pub tags: Option<Vec<String>>,
+    pub r#type: Option<FactType>,
+    pub origin: Option<Origin>,
+    pub outcome: Option<Option<Outcome>>,
+    pub cwd: Option<Option<String>>,
+    pub occurred_at: Option<Option<DateTime<Utc>>>,
+    pub source_session: Option<Option<String>>,
+    pub vector: Option<Option<Vec<f32>>>,
+}
+
+impl FactPatch {
+    /// Apply this patch in place to a fact. Used internally by
+    /// [`FactsStore::update`]; exposed for tests.
+    pub fn apply(&self, f: &mut Fact) {
+        if let Some(v) = &self.content {
+            f.content = v.clone();
+        }
+        if let Some(v) = &self.contexts {
+            f.contexts = v.clone();
+        }
+        if let Some(v) = &self.tags {
+            f.tags = v.clone();
+        }
+        if let Some(v) = &self.r#type {
+            f.r#type = *v;
+        }
+        if let Some(v) = &self.origin {
+            f.origin = *v;
+        }
+        if let Some(v) = &self.outcome {
+            f.outcome = *v;
+        }
+        if let Some(v) = &self.cwd {
+            f.cwd = v.clone();
+        }
+        if let Some(v) = &self.occurred_at {
+            f.occurred_at = *v;
+        }
+        if let Some(v) = &self.source_session {
+            f.source_session = v.clone();
+        }
+        if let Some(v) = &self.vector {
+            f.vector = v.clone();
+        }
+    }
+}
+
 fn escape_sql(s: &str) -> String {
     s.replace('\'', "''")
 }
@@ -291,6 +348,65 @@ impl FactsStore {
             SortOrder::Oldest => a.effective_timestamp().cmp(&b.effective_timestamp()),
         });
         Ok(facts)
+    }
+
+    /// Update a single fact by id. Applies `patch` on top of the existing
+    /// row, then writes the result back. Returns the post-patch fact, or
+    /// `None` if the id doesn't exist.
+    ///
+    /// v0.1 uses read-modify-write (delete + insert). LanceDB supports
+    /// column-level updates for simple types, but our nested schema (lists,
+    /// FixedSizeList vectors, timezone-tagged timestamps) is cleaner to
+    /// round-trip through [`Fact`] than to express as SQL column setters.
+    pub async fn update(&self, id: Uuid, patch: &FactPatch) -> Result<Option<Fact>> {
+        let Some(mut existing) = self.get(id).await? else {
+            return Ok(None);
+        };
+        patch.apply(&mut existing);
+        self.delete_one(id).await?;
+        self.insert(std::slice::from_ref(&existing)).await?;
+        Ok(Some(existing))
+    }
+
+    /// Hard-delete a single fact by id. Returns `true` if a row was
+    /// removed, `false` if the id wasn't present.
+    pub async fn delete(&self, id: Uuid) -> Result<bool> {
+        let removed = self.delete_one(id).await?;
+        Ok(removed > 0)
+    }
+
+    /// Bulk-delete by filter. Returns the number of rows removed.
+    ///
+    /// Safety: refuses to run with an empty filter — use `Filters::default()`
+    /// would match every row, which is almost always a bug. Callers who
+    /// genuinely want "forget everything" should iterate over all rows and
+    /// delete by id, or drop the table directory externally.
+    pub async fn forget(&self, filters: &Filters) -> Result<usize> {
+        let Some(predicate) = filters.to_sql() else {
+            return Err(anyhow!(
+                "refusing to forget with empty filter — provide at least one criterion"
+            ));
+        };
+
+        let before = self.count().await?;
+        self.table
+            .delete(&predicate)
+            .await
+            .context("deleting rows by filter")?;
+        let after = self.count().await?;
+        Ok(before.saturating_sub(after))
+    }
+
+    /// Delete the single row with the given id. Returns the number removed
+    /// (0 or 1 in practice). Private — public API uses `delete` / `update`.
+    async fn delete_one(&self, id: Uuid) -> Result<usize> {
+        let before = self.count().await?;
+        self.table
+            .delete(&format!("id = '{}'", id))
+            .await
+            .with_context(|| format!("deleting fact {id}"))?;
+        let after = self.count().await?;
+        Ok(before.saturating_sub(after))
     }
 
     async fn collect_query<Q: ExecutableQuery>(&self, q: Q) -> Result<Vec<Fact>> {
@@ -613,5 +729,113 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.to_string().contains("dim is 384"));
+    }
+
+    // ── update + delete + forget tests ─────────────────────────────────────
+
+    #[tokio::test]
+    async fn delete_removes_row() {
+        let (store, _dir) = fresh_store().await;
+        let f = make_fact("x", FactType::Fact);
+        let id = f.id;
+        store.insert(&[f]).await.unwrap();
+        assert_eq!(store.count().await.unwrap(), 1);
+
+        assert!(store.delete(id).await.unwrap());
+        assert_eq!(store.count().await.unwrap(), 0);
+
+        // Second delete is a no-op but not an error.
+        assert!(!store.delete(id).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn update_applies_patch() {
+        let (store, _dir) = fresh_store().await;
+        let mut f = make_fact("original", FactType::Fact);
+        f.contexts = vec!["a".into()];
+        let id = f.id;
+        store.insert(&[f]).await.unwrap();
+
+        let patch = FactPatch {
+            content: Some("edited".into()),
+            contexts: Some(vec!["b".into(), "c".into()]),
+            outcome: Some(Some(Outcome::Positive)),
+            ..Default::default()
+        };
+
+        let updated = store.update(id, &patch).await.unwrap().unwrap();
+        assert_eq!(updated.content, "edited");
+        assert_eq!(updated.contexts, vec!["b".to_string(), "c".into()]);
+        assert_eq!(updated.outcome, Some(Outcome::Positive));
+
+        // Persisted.
+        let got = store.get(id).await.unwrap().unwrap();
+        assert_eq!(got, updated);
+        assert_eq!(store.count().await.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn update_can_clear_optional_field() {
+        let (store, _dir) = fresh_store().await;
+        let mut f = make_fact("x", FactType::Tried);
+        f.outcome = Some(Outcome::Negative);
+        let id = f.id;
+        store.insert(&[f]).await.unwrap();
+
+        // Some(None) clears to null.
+        let patch = FactPatch {
+            outcome: Some(None),
+            ..Default::default()
+        };
+        let updated = store.update(id, &patch).await.unwrap().unwrap();
+        assert_eq!(updated.outcome, None);
+    }
+
+    #[tokio::test]
+    async fn update_missing_id_returns_none() {
+        let (store, _dir) = fresh_store().await;
+        let result = store
+            .update(Uuid::new_v4(), &FactPatch::default())
+            .await
+            .unwrap();
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn forget_bulk_deletes_matching() {
+        let (store, _dir) = fresh_store().await;
+        let mut sanji1 = make_fact("s1", FactType::Fact);
+        sanji1.contexts = vec!["code/sanji".into()];
+        let mut sanji2 = make_fact("s2", FactType::Fact);
+        sanji2.contexts = vec!["code/sanji".into()];
+        let mut ling = make_fact("l1", FactType::Fact);
+        ling.contexts = vec!["code/linggen".into()];
+        store.insert(&[sanji1, sanji2, ling]).await.unwrap();
+
+        let removed = store
+            .forget(&Filters {
+                contexts: vec!["code/sanji".into()],
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(removed, 2);
+        assert_eq!(store.count().await.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn forget_refuses_empty_filter() {
+        let (store, _dir) = fresh_store().await;
+        store
+            .insert(&[make_fact("x", FactType::Fact)])
+            .await
+            .unwrap();
+
+        let err = store
+            .forget(&Filters::default())
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("empty filter"));
+        assert_eq!(store.count().await.unwrap(), 1);
     }
 }
