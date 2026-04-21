@@ -18,17 +18,14 @@ use std::path::Path;
 
 const MAX_MSG_CHARS: usize = 2000;
 
-static SYSTEM_REMINDER_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?s)<system-reminder>.*?</system-reminder>").unwrap()
-});
+static SYSTEM_REMINDER_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?s)<system-reminder>.*?</system-reminder>").unwrap());
 
 static COMMAND_TAG_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?s)<command-(?:name|message|args)>.*?</command-(?:name|message|args)>").unwrap()
 });
 
-static FENCED_CODE_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?s)```.*?```").unwrap()
-});
+static FENCED_CODE_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?s)```.*?```").unwrap());
 
 static MULTI_NEWLINE_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\n{3,}").unwrap());
 
@@ -360,8 +357,13 @@ mod tests {
     fn missing_file_is_clear_error() {
         let target = NaiveDate::from_ymd_opt(2026, 4, 21).unwrap();
         let mut buf = Vec::new();
-        let err = run(Path::new("/no/such/file.jsonl"), Source::ClaudeCode, target, &mut buf)
-            .unwrap_err();
+        let err = run(
+            Path::new("/no/such/file.jsonl"),
+            Source::ClaudeCode,
+            target,
+            &mut buf,
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("file not found"));
     }
 }

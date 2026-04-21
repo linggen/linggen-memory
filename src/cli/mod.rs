@@ -428,11 +428,7 @@ async fn cmd_get(store: &FactsStore, id: Uuid, format: OutputFormat) -> Result<(
     }
 }
 
-async fn cmd_search(
-    store: &FactsStore,
-    args: SearchArgs,
-    format: OutputFormat,
-) -> Result<()> {
+async fn cmd_search(store: &FactsStore, args: SearchArgs, format: OutputFormat) -> Result<()> {
     let vec = parse_vector(&args.vector)?;
     let results = store
         .search(&vec, &args.filters.into_filters(), args.limit)
@@ -447,11 +443,7 @@ async fn cmd_list(store: &FactsStore, args: ListArgs, format: OutputFormat) -> R
     emit_facts(&results, format)
 }
 
-async fn cmd_update(
-    store: &FactsStore,
-    args: UpdateArgs,
-    format: OutputFormat,
-) -> Result<()> {
+async fn cmd_update(store: &FactsStore, args: UpdateArgs, format: OutputFormat) -> Result<()> {
     let outcome_patch = match (args.outcome, args.clear_outcome) {
         (Some(o), _) => Some(Some(o.into())),
         (None, true) => Some(None),
@@ -480,12 +472,7 @@ async fn cmd_update(
     }
 }
 
-async fn cmd_delete(
-    store: &FactsStore,
-    id: Uuid,
-    yes: bool,
-    format: OutputFormat,
-) -> Result<()> {
+async fn cmd_delete(store: &FactsStore, id: Uuid, yes: bool, format: OutputFormat) -> Result<()> {
     if !yes {
         return Err(anyhow!(
             "refusing to delete without --yes (scripted calls must pass the flag)"
@@ -498,21 +485,13 @@ async fn cmd_delete(
             "removed": removed,
         })),
         OutputFormat::Text => {
-            println!(
-                "{} {}",
-                if removed { "deleted" } else { "not found" },
-                id
-            );
+            println!("{} {}", if removed { "deleted" } else { "not found" }, id);
             Ok(())
         }
     }
 }
 
-async fn cmd_forget(
-    store: &FactsStore,
-    args: ForgetArgs,
-    format: OutputFormat,
-) -> Result<()> {
+async fn cmd_forget(store: &FactsStore, args: ForgetArgs, format: OutputFormat) -> Result<()> {
     if !args.yes {
         return Err(anyhow!(
             "refusing to forget without --yes (bulk delete requires explicit confirmation)"
@@ -566,15 +545,14 @@ fn parse_vector(s: &str) -> Result<Vec<f32>> {
         .split(',')
         .map(str::trim)
         .filter(|s| !s.is_empty())
-        .map(|t| t.parse::<f32>().with_context(|| format!("parsing float `{t}`")))
+        .map(|t| {
+            t.parse::<f32>()
+                .with_context(|| format!("parsing float `{t}`"))
+        })
         .collect();
     let v = parts?;
     if v.len() != VECTOR_DIM as usize {
-        return Err(anyhow!(
-            "expected {} floats, got {}",
-            VECTOR_DIM,
-            v.len()
-        ));
+        return Err(anyhow!("expected {} floats, got {}", VECTOR_DIM, v.len()));
     }
     Ok(v)
 }
@@ -588,12 +566,7 @@ fn emit_facts(facts: &[crate::facts::Fact], format: OutputFormat) -> Result<()> 
         }
         OutputFormat::Text => {
             for f in facts {
-                println!(
-                    "{} [{}] {}",
-                    f.id,
-                    f.r#type,
-                    truncate(&f.content, 120)
-                );
+                println!("{} [{}] {}", f.id, f.r#type, truncate(&f.content, 120));
             }
         }
     }

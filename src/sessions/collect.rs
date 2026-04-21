@@ -307,7 +307,11 @@ mod tests {
         let home = tempfile::TempDir::new().unwrap();
 
         // ── CC session
-        let cc_proj = home.path().join(".claude").join("projects").join("-tmp-proj");
+        let cc_proj = home
+            .path()
+            .join(".claude")
+            .join("projects")
+            .join("-tmp-proj");
         fs::create_dir_all(&cc_proj).unwrap();
         let cc_file = cc_proj.join("a1b2.jsonl");
         let mut f = fs::File::create(&cc_file).unwrap();
@@ -348,16 +352,8 @@ mod tests {
         .unwrap();
         let ling_file = ling_sess.join("messages.jsonl");
         let mut f = fs::File::create(&ling_file).unwrap();
-        writeln!(
-            f,
-            r#"{{"from_id":"user","timestamp":0,"content":"hey"}}"#
-        )
-        .unwrap();
-        writeln!(
-            f,
-            r#"{{"from_id":"ling","timestamp":1,"content":"hi"}}"#
-        )
-        .unwrap();
+        writeln!(f, r#"{{"from_id":"user","timestamp":0,"content":"hey"}}"#).unwrap();
+        writeln!(f, r#"{{"from_id":"ling","timestamp":1,"content":"hi"}}"#).unwrap();
 
         // Skip sessions with creator != "user" — add one and assert it's ignored.
         let ling_sess_bot = home
@@ -383,7 +379,11 @@ mod tests {
         run(home.path(), today, &mut buf).unwrap();
         let text = String::from_utf8(buf).unwrap();
         let lines: Vec<_> = text.lines().collect();
-        assert_eq!(lines.len(), 2, "manifest should have exactly 2 rows: {lines:?}");
+        assert_eq!(
+            lines.len(),
+            2,
+            "manifest should have exactly 2 rows: {lines:?}"
+        );
 
         let entries: Vec<SessionEntry> = lines
             .iter()
@@ -391,13 +391,19 @@ mod tests {
             .collect();
 
         // CC entry
-        let cc = entries.iter().find(|e| e.source == Source::ClaudeCode).unwrap();
+        let cc = entries
+            .iter()
+            .find(|e| e.source == Source::ClaudeCode)
+            .unwrap();
         assert_eq!(cc.label, "-tmp-proj/a1b2");
         assert_eq!(cc.user_turns, 2, "tool_result-only row should not count");
         assert_eq!(cc.project_root.as_deref(), Some("/tmp/proj"));
 
         // Linggen entry
-        let ling = entries.iter().find(|e| e.source == Source::Linggen).unwrap();
+        let ling = entries
+            .iter()
+            .find(|e| e.source == Source::Linggen)
+            .unwrap();
         assert_eq!(ling.label, "demo chat");
         assert_eq!(ling.user_turns, 1);
         assert_eq!(ling.project_root.as_deref(), Some("/Users/x/proj"));

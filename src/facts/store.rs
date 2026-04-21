@@ -181,9 +181,7 @@ impl FactsStore {
         let lancedb_dir = data_dir.join("memory").join("facts.lancedb");
         tokio::fs::create_dir_all(&lancedb_dir)
             .await
-            .with_context(|| {
-                format!("creating memory dir at {}", lancedb_dir.display())
-            })?;
+            .with_context(|| format!("creating memory dir at {}", lancedb_dir.display()))?;
 
         let uri = lancedb_dir
             .to_str()
@@ -209,12 +207,10 @@ impl FactsStore {
             let schema = build_schema();
             // lancedb 0.27 needs a boxed RecordBatchReader (Scannable is
             // implemented for that shape, not for bare iterators).
-            let empty: Box<dyn RecordBatchReader + Send> = Box::new(
-                RecordBatchIterator::new(
-                    std::iter::empty::<arrow::error::Result<RecordBatch>>(),
-                    schema,
-                ),
-            );
+            let empty: Box<dyn RecordBatchReader + Send> = Box::new(RecordBatchIterator::new(
+                std::iter::empty::<arrow::error::Result<RecordBatch>>(),
+                schema,
+            ));
             conn.create_table(TABLE_NAME, empty)
                 .execute()
                 .await
@@ -236,9 +232,8 @@ impl FactsStore {
 
         let batch = facts_to_record_batch(facts)?;
         let schema = batch.schema();
-        let batches: Box<dyn RecordBatchReader + Send> = Box::new(
-            RecordBatchIterator::new(std::iter::once(Ok(batch)), schema),
-        );
+        let batches: Box<dyn RecordBatchReader + Send> =
+            Box::new(RecordBatchIterator::new(std::iter::once(Ok(batch)), schema));
 
         self.table
             .add(batches)
@@ -667,14 +662,14 @@ mod tests {
         let a = with_vector(make_fact("a", FactType::Fact), 0.1);
         let b = with_vector(make_fact("b", FactType::Fact), 0.5);
         let c = with_vector(make_fact("c", FactType::Fact), 0.9);
-        store.insert(&[a.clone(), b.clone(), c.clone()]).await.unwrap();
+        store
+            .insert(&[a.clone(), b.clone(), c.clone()])
+            .await
+            .unwrap();
 
         // Query close to `a`'s vector.
         let query = vec![0.11; VECTOR_DIM as usize];
-        let results = store
-            .search(&query, &Filters::default(), 3)
-            .await
-            .unwrap();
+        let results = store.search(&query, &Filters::default(), 3).await.unwrap();
 
         assert_eq!(results.len(), 3);
         assert_eq!(results[0].content, "a");
@@ -689,10 +684,7 @@ mod tests {
         store.insert(&facts).await.unwrap();
 
         let query = vec![0.0; VECTOR_DIM as usize];
-        let results = store
-            .search(&query, &Filters::default(), 3)
-            .await
-            .unwrap();
+        let results = store.search(&query, &Filters::default(), 3).await.unwrap();
         assert_eq!(results.len(), 3);
     }
 
@@ -831,10 +823,7 @@ mod tests {
             .await
             .unwrap();
 
-        let err = store
-            .forget(&Filters::default())
-            .await
-            .unwrap_err();
+        let err = store.forget(&Filters::default()).await.unwrap_err();
         assert!(err.to_string().contains("empty filter"));
         assert_eq!(store.count().await.unwrap(), 1);
     }

@@ -195,8 +195,7 @@ pub enum Outcome {
 }
 
 impl Outcome {
-    pub const ALL: &'static [Outcome] =
-        &[Outcome::Positive, Outcome::Negative, Outcome::Neutral];
+    pub const ALL: &'static [Outcome] = &[Outcome::Positive, Outcome::Negative, Outcome::Neutral];
 
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -239,11 +238,14 @@ impl FromStr for Outcome {
 /// - `Agent`: the agent did / decided / observed it.
 /// - `Derived`: inferred from patterns across multiple sessions — not
 ///   attributable to a single utterance.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+///
+/// Default is `Derived` — the safest choice when the source is ambiguous.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Origin {
     User,
     Agent,
+    #[default]
     Derived,
 }
 
@@ -256,14 +258,6 @@ impl Origin {
             Origin::Agent => "agent",
             Origin::Derived => "derived",
         }
-    }
-}
-
-impl Default for Origin {
-    fn default() -> Self {
-        // `derived` is the safest default — it avoids making claims about who
-        // said what when the source is ambiguous.
-        Origin::Derived
     }
 }
 

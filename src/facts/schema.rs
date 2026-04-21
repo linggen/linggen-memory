@@ -14,8 +14,7 @@ use super::types::{Fact, FactType, Origin, Outcome};
 use anyhow::{anyhow, Context, Result};
 use arrow_array::{
     builder::{FixedSizeListBuilder, Float32Builder, ListBuilder, StringBuilder},
-    Array, FixedSizeListArray, ListArray, RecordBatch, StringArray,
-    TimestampMicrosecondArray,
+    Array, FixedSizeListArray, ListArray, RecordBatch, StringArray, TimestampMicrosecondArray,
 };
 use arrow_schema::{DataType, Field, Schema, TimeUnit};
 use chrono::{DateTime, TimeZone, Utc};
@@ -45,16 +44,8 @@ pub fn build_schema() -> Arc<Schema> {
             DataType::FixedSizeList(float_item, VECTOR_DIM),
             true,
         ),
-        Field::new(
-            "contexts",
-            DataType::List(utf8_item.clone()),
-            false,
-        ),
-        Field::new(
-            "tags",
-            DataType::List(utf8_item),
-            false,
-        ),
+        Field::new("contexts", DataType::List(utf8_item.clone()), false),
+        Field::new("tags", DataType::List(utf8_item), false),
         Field::new("type", DataType::Utf8, false),
         Field::new("outcome", DataType::Utf8, true),
         Field::new("from", DataType::Utf8, false),
@@ -84,14 +75,9 @@ pub fn facts_to_record_batch(facts: &[Fact]) -> Result<RecordBatch> {
     let types = StringArray::from_iter_values(facts.iter().map(|f| f.r#type.as_str()));
     let froms = StringArray::from_iter_values(facts.iter().map(|f| f.origin.as_str()));
 
-    let outcomes = StringArray::from_iter(
-        facts.iter().map(|f| f.outcome.map(|o| o.as_str())),
-    );
-    let cwds =
-        StringArray::from_iter(facts.iter().map(|f| f.cwd.clone()));
-    let source_sessions = StringArray::from_iter(
-        facts.iter().map(|f| f.source_session.clone()),
-    );
+    let outcomes = StringArray::from_iter(facts.iter().map(|f| f.outcome.map(|o| o.as_str())));
+    let cwds = StringArray::from_iter(facts.iter().map(|f| f.cwd.clone()));
+    let source_sessions = StringArray::from_iter(facts.iter().map(|f| f.source_session.clone()));
 
     let vectors = build_vector_column(facts)?;
     let contexts = build_string_list_column(facts.iter().map(|f| &f.contexts));
@@ -103,7 +89,9 @@ pub fn facts_to_record_batch(facts: &[Fact]) -> Result<RecordBatch> {
     .with_timezone(TZ_UTC);
 
     let occurred_at = TimestampMicrosecondArray::from_iter(
-        facts.iter().map(|f| f.occurred_at.map(|t| t.timestamp_micros())),
+        facts
+            .iter()
+            .map(|f| f.occurred_at.map(|t| t.timestamp_micros())),
     )
     .with_timezone(TZ_UTC);
 
@@ -244,7 +232,13 @@ fn col_utf8<'a>(batch: &'a RecordBatch, name: &str) -> Result<&'a StringArray> {
 fn col_utf8_opt<'a>(batch: &'a RecordBatch, name: &str) -> Result<Vec<Option<&'a str>>> {
     let arr = col_utf8(batch, name)?;
     Ok((0..arr.len())
-        .map(|i| if arr.is_null(i) { None } else { Some(arr.value(i)) })
+        .map(|i| {
+            if arr.is_null(i) {
+                None
+            } else {
+                Some(arr.value(i))
+            }
+        })
         .collect())
 }
 
@@ -273,10 +267,7 @@ fn col_string_list(batch: &RecordBatch, name: &str) -> Result<Vec<Vec<String>>> 
     Ok(out)
 }
 
-fn col_vector(
-    batch: &RecordBatch,
-    name: &str,
-) -> Result<Vec<Option<Vec<f32>>>> {
+fn col_vector(batch: &RecordBatch, name: &str) -> Result<Vec<Option<Vec<f32>>>> {
     let arr = batch
         .column_by_name(name)
         .with_context(|| format!("missing column `{name}`"))?
@@ -296,17 +287,20 @@ fn col_vector(
             .downcast_ref::<arrow_array::Float32Array>()
             .context("vector row is not Float32")?;
         let vec: Vec<f32> = (0..floats.len())
-            .map(|j| if floats.is_null(j) { 0.0 } else { floats.value(j) })
+            .map(|j| {
+                if floats.is_null(j) {
+                    0.0
+                } else {
+                    floats.value(j)
+                }
+            })
             .collect();
         out.push(Some(vec));
     }
     Ok(out)
 }
 
-fn col_timestamp(
-    batch: &RecordBatch,
-    name: &str,
-) -> Result<Vec<DateTime<Utc>>> {
+fn col_timestamp(batch: &RecordBatch, name: &str) -> Result<Vec<DateTime<Utc>>> {
     let arr = batch
         .column_by_name(name)
         .with_context(|| format!("missing column `{name}`"))?
@@ -323,10 +317,7 @@ fn col_timestamp(
         .collect()
 }
 
-fn col_timestamp_opt(
-    batch: &RecordBatch,
-    name: &str,
-) -> Result<Vec<Option<DateTime<Utc>>>> {
+fn col_timestamp_opt(batch: &RecordBatch, name: &str) -> Result<Vec<Option<DateTime<Utc>>>> {
     let arr = batch
         .column_by_name(name)
         .with_context(|| format!("missing column `{name}`"))?
@@ -342,7 +333,9 @@ fn col_timestamp_opt(
                 Utc.timestamp_micros(arr.value(i))
                     .single()
                     .map(Some)
-                    .with_context(|| format!("row {i} of `{name}` is an ambiguous/invalid timestamp"))
+                    .with_context(|| {
+                        format!("row {i} of `{name}` is an ambiguous/invalid timestamp")
+                    })
             }
         })
         .collect()
@@ -356,7 +349,11 @@ mod tests {
     use chrono::Duration;
 
     fn sample_facts() -> Vec<Fact> {
-        let mut f1 = Fact::new("user prefers concise replies", FactType::Preference, Origin::User);
+        let mut f1 = Fact::new(
+            "user prefers concise replies",
+            FactType::Preference,
+            Origin::User,
+        );
         f1.contexts = vec!["global".into()];
         f1.tags = vec!["intent:style".into()];
 
@@ -391,8 +388,18 @@ mod tests {
         assert_eq!(
             names,
             vec![
-                "id", "content", "vector", "contexts", "tags", "type", "outcome",
-                "from", "cwd", "created_at", "occurred_at", "source_session",
+                "id",
+                "content",
+                "vector",
+                "contexts",
+                "tags",
+                "type",
+                "outcome",
+                "from",
+                "cwd",
+                "created_at",
+                "occurred_at",
+                "source_session",
             ]
         );
     }
