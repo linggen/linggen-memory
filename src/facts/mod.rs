@@ -9,9 +9,11 @@
 //! pipelines live in sibling modules.
 
 pub mod schema;
+pub mod store;
 pub mod types;
 
 pub use schema::{
     build_schema, facts_to_record_batch, record_batch_to_facts, TABLE_NAME, VECTOR_DIM,
 };
+pub use store::FactsStore;
 pub use types::{Fact, FactType, Origin, Outcome, ParseEnumError};
