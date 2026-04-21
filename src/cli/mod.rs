@@ -7,13 +7,13 @@
 //! - **Human format**: `--format text` for friendly text, `--format json`
 //!   (default) for NDJSON.
 //! - **Data dir**: `--data-dir`, then `$LINGGEN_DATA_DIR`, then `~/.linggen/`.
-//!
-//! v0.1 scope: search takes an explicit `--vector` of floats. Text-query
-//! semantic search lands once the embedding pipeline is wired (next commit).
+//! - **Search**: takes a plain text query; the query is embedded on the fly
+//!   via [`crate::embed::Embedder`] (MiniLM-L6-v2) and filtered against the
+//!   LanceDB vector column.
+//! - **Add**: auto-embeds content for any inserted fact that doesn't already
+//!   carry a vector, so the row is immediately searchable.
 
-use crate::facts::{
-    FactPatch, FactType, FactsStore, Filters, Origin, Outcome, SortOrder, VECTOR_DIM,
-};
+use crate::facts::{FactPatch, FactType, FactsStore, Filters, Origin, Outcome, SortOrder};
 use anyhow::{anyhow, Context, Result};
 use chrono::{DateTime, Local, NaiveDate, Utc};
 use clap::{Args, Parser, Subcommand, ValueEnum};
@@ -124,10 +124,10 @@ pub struct AddArgs {
 
 #[derive(Debug, Args)]
 pub struct SearchArgs {
-    /// Query vector — 384 comma-separated floats. Text queries require the
-    /// embedding pipeline, which lands in a follow-up commit.
-    #[arg(long, value_name = "FLOATS")]
-    pub vector: String,
+    /// Text query — embedded on the fly via MiniLM-L6-v2 (384-dim).
+    /// First-run downloads the ONNX model (~23 MB); subsequent calls
+    /// load from cache.
+    pub query: String,
 
     #[command(flatten)]
     pub filters: FilterArgs,
@@ -387,7 +387,7 @@ pub async fn run(cli: Cli) -> Result<()> {
 // ── Subcommand handlers ─────────────────────────────────────────────────────
 
 async fn cmd_add(store: &FactsStore, args: AddArgs, format: OutputFormat) -> Result<()> {
-    let facts = if args.stdin {
+    let mut facts = if args.stdin {
         read_stdin_facts()?
     } else {
         let content = args
@@ -405,6 +405,7 @@ async fn cmd_add(store: &FactsStore, args: AddArgs, format: OutputFormat) -> Res
         vec![fact]
     };
 
+    embed_missing(&mut facts)?;
     store.insert(&facts).await?;
     match format {
         OutputFormat::Json => {
@@ -429,11 +430,40 @@ async fn cmd_get(store: &FactsStore, id: Uuid, format: OutputFormat) -> Result<(
 }
 
 async fn cmd_search(store: &FactsStore, args: SearchArgs, format: OutputFormat) -> Result<()> {
-    let vec = parse_vector(&args.vector)?;
+    let embedder =
+        crate::embed::Embedder::new().context("initializing embedder for search query")?;
+    let vec = embedder.embed_one(&args.query)?;
     let results = store
         .search(&vec, &args.filters.into_filters(), args.limit)
         .await?;
     emit_facts(&results, format)
+}
+
+/// Embed `content` into `vector` for every fact missing a vector but
+/// carrying content. Zero cost when every fact already has a vector
+/// (e.g. stdin NDJSON from a prior embedding pipeline). Batches all
+/// missing-vector facts into a single model call.
+fn embed_missing(facts: &mut [crate::facts::Fact]) -> Result<()> {
+    let idxs: Vec<usize> = facts
+        .iter()
+        .enumerate()
+        .filter(|(_, f)| f.vector.is_none() && !f.content.trim().is_empty())
+        .map(|(i, _)| i)
+        .collect();
+
+    if idxs.is_empty() {
+        return Ok(());
+    }
+
+    let embedder = crate::embed::Embedder::new()
+        .context("initializing embedder to populate missing vectors")?;
+    let texts: Vec<String> = idxs.iter().map(|&i| facts[i].content.clone()).collect();
+    let vectors = embedder.embed_many(&texts)?;
+
+    for (idx, vec) in idxs.into_iter().zip(vectors) {
+        facts[idx].vector = Some(vec);
+    }
+    Ok(())
 }
 
 async fn cmd_list(store: &FactsStore, args: ListArgs, format: OutputFormat) -> Result<()> {
@@ -540,23 +570,6 @@ fn read_stdin_facts() -> Result<Vec<crate::facts::Fact>> {
     Ok(out)
 }
 
-fn parse_vector(s: &str) -> Result<Vec<f32>> {
-    let parts: Result<Vec<f32>> = s
-        .split(',')
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(|t| {
-            t.parse::<f32>()
-                .with_context(|| format!("parsing float `{t}`"))
-        })
-        .collect();
-    let v = parts?;
-    if v.len() != VECTOR_DIM as usize {
-        return Err(anyhow!("expected {} floats, got {}", VECTOR_DIM, v.len()));
-    }
-    Ok(v)
-}
-
 fn emit_facts(facts: &[crate::facts::Fact], format: OutputFormat) -> Result<()> {
     match format {
         OutputFormat::Json => {
@@ -648,28 +661,6 @@ pub fn error_code(err: &anyhow::Error) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn parse_vector_accepts_valid_length() {
-        let s: String = (0..VECTOR_DIM as usize)
-            .map(|i| format!("{:.2}", i as f32 * 0.01))
-            .collect::<Vec<_>>()
-            .join(",");
-        let v = parse_vector(&s).unwrap();
-        assert_eq!(v.len(), VECTOR_DIM as usize);
-    }
-
-    #[test]
-    fn parse_vector_rejects_wrong_length() {
-        let err = parse_vector("0.1,0.2,0.3").unwrap_err();
-        assert!(err.to_string().contains("expected 384"));
-    }
-
-    #[test]
-    fn parse_vector_rejects_non_float() {
-        let err = parse_vector("not-a-float,0.2").unwrap_err();
-        assert!(err.to_string().contains("parsing float"));
-    }
 
     #[test]
     fn truncate_respects_char_boundaries() {
