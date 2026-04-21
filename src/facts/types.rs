@@ -9,7 +9,7 @@
 //! Schema matches `doc/tech-spec.md`. Any field change here must also update
 //! `schema.rs` and bump the store's format version.
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, SubsecRound, Utc};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
@@ -80,7 +80,11 @@ pub struct Fact {
 
 impl Fact {
     /// Minimal constructor for a fresh fact. Generates a new id and stamps
-    /// `created_at` to `now`. All optional fields default to `None` / empty.
+    /// `created_at` to `now`, truncated to microsecond precision so the
+    /// value round-trips through LanceDB (which stores `Timestamp(Microsecond)`).
+    /// Without the truncation, Linux platforms where `Utc::now()` returns
+    /// nanosecond precision would fail equality checks after store roundtrip.
+    /// All optional fields default to `None` / empty.
     pub fn new(content: impl Into<String>, r#type: FactType, origin: Origin) -> Self {
         Self {
             id: Uuid::new_v4(),
@@ -92,7 +96,7 @@ impl Fact {
             outcome: None,
             origin,
             cwd: None,
-            created_at: Utc::now(),
+            created_at: Utc::now().trunc_subsecs(6),
             occurred_at: None,
             source_session: None,
         }
