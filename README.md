@@ -1,211 +1,96 @@
 <p align="center">
-  <img src="frontend/public/logo.svg" width="120" alt="Linggen Logo">
+  <img src="webui/public/logo.svg" width="120" alt="linggen-memory logo">
 </p>
 
-# Linggen Memory
+# linggen-memory
 
-**Standalone semantic memory and RAG service for AI coding assistants.**
+**A semantic memory store for AI assistants.**
 
-Linggen Memory (`ling-mem`) is a local-first memory engine that provides semantic search, code indexing, vector storage (via LanceDB), and an MCP server. It works as a standalone service for any AI agent — Claude Code, Codex, Cursor, or your own tools.
+`ling-mem` is a single-binary CLI + optional web UI that remembers useful facts about you and your work across every session, every tool, and every project. LanceDB-backed, local-first, markdown-native where it counts.
 
-[Website](https://linggen.dev) | [Documentation](https://linggen.dev/docs)
+Built as the default memory skill for [Linggen](https://github.com/linggen/linggen); works equally well invoked from Claude Code or any tool that can shell out.
 
----
-
-## What It Does
-
-- **Semantic Code Search:** Index your codebase and search by meaning, not just keywords.
-- **Design Memory:** Store architectural decisions, ADRs, and tribal knowledge in `.linggen/memory/` as Markdown. AI retrieves them via semantic search.
-- **System Map:** Obsidian-like dependency graph visualization of file relationships.
-- **Shared Library & Skills:** Pre-defined skills (Software Architect, Senior Developer, etc.) for consistent AI behavior.
-- **MCP Server:** Model Context Protocol endpoint at `/mcp/sse` for MCP-enabled IDEs.
-- **Local-First:** All indexing and vector search happens on your machine. Nothing leaves your side.
+> 🔧 **Status: v0.1 in active development on `memory-refactor`.** The main branch reflects the archived code-indexing tool this project evolved from. See the `v0-legacy` tag for that snapshot.
 
 ---
 
-## Quick Start
+## What it does
 
-### Install
+- **Remembers across sessions.** Facts about who you are, how you prefer to work, what you've tried, what worked, what didn't.
+- **Semantic retrieval.** Everything stored gets embedded (384-dim via `all-MiniLM-L6-v2`). Find "berth calibration" by asking about "dock alignment."
+- **Typed facts.** Seven categories — `fact / preference / decision / tried / fixed / learned / built` — each with a clear retrieval trigger.
+- **Forgetting is first-class.** `archive`, `delete`, `forget` by filter. Time-decay and access-decay automatic.
+- **Three ways to use it:**
+  - As a **Linggen skill** — web app UI + `Memory.*` tool dispatch in the agent.
+  - As a **Claude Code skill** — SKILL.md body, model calls the CLI via Bash.
+  - **Standalone** — any script or tool can shell out to `ling-mem`.
 
-```bash
-curl -fsSL https://linggen.dev/install-mem.sh | bash
-```
-
-Or install a specific version:
-
-```bash
-curl -fsSL https://linggen.dev/install-mem.sh | bash -s -- --version v0.7.0
-```
-
-### Upgrade
-
-```bash
-ling-mem update
-```
-
-### Run
-
-```bash
-# Start the server (default port 8787)
-ling-mem serve
-
-# Start as a background daemon
-ling-mem serve --daemon
-
-# Index a codebase
-ling-mem index .
-
-# Index with options
-ling-mem index /path/to/project --mode full --name my-project
-
-# Check status
-ling-mem status
-
-# Stop daemon
-ling-mem stop
-
-# Self-update to latest
-ling-mem update
-```
-
-### Web UI
-
-Open `http://localhost:8787` in your browser for the built-in Web UI with graph visualization, search, and memory management.
+See `doc/product-spec.md` for the full product story and `doc/tech-spec.md` for the implementation contract.
 
 ---
 
-## Use With Your AI
-
-Linggen Memory works as a standalone service that any AI can connect to.
-
-### As a Skill (Claude Code / Codex)
-
-Install the memory skill:
+## Quick look
 
 ```bash
-# The linggen skill connects your AI to the memory server
-ling init --global
+# Add a fact
+ling-mem add "prefers concise replies, no hedging" \
+  --type preference --from user
+
+# Semantic search
+ling-mem search "how do I format logs in dev" \
+  --context code/linggen --limit 5
+
+# Browse by filter
+ling-mem list --type fixed --since 2026-01-01 --format=table
+
+# Forget a finished project
+ling-mem forget --context trip-japan-2026 --yes
 ```
 
-Example prompts:
-
-> "Search Linggen memory for architectural decisions about our database choice."
-
-> "Index this project with Linggen and find all authentication-related code."
-
-### As an MCP Server (Cursor / Zed / Claude Code)
-
-Add to your MCP config:
-
-```json
-{
-  "mcpServers": {
-    "linggen-memory": {
-      "url": "http://localhost:8787/mcp/sse"
-    }
-  }
-}
-```
-
-### As an HTTP API
-
-All functionality is available via REST:
-
-```bash
-# Search
-curl "http://localhost:8787/api/search?q=authentication&limit=5"
-
-# List indexed sources
-curl "http://localhost:8787/api/resources"
-
-# Server status
-curl "http://localhost:8787/api/status"
-```
+Default output is NDJSON on stdout — any model / script / shell can parse it.
 
 ---
 
-## Integration with Linggen Agent
+## Install (v0.1 — in development)
 
-If you use [Linggen Agent](https://github.com/linggen/linggen) (`ling`), it manages `ling-mem` for you:
-
-```bash
-ling memory start    # starts ling-mem daemon
-ling memory stop     # stops it
-ling memory status   # checks status
-ling memory index .  # indexes via ling-mem
-```
-
-You can also install `ling-mem` via:
+Currently no prebuilt releases. To build from source on the `memory-refactor` branch:
 
 ```bash
-ling install --memory
+git clone https://github.com/linggen/linggen-memory
+cd linggen-memory
+git checkout memory-refactor
+cargo build --release
+./target/release/ling-mem --help
 ```
+
+Prebuilt binaries for macOS (Intel + Apple Silicon) and Linux (x86_64 + aarch64) land once v0.1 tagging begins. See `doc/tech-spec.md` → *Release process*.
 
 ---
 
-## The Linggen Ecosystem
+## Layout
 
-| Project | Description |
-|---|---|
-| [linggen-memory](https://github.com/linggen/linggen-memory) | Semantic memory engine, RAG backend, MCP server (this repo) |
-| [linggen](https://github.com/linggen/linggen) | Multi-agent coding assistant with TUI and Web UI |
-| [linggen-vscode](https://github.com/linggen/linggen-vscode) | VS Code extension for graph view and MCP setup |
-
----
-
-## Architecture
-
-Linggen Memory is a Rust workspace with 11 crates:
-
-| Crate | Purpose |
-|---|---|
-| `api` | HTTP API server, MCP endpoint, embedded Web UI (`ling-mem` binary) |
-| `core` | Core domain types |
-| `ingestion` | File/codebase indexing pipeline |
-| `embeddings` | Local embedding model management |
-| `storage` | LanceDB vector storage |
-| `context` | Context assembly for prompts |
-| `enhancement` | Prompt enhancement |
-| `architect` | Architecture analysis |
-| `intent` | Intent detection |
-| `llm` | LLM provider abstraction |
-| `mcp-server` | Legacy stdio MCP server (deprecated) |
-
-Frontend: React 19 + TypeScript + Vite + Tailwind v4 with CodeMirror, Cytoscape graph, and Mermaid diagrams.
-
----
-
-## Building From Source
-
-```bash
-# Build frontend
-cd frontend && npm ci && npm run build && cd ..
-
-# Build backend (embeds frontend via rust-embed)
-cd backend && cargo build --release --bin ling-mem
 ```
-
-The binary is at `backend/target/release/ling-mem`.
-
-### Release Build
-
-```bash
-# Build for current platform
-./scripts/build.sh v0.7.0 --skip-linux
-
-# Full release (build + sign + upload to GitHub)
-./scripts/release.sh v0.7.0
+linggen-memory/
+├── Cargo.toml          # single crate
+├── src/                # all Rust code
+├── webui/              # Vite + TS web UI (Phase 8 rebuilds)
+├── doc/
+│   ├── product-spec.md # features, user-facing behavior, scenarios
+│   └── tech-spec.md    # schema, storage, CLI contract, release process
+├── scripts/            # build + release (cross-compile via GitHub Actions)
+├── assets/             # icon etc.
+├── DESIGN.md           # rolling locked-decisions log
+└── README.md           # you are here
 ```
-
-See [RELEASES.md](RELEASES.md) for the full release process.
 
 ---
 
 ## License
 
-Linggen is open-source under the [MIT License](LICENSE).
+MIT. See `LICENSE`.
 
-- **Free for individuals:** All personal and open-source use.
-- **Commercial support:** For teams (5+ users), see our [Pricing Page](https://linggen.dev/pricing).
+---
 
-MIT (c) 2026 [Linggen](https://linggen.dev)
+## History
+
+This repo began as a code-indexing tool (RAG for your codebase, tree-sitter AST, local LLM chat). In 2026 it was refactored into a general-purpose semantic memory store for AI assistants. The pre-refactor tree is preserved at the `v0-legacy` git tag if you need to recover any of the original indexing logic.
