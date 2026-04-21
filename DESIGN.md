@@ -114,13 +114,16 @@ Drift-prone categories (do not store as-is):
 
 ## Phase 2 implementation starting point
 
-1. Add new `facts` crate (`backend/facts/`) with:
-   - `Fact` struct matching the 12-field schema
-   - `FactType` parse/display (Utf8 ↔ enum)
-   - `Outcome` parse/display
-   - `From` parse/display (the field named `from`; Rust keyword conflict — rename struct member to `origin` or use `r#from`)
-   - LanceDB Arrow schema definition
-   - `FactsStore` with `open()`, `insert()`, `search()`, `list()`, `get()`, `update()`, `delete()`, `forget()`
-2. Wire `facts` into `api` crate (replace the code-indexing `VectorStore` use sites for memory ops)
-3. Add CLI subcommands in `api/src/cli/` using clap
-4. Unit tests for each op on an in-memory store
+Single-crate layout now (no sub-workspaces). Everything lives in `src/`:
+
+1. `src/facts/types.rs` — `Fact` struct + `FactType`/`Outcome`/`Origin` enums. **Done** — 9 unit tests passing.
+2. `src/facts/schema.rs` — Arrow/LanceDB schema for the `facts` table (12-column Arrow schema, `FixedSizeList<Float32, 384>` vector).
+3. `src/facts/store.rs` — `FactsStore` wrapping a LanceDB connection with `open()`, `insert()`, `get()`, `search()`, `list()`, `update()`, `delete()`, `forget()`.
+4. `src/cli/` — clap subcommand dispatch, wired from `src/main.rs`.
+5. Integration tests using `tempfile::TempDir` to spin up an isolated LanceDB per test.
+
+### Dependency resolution log
+
+- `lancedb = "0.22"` (first attempt) → tripped lance 0.39 recursion-limit error on rustc 1.94.
+- `lancedb = "0.20"` (tried older) → tripped lance 0.29 with the same error.
+- **`lancedb = "0.27"` + `arrow = "56"`** (the resolution) → pulls `lance = "4.x"`, builds clean on rustc 1.94. The lance 4.0 major bump fixed the recursion-depth issue upstream.

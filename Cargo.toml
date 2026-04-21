@@ -36,9 +36,11 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # CLI
 clap = { version = "4", features = ["derive"] }
 
-# Storage — LanceDB + Arrow are re-added in the `store` commit. Pinning a
-# compatible triple triggered a lance 0.39 recursion-limit error with
-# rustc 1.94; resolving that sits on the store PR, not this one.
+# Storage
+lancedb = "0.27"
+arrow = "56"
+arrow-array = "56"
+arrow-schema = "56"
 
 [dev-dependencies]
 tempfile = "3"

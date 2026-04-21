@@ -160,11 +160,11 @@ Hard delete only in v0.1. LanceDB's `delete_by_id` semantics + table rewrite if 
 
 Pinned in `Cargo.toml`:
 
-- `lancedb`, `arrow`, `arrow-array`, `arrow-schema` — must be a compatible triple. Re-added in the store commit; the lance 0.39 recursion-limit issue on rustc 1.94 needs a version resolution first.
+- `lancedb = "0.27"` paired with `arrow = "56"` (matching triple for `arrow-array` / `arrow-schema`). This combination pulls in `lance = "4.x"`, which resolves the recursion-limit issue that older lance versions tripped on rustc 1.94.
 - `tokio` full features.
 - `thiserror` 2.x (upgraded from the archived 1.x).
 - `clap` 4.x derive.
-- `serde`, `serde_json`, `uuid`, `chrono`, `tracing`, `tracing-subscriber`, `futures` — current stable.
+- `serde`, `serde_json`, `uuid`, `chrono`, `tracing`, `tracing-subscriber`, `futures` — current stable, caret-ranged so cargo picks the latest compatible minor.
 
 Release profile: `strip = true`, `lto = "thin"`, `codegen-units = 1`.
 
@@ -197,6 +197,9 @@ Semver. Breaking schema changes (adding / removing / retyping a LanceDB column) 
 
 ## Open technical issues
 
-1. **lance 0.39 × rustc 1.94 recursion-limit error.** Triggered when building with `lancedb = "0.22"`. Needs resolving before store commit — either pin older lancedb, newer lance, or work around with a crate-local `recursion_limit` attribute.
-2. **Embedding model bundling vs download.** For v0.1 the model downloads from HuggingFace Hub on first use. For release-grade distribution, bundling the model as a release asset (one more tarball) avoids network at first-run.
-3. **macOS Gatekeeper on unsigned releases.** v0.1 plan: document the "control-click → Open" workaround. v0.2: Apple Developer ID signing via CI.
+1. **Embedding model bundling vs download.** For v0.1 the model downloads from HuggingFace Hub on first use. For release-grade distribution, bundling the model as a release asset (one more tarball) avoids network at first-run.
+2. **macOS Gatekeeper on unsigned releases.** v0.1 plan: document the "control-click → Open" workaround. v0.2: Apple Developer ID signing via CI.
+
+### Resolved
+
+- ~~**lance × rustc 1.94 recursion-limit error.**~~ Occurred with `lancedb = "0.22"` through `"0.20"` on rustc 1.94. Resolved by upgrading to `lancedb = "0.27"` / `lance = "4.x"`.
