@@ -34,7 +34,8 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # CLI
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "env"] }
+dirs = "5"
 
 # Storage — arrow 57 aligns with lance 4.x / lancedb 0.27's internal version
 lancedb = "0.27"

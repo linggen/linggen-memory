@@ -1,14 +1,32 @@
 //! `ling-mem` binary entry.
 //!
-//! v0.1 scope: a minimal placeholder that proves the binary links. Real CLI
-//! subcommands land incrementally in follow-up commits (see `doc/tech-spec.md`
-//! for the planned `add / get / search / list / update / delete / forget`
-//! contract).
+//! Parses the CLI, dispatches to the subcommand handler, and renders errors
+//! as JSON on stderr with a non-zero exit — matches `doc/tech-spec.md`'s
+//! I/O contract so models and shell scripts can parse failures uniformly.
 
-fn main() {
-    eprintln!(
-        "ling-mem {} — v0.1 in progress.\n\
-         CLI subcommands land incrementally; see doc/tech-spec.md for the plan.",
-        env!("CARGO_PKG_VERSION"),
-    );
+use clap::Parser;
+use ling_mem::cli::{error_code, run, Cli};
+use std::io::Write;
+use std::process::ExitCode;
+
+#[tokio::main]
+async fn main() -> ExitCode {
+    // `tracing_subscriber` is optional; the CLI is mostly silent by default
+    // and routes progress through stderr when `-v` is set. Skipping setup
+    // keeps the binary quiet in piped contexts.
+    let cli = Cli::parse();
+    match run(cli).await {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(err) => {
+            let code = error_code(&err);
+            let payload = serde_json::json!({
+                "error": err.to_string(),
+                "code": code,
+            });
+            let mut stderr = std::io::stderr().lock();
+            let _ = serde_json::to_writer(&mut stderr, &payload);
+            let _ = stderr.write_all(b"\n");
+            ExitCode::from(1)
+        }
+    }
 }

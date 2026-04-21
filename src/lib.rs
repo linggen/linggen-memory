@@ -6,6 +6,7 @@
 //! The public surface of the library is kept small — the binary and tests are
 //! the intended consumers; external Rust users should prefer invoking the CLI.
 
+pub mod cli;
 pub mod facts;
 
 pub use facts::{Fact, FactType, Origin, Outcome};
