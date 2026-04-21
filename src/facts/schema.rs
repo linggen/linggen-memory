@@ -1,0 +1,488 @@
+//! Arrow + LanceDB schema for the `facts` table.
+//!
+//! Defines:
+//! - [`TABLE_NAME`] — the LanceDB table name used by the store.
+//! - [`VECTOR_DIM`] — embedding dimension (384, matches `all-MiniLM-L6-v2`).
+//! - [`build_schema`] — the 12-field Arrow schema matching `doc/tech-spec.md`.
+//! - [`facts_to_record_batch`] — encode `&[Fact]` as a single `RecordBatch`.
+//! - [`record_batch_to_facts`] — decode a `RecordBatch` back into `Vec<Fact>`.
+//!
+//! Changes to any field (rename, type change, nullability flip) must be made
+//! in lockstep here and in `types.rs`.
+
+use super::types::{Fact, FactType, Origin, Outcome};
+use anyhow::{anyhow, Context, Result};
+use arrow_array::{
+    builder::{FixedSizeListBuilder, Float32Builder, ListBuilder, StringBuilder},
+    Array, FixedSizeListArray, ListArray, RecordBatch, StringArray,
+    TimestampMicrosecondArray,
+};
+use arrow_schema::{DataType, Field, Schema, TimeUnit};
+use chrono::{DateTime, TimeZone, Utc};
+use std::str::FromStr;
+use std::sync::Arc;
+use uuid::Uuid;
+
+/// Name of the LanceDB table holding memory facts.
+pub const TABLE_NAME: &str = "facts";
+
+/// Embedding vector dimensionality. Locked for v0.1 by the default model
+/// (`sentence-transformers/all-MiniLM-L6-v2`, 384-dim).
+pub const VECTOR_DIM: i32 = 384;
+
+const TZ_UTC: &str = "UTC";
+
+/// Build the Arrow schema for the `facts` table.
+pub fn build_schema() -> Arc<Schema> {
+    let utf8_item = Arc::new(Field::new("item", DataType::Utf8, true));
+    let float_item = Arc::new(Field::new("item", DataType::Float32, true));
+
+    Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Utf8, false),
+        Field::new("content", DataType::Utf8, false),
+        Field::new(
+            "vector",
+            DataType::FixedSizeList(float_item, VECTOR_DIM),
+            true,
+        ),
+        Field::new(
+            "contexts",
+            DataType::List(utf8_item.clone()),
+            false,
+        ),
+        Field::new(
+            "tags",
+            DataType::List(utf8_item),
+            false,
+        ),
+        Field::new("type", DataType::Utf8, false),
+        Field::new("outcome", DataType::Utf8, true),
+        Field::new("from", DataType::Utf8, false),
+        Field::new("cwd", DataType::Utf8, true),
+        Field::new(
+            "created_at",
+            DataType::Timestamp(TimeUnit::Microsecond, Some(TZ_UTC.into())),
+            false,
+        ),
+        Field::new(
+            "occurred_at",
+            DataType::Timestamp(TimeUnit::Microsecond, Some(TZ_UTC.into())),
+            true,
+        ),
+        Field::new("source_session", DataType::Utf8, true),
+    ]))
+}
+
+/// Encode a slice of facts as a single Arrow `RecordBatch` matching
+/// [`build_schema`]. Preserves row order; `None`-valued optional fields
+/// become nulls in the corresponding columns.
+pub fn facts_to_record_batch(facts: &[Fact]) -> Result<RecordBatch> {
+    let schema = build_schema();
+
+    let ids = StringArray::from_iter_values(facts.iter().map(|f| f.id.to_string()));
+    let contents = StringArray::from_iter_values(facts.iter().map(|f| f.content.clone()));
+    let types = StringArray::from_iter_values(facts.iter().map(|f| f.r#type.as_str()));
+    let froms = StringArray::from_iter_values(facts.iter().map(|f| f.origin.as_str()));
+
+    let outcomes = StringArray::from_iter(
+        facts.iter().map(|f| f.outcome.map(|o| o.as_str())),
+    );
+    let cwds =
+        StringArray::from_iter(facts.iter().map(|f| f.cwd.clone()));
+    let source_sessions = StringArray::from_iter(
+        facts.iter().map(|f| f.source_session.clone()),
+    );
+
+    let vectors = build_vector_column(facts)?;
+    let contexts = build_string_list_column(facts.iter().map(|f| &f.contexts));
+    let tags = build_string_list_column(facts.iter().map(|f| &f.tags));
+
+    let created_at = TimestampMicrosecondArray::from_iter_values(
+        facts.iter().map(|f| f.created_at.timestamp_micros()),
+    )
+    .with_timezone(TZ_UTC);
+
+    let occurred_at = TimestampMicrosecondArray::from_iter(
+        facts.iter().map(|f| f.occurred_at.map(|t| t.timestamp_micros())),
+    )
+    .with_timezone(TZ_UTC);
+
+    RecordBatch::try_new(
+        schema,
+        vec![
+            Arc::new(ids),
+            Arc::new(contents),
+            Arc::new(vectors),
+            Arc::new(contexts),
+            Arc::new(tags),
+            Arc::new(types),
+            Arc::new(outcomes),
+            Arc::new(froms),
+            Arc::new(cwds),
+            Arc::new(created_at),
+            Arc::new(occurred_at),
+            Arc::new(source_sessions),
+        ],
+    )
+    .context("building facts RecordBatch")
+}
+
+/// Decode a `RecordBatch` produced against [`build_schema`] back into facts.
+/// Returns an error if any required column is missing or has the wrong type.
+pub fn record_batch_to_facts(batch: &RecordBatch) -> Result<Vec<Fact>> {
+    let n = batch.num_rows();
+    let ids = col_utf8(batch, "id")?;
+    let contents = col_utf8(batch, "content")?;
+    let types = col_utf8(batch, "type")?;
+    let froms = col_utf8(batch, "from")?;
+    let outcomes = col_utf8_opt(batch, "outcome")?;
+    let cwds = col_utf8_opt(batch, "cwd")?;
+    let source_sessions = col_utf8_opt(batch, "source_session")?;
+    let contexts = col_string_list(batch, "contexts")?;
+    let tags = col_string_list(batch, "tags")?;
+    let vectors = col_vector(batch, "vector")?;
+    let created_at = col_timestamp(batch, "created_at")?;
+    let occurred_at = col_timestamp_opt(batch, "occurred_at")?;
+
+    let mut out = Vec::with_capacity(n);
+    for i in 0..n {
+        let id = Uuid::parse_str(ids.value(i)).context("id column has non-UUID value")?;
+        let type_str = types.value(i);
+        let r#type = FactType::from_str(type_str)
+            .with_context(|| format!("unknown type `{type_str}` at row {i}"))?;
+        let from_str = froms.value(i);
+        let origin = Origin::from_str(from_str)
+            .with_context(|| format!("unknown from `{from_str}` at row {i}"))?;
+        let outcome = match outcomes.get(i).copied().flatten() {
+            Some(s) => Some(
+                Outcome::from_str(s)
+                    .with_context(|| format!("unknown outcome `{s}` at row {i}"))?,
+            ),
+            None => None,
+        };
+
+        out.push(Fact {
+            id,
+            content: contents.value(i).to_string(),
+            vector: vectors.get(i).cloned().flatten(),
+            contexts: contexts[i].clone(),
+            tags: tags[i].clone(),
+            r#type,
+            outcome,
+            origin,
+            cwd: cwds.get(i).copied().flatten().map(str::to_string),
+            created_at: created_at[i],
+            occurred_at: occurred_at.get(i).copied().flatten(),
+            source_session: source_sessions
+                .get(i)
+                .copied()
+                .flatten()
+                .map(str::to_string),
+        });
+    }
+    Ok(out)
+}
+
+// ── column builders ─────────────────────────────────────────────────────────
+
+fn build_string_list_column<'a, I>(iter: I) -> ListArray
+where
+    I: IntoIterator<Item = &'a Vec<String>>,
+{
+    let mut builder = ListBuilder::new(StringBuilder::new());
+    for row in iter {
+        for s in row {
+            builder.values().append_value(s);
+        }
+        builder.append(true);
+    }
+    builder.finish()
+}
+
+fn build_vector_column(facts: &[Fact]) -> Result<FixedSizeListArray> {
+    let mut builder = FixedSizeListBuilder::new(Float32Builder::new(), VECTOR_DIM);
+    for fact in facts {
+        match &fact.vector {
+            Some(v) => {
+                if v.len() != VECTOR_DIM as usize {
+                    return Err(anyhow!(
+                        "fact {} has vector len {} but schema expects {}",
+                        fact.id,
+                        v.len(),
+                        VECTOR_DIM
+                    ));
+                }
+                for x in v {
+                    builder.values().append_value(*x);
+                }
+                builder.append(true);
+            }
+            None => {
+                for _ in 0..VECTOR_DIM {
+                    builder.values().append_null();
+                }
+                builder.append(false);
+            }
+        }
+    }
+    Ok(builder.finish())
+}
+
+// ── column extractors ───────────────────────────────────────────────────────
+
+fn col_utf8<'a>(batch: &'a RecordBatch, name: &str) -> Result<&'a StringArray> {
+    batch
+        .column_by_name(name)
+        .with_context(|| format!("missing column `{name}`"))?
+        .as_any()
+        .downcast_ref::<StringArray>()
+        .with_context(|| format!("column `{name}` is not Utf8"))
+}
+
+/// Utf8 column as a Vec mapping row → Option<&str>. Cheap: borrows from the
+/// underlying array, one Option per row.
+fn col_utf8_opt<'a>(batch: &'a RecordBatch, name: &str) -> Result<Vec<Option<&'a str>>> {
+    let arr = col_utf8(batch, name)?;
+    Ok((0..arr.len())
+        .map(|i| if arr.is_null(i) { None } else { Some(arr.value(i)) })
+        .collect())
+}
+
+fn col_string_list(batch: &RecordBatch, name: &str) -> Result<Vec<Vec<String>>> {
+    let arr = batch
+        .column_by_name(name)
+        .with_context(|| format!("missing column `{name}`"))?
+        .as_any()
+        .downcast_ref::<ListArray>()
+        .with_context(|| format!("column `{name}` is not List<Utf8>"))?;
+
+    let mut out = Vec::with_capacity(arr.len());
+    for i in 0..arr.len() {
+        let row = arr.value(i);
+        let strs = row
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .context("list item is not Utf8")?;
+        out.push(
+            (0..strs.len())
+                .filter(|&j| !strs.is_null(j))
+                .map(|j| strs.value(j).to_string())
+                .collect(),
+        );
+    }
+    Ok(out)
+}
+
+fn col_vector(
+    batch: &RecordBatch,
+    name: &str,
+) -> Result<Vec<Option<Vec<f32>>>> {
+    let arr = batch
+        .column_by_name(name)
+        .with_context(|| format!("missing column `{name}`"))?
+        .as_any()
+        .downcast_ref::<FixedSizeListArray>()
+        .with_context(|| format!("column `{name}` is not FixedSizeList<Float32>"))?;
+
+    let mut out = Vec::with_capacity(arr.len());
+    for i in 0..arr.len() {
+        if arr.is_null(i) {
+            out.push(None);
+            continue;
+        }
+        let row = arr.value(i);
+        let floats = row
+            .as_any()
+            .downcast_ref::<arrow_array::Float32Array>()
+            .context("vector row is not Float32")?;
+        let vec: Vec<f32> = (0..floats.len())
+            .map(|j| if floats.is_null(j) { 0.0 } else { floats.value(j) })
+            .collect();
+        out.push(Some(vec));
+    }
+    Ok(out)
+}
+
+fn col_timestamp(
+    batch: &RecordBatch,
+    name: &str,
+) -> Result<Vec<DateTime<Utc>>> {
+    let arr = batch
+        .column_by_name(name)
+        .with_context(|| format!("missing column `{name}`"))?
+        .as_any()
+        .downcast_ref::<TimestampMicrosecondArray>()
+        .with_context(|| format!("column `{name}` is not Timestamp(us)"))?;
+
+    (0..arr.len())
+        .map(|i| {
+            Utc.timestamp_micros(arr.value(i))
+                .single()
+                .with_context(|| format!("row {i} of `{name}` is an ambiguous/invalid timestamp"))
+        })
+        .collect()
+}
+
+fn col_timestamp_opt(
+    batch: &RecordBatch,
+    name: &str,
+) -> Result<Vec<Option<DateTime<Utc>>>> {
+    let arr = batch
+        .column_by_name(name)
+        .with_context(|| format!("missing column `{name}`"))?
+        .as_any()
+        .downcast_ref::<TimestampMicrosecondArray>()
+        .with_context(|| format!("column `{name}` is not Timestamp(us)"))?;
+
+    (0..arr.len())
+        .map(|i| {
+            if arr.is_null(i) {
+                Ok(None)
+            } else {
+                Utc.timestamp_micros(arr.value(i))
+                    .single()
+                    .map(Some)
+                    .with_context(|| format!("row {i} of `{name}` is an ambiguous/invalid timestamp"))
+            }
+        })
+        .collect()
+}
+
+// ── Tests ───────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Duration;
+
+    fn sample_facts() -> Vec<Fact> {
+        let mut f1 = Fact::new("user prefers concise replies", FactType::Preference, Origin::User);
+        f1.contexts = vec!["global".into()];
+        f1.tags = vec!["intent:style".into()];
+
+        let mut f2 = Fact::new(
+            "webrtc dc closes after 30s idle",
+            FactType::Fixed,
+            Origin::Agent,
+        );
+        f2.contexts = vec!["code/linggen".into(), "webrtc".into()];
+        f2.tags = vec!["topic:networking".into()];
+        f2.outcome = Some(Outcome::Positive);
+        f2.vector = Some(vec![0.1; VECTOR_DIM as usize]);
+        f2.cwd = Some("/home/u/workspace/linggen".into());
+        f2.occurred_at = Some(f2.created_at - Duration::hours(3));
+        f2.source_session = Some("sess-abc".into());
+
+        let f3 = Fact::new("", FactType::Learned, Origin::Derived);
+
+        vec![f1, f2, f3]
+    }
+
+    #[test]
+    fn schema_has_twelve_fields() {
+        let schema = build_schema();
+        assert_eq!(schema.fields().len(), 12);
+    }
+
+    #[test]
+    fn schema_field_names_match_spec() {
+        let schema = build_schema();
+        let names: Vec<&str> = schema.fields().iter().map(|f| f.name().as_str()).collect();
+        assert_eq!(
+            names,
+            vec![
+                "id", "content", "vector", "contexts", "tags", "type", "outcome",
+                "from", "cwd", "created_at", "occurred_at", "source_session",
+            ]
+        );
+    }
+
+    #[test]
+    fn facts_roundtrip_through_record_batch() {
+        let facts = sample_facts();
+        let batch = facts_to_record_batch(&facts).unwrap();
+        assert_eq!(batch.num_rows(), facts.len());
+
+        let decoded = record_batch_to_facts(&batch).unwrap();
+        assert_eq!(decoded, facts);
+    }
+
+    #[test]
+    fn empty_vec_roundtrips() {
+        let batch = facts_to_record_batch(&[]).unwrap();
+        assert_eq!(batch.num_rows(), 0);
+        let decoded = record_batch_to_facts(&batch).unwrap();
+        assert!(decoded.is_empty());
+    }
+
+    #[test]
+    fn wrong_vector_dim_is_rejected() {
+        let mut f = Fact::new("x", FactType::Fact, Origin::Derived);
+        f.vector = Some(vec![0.0; 128]);
+        let err = facts_to_record_batch(&[f]).unwrap_err();
+        assert!(err.to_string().contains("expects 384"));
+    }
+
+    #[test]
+    fn nulls_omit_optional_fields() {
+        let facts = sample_facts();
+        let batch = facts_to_record_batch(&facts).unwrap();
+
+        // f1 and f3 have no outcome; f2 does.
+        let outcomes = batch
+            .column_by_name("outcome")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        assert!(outcomes.is_null(0));
+        assert!(!outcomes.is_null(1));
+        assert!(outcomes.is_null(2));
+
+        // f2 has a vector; f1 and f3 don't.
+        let vectors = batch
+            .column_by_name("vector")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<FixedSizeListArray>()
+            .unwrap();
+        assert!(vectors.is_null(0));
+        assert!(!vectors.is_null(1));
+        assert!(vectors.is_null(2));
+    }
+
+    #[test]
+    fn list_columns_never_null() {
+        // Even empty contexts / tags produce a present-but-empty list,
+        // not a null. This keeps list-contains filters simple.
+        let f = Fact::new("x", FactType::Fact, Origin::Derived);
+        let batch = facts_to_record_batch(&[f]).unwrap();
+        let contexts = batch
+            .column_by_name("contexts")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<ListArray>()
+            .unwrap();
+        assert!(!contexts.is_null(0));
+        assert_eq!(contexts.value(0).len(), 0);
+    }
+
+    #[test]
+    fn record_batch_reports_missing_column() {
+        // Build a batch missing the `tags` column to ensure the decoder
+        // surfaces a clear error.
+        let mut facts = sample_facts();
+        facts.truncate(1);
+        let batch = facts_to_record_batch(&facts).unwrap();
+
+        // Drop a column by re-projecting.
+        let schema = batch.schema();
+        let keep: Vec<usize> = (0..schema.fields().len())
+            .filter(|&i| schema.field(i).name() != "tags")
+            .collect();
+        let pruned = batch.project(&keep).unwrap();
+
+        let err = record_batch_to_facts(&pruned).unwrap_err();
+        assert!(err.to_string().contains("tags"));
+    }
+}
