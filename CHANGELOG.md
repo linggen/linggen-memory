@@ -1,5 +1,66 @@
 # Changelog
 
+## [0.1.0] - 2026-04-21 — Memory skill rebuild
+
+**Complete rewrite.** Repo repurposed from a code-indexing tool into a
+general-purpose semantic memory store for AI assistants.
+
+See `doc/product-spec.md` for the full product story and `doc/tech-spec.md`
+for the implementation contract. The pre-refactor source is preserved at
+the `v0-legacy` git tag.
+
+### What's new
+
+- **`ling-mem` binary** — single Rust binary, LanceDB-backed, with all v0.1
+  CLI subcommands:
+  - `add`, `get`, `search`, `list`, `update`, `delete`, `forget`
+  - `collect`, `extract` — session scanning + transcript flattening (Rust
+    ports of the prior shell scripts)
+- **LanceDB `facts` table** with a 12-field schema: id, content, vector
+  (384-dim), contexts, tags, type, outcome, from, cwd, created_at,
+  occurred_at, source_session.
+- **Seven canonical fact types**: `fact`, `preference`, `decision`,
+  `tried`, `fixed`, `learned`, `built`. No `activity` catch-all.
+- **Retrieval**: vector-similarity semantic search + metadata filtering on
+  contexts / types / origin / outcome / time range.
+- **I/O contract** (see `doc/tech-spec.md`): NDJSON on stdout, JSON errors
+  on stderr with `code` field, human-readable via `--format text`.
+- **Data dir**: respects `$LINGGEN_DATA_DIR`; falls back to `~/.linggen/`.
+  Multi-user isolation is path-level — binary is single-user per invocation.
+- **Embedding model**: `sentence-transformers/all-MiniLM-L6-v2`
+  (local inference via Candle, 384-dim). Configurable via
+  `LING_MEM_EMBEDDING_MODEL` env var.
+
+### What's gone
+
+- **Local LLM inference** (was Qwen3 via Candle). Linggen handles chat now;
+  this binary is store + search only.
+- **Code-specific indexing** — tree-sitter AST, file dependency graph,
+  language detection, project-aware file walking.
+- **Multi-crate workspace** — flattened to a single crate. Sub-crates
+  (api/core/embeddings/storage/ingestion/enhancement/mcp-server/llm/
+  architect/context/intent) are gone or folded into `src/<module>/`.
+- **Old webpage** — frontend renamed `webui/` with a Phase 8 placeholder;
+  the markdown-editor UI for memory rebuilds later.
+- **Shell release scripts** — replaced by GitHub Actions workflows
+  (`ci.yml` + `release.yml`).
+- **MCP HTTP endpoints** — can resurface later if the memory skill needs
+  a direct MCP surface.
+
+### Release artifacts
+
+Cross-compiled to 4 targets by the new release workflow:
+
+- `ling-mem-aarch64-apple-darwin.tar.gz`  (macOS Apple Silicon)
+- `ling-mem-x86_64-apple-darwin.tar.gz`   (macOS Intel)
+- `ling-mem-x86_64-unknown-linux-gnu.tar.gz`
+- `ling-mem-aarch64-unknown-linux-gnu.tar.gz`
+- `SHA256SUMS.txt` (combined checksums for all tarballs)
+
+Each tarball contains the `ling-mem` binary + `README.md` + `LICENSE`.
+
+---
+
 ## [0.7.0] - 2026-02-19
 
 ### Added
