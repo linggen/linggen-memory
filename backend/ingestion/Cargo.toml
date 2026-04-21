@@ -11,29 +11,14 @@ async-trait = "0.1"
 
 tokio = { version = "1.40", features = ["full"] }
 anyhow = "1.0"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-uuid = { version = "1.0", features = ["v4", "serde"] }
-url = { version = "2.5", features = ["serde"] }
 tracing = "0.1"
 
-# File System
+# File System watching (used by API's internal indexer for memory files)
 notify = "6.1"
-walkdir = "2.4"
-ignore = "0.4" # For respecting .gitignore
-glob = "0.3"   # For include/exclude pattern matching
 
-# Git
-git2 = "0.19"
-
-# Web
-reqwest = { version = "0.12", features = ["json"] }
-scraper = "0.20"
-
-# Document extraction (PDF, DOCX)
+# Document extraction (PDF, DOCX uploads)
 pdf-extract = "0.7"
 dotext = "0.1"
 
 [dev-dependencies]
 tempfile = "3.8"
-wiremock = "0.5"
