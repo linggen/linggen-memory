@@ -10,12 +10,9 @@ path = "src/main.rs"
 
 [dependencies]
 linggen-core = { path = "../core" }
-linggen-architect = { path = "../architect" }
 ingestion = { path = "../ingestion" }
 embeddings = { path = "../embeddings" }
 storage = { path = "../storage" }
-linggen-intent = { path = "../intent" }
-linggen-llm = { path = "../llm" }
 linggen-enhancement = { path = "../enhancement" }
 
 tokio = { version = "1.40", features = ["full"] }

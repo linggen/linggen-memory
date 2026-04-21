@@ -8,10 +8,8 @@ edition = { workspace = true }
 [dependencies]
 # Our crates
 linggen-core = { path = "../core" }
-linggen-intent = { path = "../intent" }
 storage = { path = "../storage" }
 embeddings = { path = "../embeddings" }
-linggen-llm = { path = "../llm" }
 
 
 # Utilities

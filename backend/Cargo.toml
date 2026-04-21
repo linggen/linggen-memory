@@ -6,14 +6,10 @@ edition = "2021"
 [workspace]
 members = [
     "api",
-    "architect",
-    "context",
     "core",
     "embeddings",
     "enhancement",
     "ingestion",
-    "intent",
-    "llm",
     "storage",
     "mcp-server",
 ]
