@@ -29,7 +29,7 @@ Intentionally *not* for: team-wide shared knowledge bases, production-scale docu
 2. **Markdown is the identity layer.** Universal facts about the user live in plain markdown files that any tool can read. LanceDB is the activity / fact layer — richer, queryable, but never the only copy.
 3. **Semantic search by default.** Everything stored gets embedded; retrieval is vector-similarity + metadata filter.
 4. **CLI is the primary interface.** Any model in any tool can call `ling-mem` via Bash. Tool-namespace dispatch in Linggen is sugar on top.
-5. **Humans can read and edit memory.** The webpage is a markdown-like editor over rows; nightly markdown export feeds git/backup.
+5. **Humans can read and edit memory.** The skill's webpage is a row browser + editor that talks to `ling-mem` on the user's behalf; nightly markdown export feeds git/backup.
 6. **Forgetting is a first-class operation.** `archive`, `delete`, `forget` are as important as `add`.
 
 ## Shape of a fact
@@ -66,7 +66,7 @@ No `activity` catch-all. Weekly-status-style entries (the drift category in prio
 
 1. **Active injection (push).** When a session starts or a turn arrives, relevant facts are auto-attached to the prompt — scope-filtered, top-k by vector similarity. The assistant doesn't need to ask.
 2. **Tool (pull).** `ling-mem search <query>` — invoked by the model when it decides memory would help.
-3. **Browse (human).** The webpage — filter, sort, star, bulk-archive, bulk-forget. Also nightly markdown export for git-sync and audit.
+3. **Browse (human).** The skill's webpage — filter, sort, star, bulk-archive, bulk-forget. Ships with the Linggen memory skill (`skills/memory/ui/`), not the `ling-mem` binary. Also nightly markdown export for git-sync and audit.
 
 ## The four forgetting mechanisms
 
@@ -86,32 +86,34 @@ ling-mem archive <id>
 ling-mem delete <id>
 ling-mem forget --context code/sanji --older-than 30d
 
-# Extraction (Phase 3)
+# Extraction
 ling-mem collect --since 2026-04-01
 ling-mem extract <session-path> --source cc
-
-# Web UI (Phase 8)
-ling-mem serve --port 0 --open
 ```
+
+Web UI: provided by the Linggen memory skill, not the `ling-mem` binary.
+See the skill's `skills/memory/ui/` in the main Linggen repo.
 
 Default output: NDJSON on stdout. `--format=text` for human-readable. Errors on stderr with non-zero exit.
 
 ## How it fits with Linggen
 
 - Installed as a Linggen **skill** that advertises `provides: [memory]`.
-- The skill has an `app:` launcher so clicking "Memory" in Linggen opens the webpage.
+- The skill ships its own static HTML/JS at `skills/memory/ui/`. Linggen's `app: launcher: web` opens it in-app; the page calls `ling-mem` via Linggen's bash or `Memory.*` tool dispatch.
 - Linggen's core routes `Memory.*` tool calls to the skill, which shells out to `ling-mem`.
 - Separately, the skill's `SKILL.md` body is readable by any Claude Code session — same binary, same CLI, just invoked via Bash.
 
 See `tech-spec.md` for the repo layout, CLI contract, schema, and release process.
 
-## Out of scope for v0.1
+## Out of scope for v0.1 (`ling-mem` binary)
 
 - Soft-delete / `archive` (deferred until the hard-delete behavior proves insufficient)
-- Daemon mode (`serve`) — arrives with the webpage in Phase 8
+- HTTP daemon mode (`serve`) — the skill webpage lives outside the binary, so the binary stays CLI-only
 - Multi-provider memory skills (Linggen picks one active provider; switching is user-initiated)
 - Team-shared memory across multiple users
 - Sync protocol other than "nightly markdown export → git"
+
+Web UI details are out-of-scope for *this repo*; they're tracked on the skill wrapper in the main Linggen repo.
 
 ## Future directions
 

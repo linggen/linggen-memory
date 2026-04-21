@@ -21,8 +21,9 @@ linggen-memory/
 │   ├── embed/           # embedding model (added in store commit)
 │   ├── store/           # FactsStore — LanceDB open/insert/search/...
 │   ├── cli/             # clap subcommand dispatch
-│   └── server/          # axum scaffold for webpage (Phase 8 active use)
-├── webui/               # Vite + TypeScript shell (Phase 8 rebuilds)
+│   └── (no server/, no HTTP daemon — CLI-only binary)
+# Note: the user-facing webpage lives in the skill wrapper
+# (skills/memory/ui/ in the main Linggen repo), not here.
 ├── doc/
 │   ├── product-spec.md  # this file's sibling
 │   └── tech-spec.md     # you are here
@@ -110,7 +111,7 @@ If the configured model output dimension doesn't match the table's `FixedSizeLis
 | `delete <id>` | Hard delete | `--yes` to skip confirmation |
 | `forget` | Bulk delete by filter | `--context`, `--type`, `--older-than`; requires `--yes` |
 
-Deferred to later phases (same binary): `archive`, `collect`, `extract`, `serve`.
+Deferred or out-of-scope: `archive` (soft-delete; deferred if `delete` proves insufficient), `serve` (HTTP daemon; the skill webpage lives outside this binary so `serve` isn't needed for v0.1).
 
 ### I/O contract
 
@@ -172,7 +173,8 @@ Release profile: `strip = true`, `lto = "thin"`, `codegen-units = 1`.
 
 The **linggen-memory skill** is a thin wrapper in the main Linggen repo's skills tree. Its responsibilities:
 
-- `SKILL.md` frontmatter: `provides: [memory]`, `app:` launcher pointing at `ling-mem serve`, `install: scripts/install.sh`.
+- `SKILL.md` frontmatter: `provides: [memory]`, `app:` launcher pointing at the skill's own static HTML (`skills/memory/ui/`), `install: install.sh`.
+- Web UI: lives inside the skill, not the binary. Static HTML/JS calls back to Linggen to invoke `ling-mem` via bash or `Memory.*` tool dispatch. Binary stays CLI-only.
 - `install.sh`: detect platform via `uname`, download matching release binary from GitHub Releases, extract to the skill's `bin/` directory.
 - No scripts beyond install — the binary handles everything else.
 

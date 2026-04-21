@@ -1,7 +1,3 @@
-<p align="center">
-  <img src="webui/public/logo.svg" width="120" alt="linggen-memory logo">
-</p>
-
 # linggen-memory
 
 **A semantic memory store for AI assistants.**
@@ -73,7 +69,8 @@ Prebuilt binaries for macOS (Intel + Apple Silicon) and Linux (x86_64 + aarch64)
 linggen-memory/
 ├── Cargo.toml          # single crate
 ├── src/                # all Rust code
-├── webui/              # Vite + TS web UI (Phase 8 rebuilds)
+│                       # (no webui/ — the memory skill's UI lives in
+│                        #  skills/memory/ui/ in the main Linggen repo)
 ├── doc/
 │   ├── product-spec.md # features, user-facing behavior, scenarios
 │   └── tech-spec.md    # schema, storage, CLI contract, release process

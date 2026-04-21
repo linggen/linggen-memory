@@ -11,7 +11,7 @@ See also:
 ## Binary and CLI
 
 - **Binary name:** `ling-mem` (already the name in `backend/api/Cargo.toml`). "linggen-memory" remains the repo / product name.
-- **v0.1 is CLI-only.** No daemon / `serve` subcommand. Daemon mode lands in Phase 8 for the webpage.
+- **v0.1 is CLI-only.** No daemon / `serve` subcommand. The skill's webpage (in `skills/memory/ui/` in the main Linggen repo) is a static HTML/JS app that calls `ling-mem` via Linggen's bash or `Memory.*` tool dispatch — the binary doesn't host HTTP.
 - **Usage pattern:** single-user per invocation. Linggen (or Claude Code) invokes `ling-mem` as a subprocess; the binary opens LanceDB, runs the op, writes JSON to stdout, closes, exits.
 
 ## Storage
@@ -104,7 +104,7 @@ Drift-prone categories (do not store as-is):
 - `access_count` + `last_referenced` (frecency)
 - `pinned` boolean for user curation
 - `supersedes` for edit history
-- Daemon / `serve` subcommand (Phase 8)
+- Daemon / `serve` subcommand — deferred; skill webpage doesn't need it
 - `archive` subcommand for soft-delete
 - `collect` + `extract` subcommands (Phase 3)
 - Embedding-model upgrade to `bge-small-en-v1.5`

@@ -24,7 +24,7 @@ The main Linggen repo owns the integration side (see `../linggen/doc/memory-spec
 linggen-memory/
 ├── Cargo.toml       # single crate at root
 ├── src/             # all Rust code
-├── webui/           # Vite + TS scaffold (Phase 8 rebuilds)
+│                   # (no webui/ — skill's UI lives in the main repo)
 ├── doc/             # product-spec.md + tech-spec.md
 ├── scripts/         # build + release
 ├── assets/          # icon etc.
@@ -40,7 +40,7 @@ No workspace, no sub-crates. Anything new goes in `src/<module>/`.
 **In scope for this repo:**
 - LanceDB store + embedding pipeline
 - CLI subcommands on `ling-mem`
-- HTTP daemon + webpage (Phase 8)
+- (out-of-scope: HTTP daemon + webpage — lives in the memory skill wrapper)
 - Platform release binaries (cross-compile via GitHub Actions)
 - All docs under `doc/` about the binary itself
 
