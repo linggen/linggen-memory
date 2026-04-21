@@ -4,19 +4,12 @@
 *.pdb
 Cargo.lock
 
-# Backend build artifacts
-backend/target/
-backend/**/target/
-
-# Frontend (Node.js / React)
-frontend/node_modules/
-frontend/dist/
-frontend/.env
-frontend/.env.local
-frontend/.env.*.local
-
-# Vite build output embedded into api (generated — never commit)
-backend/api/dist/
+# Web UI (Vite + Node)
+webui/node_modules/
+webui/dist/
+webui/.env
+webui/.env.local
+webui/.env.*.local
 
 # Runtime state
 server.json
@@ -56,23 +49,16 @@ rust-project.json
 *.profdata
 coverage/
 
-# Debug / Release builds
+# Debug / Release builds (common output dirs)
 **/debug/
 **/release/
-# Block build artifact assets but allow source assets
-/assets/
-backend/assets/
-frontend/assets/
-dist/
+/dist/
 
 # Project Memory
 .linggen/memory/
 
-# Registry/CLI secrets
+# Registry / CLI secrets
 .mcpregistry_github_token
 .mcpregistry_registry_token
-linggen-cli/.env
 .env
 .env.local
-
-.claude/skills/

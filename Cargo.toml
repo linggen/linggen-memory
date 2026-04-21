@@ -1,0 +1,49 @@
+[package]
+name = "ling-mem"
+version = "0.1.0"
+edition = "2021"
+authors = ["linggen77@gmail.com"]
+description = "Semantic memory store — facts, activity, LanceDB-backed retrieval"
+repository = "https://github.com/linggen/linggen-memory"
+license = "MIT"
+readme = "README.md"
+
+[[bin]]
+name = "ling-mem"
+path = "src/main.rs"
+
+[dependencies]
+# Async
+tokio = { version = "1", features = ["full"] }
+futures = "0.3"
+
+# Errors
+anyhow = "1"
+thiserror = "2"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# IDs and timestamps
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Storage — LanceDB + Arrow are re-added in the `store` commit. Pinning a
+# compatible triple triggered a lance 0.39 recursion-limit error with
+# rustc 1.94; resolving that sits on the store PR, not this one.
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+strip = true
+lto = "thin"
+codegen-units = 1

@@ -1,7 +1,0 @@
-{
-  "mcpServers": {
-    "linggen": {
-      "url": "http://localhost:8787/mcp/sse"
-    }
-  }
-}
