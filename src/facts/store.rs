@@ -9,9 +9,10 @@
 //! mutation ops land in subsequent commits.
 
 use super::schema::{build_schema, facts_to_record_batch, record_batch_to_facts, TABLE_NAME};
-use super::types::Fact;
+use super::types::{Fact, FactType, Origin, Outcome};
 use anyhow::{anyhow, Context, Result};
 use arrow_array::{RecordBatch, RecordBatchIterator, RecordBatchReader};
+use chrono::{DateTime, Utc};
 use futures::TryStreamExt;
 use lancedb::{
     connect,
@@ -20,6 +21,91 @@ use lancedb::{
 };
 use std::path::Path;
 use uuid::Uuid;
+
+/// Filter criteria shared by [`FactsStore::search`] and [`FactsStore::list`].
+///
+/// All filter fields combine with AND. Within `contexts`, every entry must
+/// appear in the fact's `contexts` array (AND semantics). Within `types`,
+/// any one entry matches (OR). An empty filter matches every row.
+#[derive(Debug, Clone, Default)]
+pub struct Filters {
+    pub contexts: Vec<String>,
+    pub types: Vec<FactType>,
+    pub origin: Option<Origin>,
+    pub outcome: Option<Outcome>,
+    pub since: Option<DateTime<Utc>>,
+    pub until: Option<DateTime<Utc>>,
+}
+
+impl Filters {
+    /// Render this filter set as a SQL WHERE-clause fragment (without the
+    /// `WHERE` keyword itself). Returns `None` when nothing is filtered —
+    /// callers skip `only_if` in that case.
+    ///
+    /// Time fields compare against `COALESCE(occurred_at, created_at)` so
+    /// `since` / `until` match whichever timestamp the fact actually carries.
+    fn to_sql(&self) -> Option<String> {
+        let mut clauses: Vec<String> = Vec::new();
+
+        for ctx in &self.contexts {
+            clauses.push(format!("array_has(contexts, '{}')", escape_sql(ctx)));
+        }
+
+        if !self.types.is_empty() {
+            let or = self
+                .types
+                .iter()
+                .map(|t| format!("type = '{}'", t.as_str()))
+                .collect::<Vec<_>>()
+                .join(" OR ");
+            clauses.push(format!("({or})"));
+        }
+
+        if let Some(o) = self.origin {
+            // `from` is a SQL keyword — double-quote the column name.
+            clauses.push(format!("\"from\" = '{}'", o.as_str()));
+        }
+
+        if let Some(o) = self.outcome {
+            clauses.push(format!("outcome = '{}'", o.as_str()));
+        }
+
+        if let Some(since) = self.since {
+            clauses.push(format!(
+                "COALESCE(occurred_at, created_at) >= TIMESTAMP '{}'",
+                since.format("%Y-%m-%d %H:%M:%S%.6f")
+            ));
+        }
+
+        if let Some(until) = self.until {
+            clauses.push(format!(
+                "COALESCE(occurred_at, created_at) < TIMESTAMP '{}'",
+                until.format("%Y-%m-%d %H:%M:%S%.6f")
+            ));
+        }
+
+        if clauses.is_empty() {
+            None
+        } else {
+            Some(clauses.join(" AND "))
+        }
+    }
+}
+
+/// Sort order for [`FactsStore::list`]. Search is ordered by similarity and
+/// doesn't use this.
+#[derive(Debug, Clone, Copy, Default)]
+pub enum SortOrder {
+    /// Newest first (by `effective_timestamp`).
+    #[default]
+    Newest,
+    /// Oldest first.
+    Oldest,
+}
+
+fn escape_sql(s: &str) -> String {
+    s.replace('\'', "''")
+}
 
 /// The LanceDB-backed memory store.
 pub struct FactsStore {
@@ -144,6 +230,84 @@ impl FactsStore {
             .await
             .context("counting rows in facts table")
     }
+
+    /// Nearest-neighbor search over `vector`, constrained by `filters`.
+    ///
+    /// Returns up to `limit` facts sorted by vector similarity (closest
+    /// first). Rows with null vectors are never returned — they wouldn't
+    /// have a similarity score.
+    pub async fn search(
+        &self,
+        query_vec: &[f32],
+        filters: &Filters,
+        limit: usize,
+    ) -> Result<Vec<Fact>> {
+        if query_vec.len() != super::schema::VECTOR_DIM as usize {
+            return Err(anyhow!(
+                "query vector has len {} but schema dim is {}",
+                query_vec.len(),
+                super::schema::VECTOR_DIM
+            ));
+        }
+
+        let mut q = self
+            .table
+            .vector_search(query_vec.to_vec())
+            .context("starting vector search")?
+            .limit(limit);
+
+        if let Some(sql) = filters.to_sql() {
+            q = q.only_if(sql);
+        }
+
+        self.collect_query(q).await
+    }
+
+    /// Non-semantic browse. Returns up to `limit` facts matching `filters`,
+    /// sorted by `effective_timestamp` according to `order`.
+    ///
+    /// Sorting is done in-process after the batch returns — LanceDB's query
+    /// builder doesn't expose an ORDER BY equivalent for list-style queries
+    /// without a vector. For v0.1 row counts this is fine; revisit if files
+    /// grow past ~100k rows.
+    pub async fn list(
+        &self,
+        filters: &Filters,
+        order: SortOrder,
+        limit: usize,
+    ) -> Result<Vec<Fact>> {
+        // Fetch up to `limit` rows matching the filter. We pull more than
+        // `limit` only when LanceDB might return unsorted rows and we need
+        // to top-N-sort; for v0.1 we trust the filter to narrow enough.
+        let mut q = self.table.query().limit(limit);
+        if let Some(sql) = filters.to_sql() {
+            q = q.only_if(sql);
+        }
+
+        let mut facts = self.collect_query(q).await?;
+
+        facts.sort_by(|a, b| match order {
+            SortOrder::Newest => b.effective_timestamp().cmp(&a.effective_timestamp()),
+            SortOrder::Oldest => a.effective_timestamp().cmp(&b.effective_timestamp()),
+        });
+        Ok(facts)
+    }
+
+    async fn collect_query<Q: ExecutableQuery>(&self, q: Q) -> Result<Vec<Fact>> {
+        let mut stream = q.execute().await.context("executing facts query")?;
+        let mut out: Vec<Fact> = Vec::new();
+        while let Some(batch) = stream
+            .try_next()
+            .await
+            .context("reading next batch from facts query")?
+        {
+            if batch.num_rows() == 0 {
+                continue;
+            }
+            out.extend(record_batch_to_facts(&batch)?);
+        }
+        Ok(out)
+    }
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────
@@ -236,5 +400,218 @@ mod tests {
             .collect();
         store.insert(&facts).await.unwrap();
         assert_eq!(store.count().await.unwrap(), 50);
+    }
+
+    // ── search + list tests ────────────────────────────────────────────────
+
+    use super::super::schema::VECTOR_DIM;
+    use chrono::Duration;
+
+    fn with_vector(mut f: Fact, value: f32) -> Fact {
+        f.vector = Some(vec![value; VECTOR_DIM as usize]);
+        f
+    }
+
+    #[tokio::test]
+    async fn filters_to_sql_is_none_for_default() {
+        assert!(Filters::default().to_sql().is_none());
+    }
+
+    #[tokio::test]
+    async fn filters_sql_builds_single_clauses() {
+        let f = Filters {
+            contexts: vec!["code/linggen".into()],
+            types: vec![FactType::Fixed],
+            origin: Some(Origin::User),
+            outcome: Some(Outcome::Positive),
+            since: None,
+            until: None,
+        };
+        let sql = f.to_sql().unwrap();
+        assert!(sql.contains("array_has(contexts, 'code/linggen')"));
+        assert!(sql.contains("type = 'fixed'"));
+        assert!(sql.contains("\"from\" = 'user'"));
+        assert!(sql.contains("outcome = 'positive'"));
+        assert!(sql.contains(" AND "));
+    }
+
+    #[tokio::test]
+    async fn list_with_empty_filters_returns_all_newest_first() {
+        let (store, _dir) = fresh_store().await;
+
+        let mut old = make_fact("old", FactType::Fact);
+        old.occurred_at = Some(Utc::now() - Duration::days(3));
+        let mut mid = make_fact("mid", FactType::Fact);
+        mid.occurred_at = Some(Utc::now() - Duration::days(1));
+        let new = make_fact("new", FactType::Fact); // no occurred_at, uses created_at ≈ now
+
+        store.insert(&[old, mid, new]).await.unwrap();
+
+        let results = store
+            .list(&Filters::default(), SortOrder::Newest, 10)
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0].content, "new");
+        assert_eq!(results[1].content, "mid");
+        assert_eq!(results[2].content, "old");
+
+        let oldest_first = store
+            .list(&Filters::default(), SortOrder::Oldest, 10)
+            .await
+            .unwrap();
+        assert_eq!(oldest_first[0].content, "old");
+        assert_eq!(oldest_first[2].content, "new");
+    }
+
+    #[tokio::test]
+    async fn list_filters_by_type_and_context() {
+        let (store, _dir) = fresh_store().await;
+
+        let mut a = make_fact("a", FactType::Preference);
+        a.contexts = vec!["global".into()];
+        let mut b = make_fact("b", FactType::Fixed);
+        b.contexts = vec!["code/linggen".into()];
+        let mut c = make_fact("c", FactType::Fixed);
+        c.contexts = vec!["code/sanji".into()];
+
+        store.insert(&[a, b, c]).await.unwrap();
+
+        let only_fixed_in_linggen = store
+            .list(
+                &Filters {
+                    contexts: vec!["code/linggen".into()],
+                    types: vec![FactType::Fixed],
+                    ..Default::default()
+                },
+                SortOrder::Newest,
+                10,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(only_fixed_in_linggen.len(), 1);
+        assert_eq!(only_fixed_in_linggen[0].content, "b");
+    }
+
+    #[tokio::test]
+    async fn list_types_are_or_combined() {
+        let (store, _dir) = fresh_store().await;
+        let a = make_fact("pref", FactType::Preference);
+        let b = make_fact("fix", FactType::Fixed);
+        let c = make_fact("tried", FactType::Tried);
+        store.insert(&[a, b, c]).await.unwrap();
+
+        let prefs_or_fixes = store
+            .list(
+                &Filters {
+                    types: vec![FactType::Preference, FactType::Fixed],
+                    ..Default::default()
+                },
+                SortOrder::Newest,
+                10,
+            )
+            .await
+            .unwrap();
+        assert_eq!(prefs_or_fixes.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn list_filters_by_time_range() {
+        let (store, _dir) = fresh_store().await;
+        let now = Utc::now();
+
+        let mut old = make_fact("old", FactType::Fact);
+        old.occurred_at = Some(now - Duration::days(10));
+        let mut recent = make_fact("recent", FactType::Fact);
+        recent.occurred_at = Some(now - Duration::hours(2));
+
+        store.insert(&[old, recent]).await.unwrap();
+
+        let since_yesterday = store
+            .list(
+                &Filters {
+                    since: Some(now - Duration::days(1)),
+                    ..Default::default()
+                },
+                SortOrder::Newest,
+                10,
+            )
+            .await
+            .unwrap();
+        assert_eq!(since_yesterday.len(), 1);
+        assert_eq!(since_yesterday[0].content, "recent");
+    }
+
+    #[tokio::test]
+    async fn search_returns_nearest_first() {
+        let (store, _dir) = fresh_store().await;
+
+        // Three facts, each with a distinct unit-ish vector.
+        let a = with_vector(make_fact("a", FactType::Fact), 0.1);
+        let b = with_vector(make_fact("b", FactType::Fact), 0.5);
+        let c = with_vector(make_fact("c", FactType::Fact), 0.9);
+        store.insert(&[a.clone(), b.clone(), c.clone()]).await.unwrap();
+
+        // Query close to `a`'s vector.
+        let query = vec![0.11; VECTOR_DIM as usize];
+        let results = store
+            .search(&query, &Filters::default(), 3)
+            .await
+            .unwrap();
+
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0].content, "a");
+    }
+
+    #[tokio::test]
+    async fn search_respects_limit() {
+        let (store, _dir) = fresh_store().await;
+        let facts: Vec<Fact> = (0..10)
+            .map(|i| with_vector(make_fact(&format!("f{i}"), FactType::Fact), i as f32 * 0.1))
+            .collect();
+        store.insert(&facts).await.unwrap();
+
+        let query = vec![0.0; VECTOR_DIM as usize];
+        let results = store
+            .search(&query, &Filters::default(), 3)
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn search_with_context_filter() {
+        let (store, _dir) = fresh_store().await;
+        let mut in_ctx = with_vector(make_fact("in-ctx", FactType::Fact), 0.3);
+        in_ctx.contexts = vec!["music/piano".into()];
+        let mut other = with_vector(make_fact("other", FactType::Fact), 0.3);
+        other.contexts = vec!["code/linggen".into()];
+        store.insert(&[in_ctx, other]).await.unwrap();
+
+        let query = vec![0.3; VECTOR_DIM as usize];
+        let results = store
+            .search(
+                &query,
+                &Filters {
+                    contexts: vec!["music/piano".into()],
+                    ..Default::default()
+                },
+                10,
+            )
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].content, "in-ctx");
+    }
+
+    #[tokio::test]
+    async fn search_rejects_wrong_dim() {
+        let (store, _dir) = fresh_store().await;
+        let err = store
+            .search(&[0.0; 100], &Filters::default(), 1)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("dim is 384"));
     }
 }
