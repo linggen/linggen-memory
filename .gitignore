@@ -15,6 +15,12 @@ frontend/.env
 frontend/.env.local
 frontend/.env.*.local
 
+# Vite build output embedded into api (generated — never commit)
+backend/api/dist/
+
+# Runtime state
+server.json
+
 # IDE
 /.vscode/*
 !/.vscode/launch.json
