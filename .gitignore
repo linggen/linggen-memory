@@ -14,6 +14,9 @@ webui/.env.*.local
 # Runtime state
 server.json
 
+# Fastembed model cache (downloaded on first use of the embedder — never commit)
+.fastembed_cache/
+
 # IDE
 /.vscode/*
 !/.vscode/launch.json
