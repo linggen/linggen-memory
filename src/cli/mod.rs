@@ -80,6 +80,9 @@ pub enum Command {
     /// Scan session stores (Claude Code + Linggen) and emit NDJSON manifest
     /// of sessions whose file mtime matches the target date.
     Collect(CollectArgs),
+
+    /// Flatten a session JSONL file into `[role]: text` lines on stdout.
+    Extract(ExtractArgs),
 }
 
 // ── Argument structs ────────────────────────────────────────────────────────
@@ -218,6 +221,35 @@ pub struct CollectArgs {
     pub date: Option<NaiveDate>,
 }
 
+#[derive(Debug, Args)]
+pub struct ExtractArgs {
+    /// Path to the session `.jsonl` file.
+    pub filepath: PathBuf,
+
+    /// Session source format.
+    #[arg(long, value_enum)]
+    pub source: CliSource,
+
+    /// Target date (YYYY-MM-DD). Defaults to today in the local timezone.
+    #[arg(long)]
+    pub date: Option<NaiveDate>,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum CliSource {
+    Cc,
+    Linggen,
+}
+
+impl From<CliSource> for crate::sessions::Source {
+    fn from(v: CliSource) -> Self {
+        match v {
+            CliSource::Cc => crate::sessions::Source::ClaudeCode,
+            CliSource::Linggen => crate::sessions::Source::Linggen,
+        }
+    }
+}
+
 // ── CLI ↔ domain-type glue ──────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -324,8 +356,15 @@ pub async fn run(cli: Cli) -> Result<()> {
     let format = cli.format;
 
     // Collect/extract don't need the store — skip opening LanceDB.
-    if let Command::Collect(args) = cli.cmd {
-        return cmd_collect(args);
+    match &cli.cmd {
+        Command::Collect(_) | Command::Extract(_) => {
+            return match cli.cmd {
+                Command::Collect(args) => cmd_collect(args),
+                Command::Extract(args) => cmd_extract(args),
+                _ => unreachable!(),
+            };
+        }
+        _ => {}
     }
 
     let data_dir = resolve_data_dir(cli.data_dir)?;
@@ -341,7 +380,7 @@ pub async fn run(cli: Cli) -> Result<()> {
         Command::Update(args) => cmd_update(&store, args, format).await,
         Command::Delete { id, yes } => cmd_delete(&store, id, yes, format).await,
         Command::Forget(args) => cmd_forget(&store, args, format).await,
-        Command::Collect(_) => unreachable!("handled above"),
+        Command::Collect(_) | Command::Extract(_) => unreachable!("handled above"),
     }
 }
 
@@ -496,6 +535,13 @@ fn cmd_collect(args: CollectArgs) -> Result<()> {
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
     crate::sessions::collect::run(&home, target, &mut out)
+}
+
+fn cmd_extract(args: ExtractArgs) -> Result<()> {
+    let target = args.date.unwrap_or_else(|| Local::now().date_naive());
+    let stdout = std::io::stdout();
+    let mut out = stdout.lock();
+    crate::sessions::extract::run(&args.filepath, args.source.into(), target, &mut out)
 }
 
 // ── I/O helpers ─────────────────────────────────────────────────────────────

@@ -12,6 +12,7 @@
 //! for how these fit into the extraction pipeline.
 
 pub mod collect;
+pub mod extract;
 
 /// Where a session came from — drives parsing rules.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

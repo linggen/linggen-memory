@@ -40,6 +40,7 @@ dirs = "5"
 # Session scanning / extraction
 regex = "1"
 serde_yml = "0.0"
+once_cell = "1"
 
 # Storage — arrow 57 aligns with lance 4.x / lancedb 0.27's internal version
 lancedb = "0.27"
