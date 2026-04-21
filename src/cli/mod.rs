@@ -15,7 +15,7 @@ use crate::facts::{
     FactPatch, FactType, FactsStore, Filters, Origin, Outcome, SortOrder, VECTOR_DIM,
 };
 use anyhow::{anyhow, Context, Result};
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Local, NaiveDate, Utc};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
@@ -76,6 +76,10 @@ pub enum Command {
 
     /// Bulk-delete by filter. Refuses empty filters.
     Forget(ForgetArgs),
+
+    /// Scan session stores (Claude Code + Linggen) and emit NDJSON manifest
+    /// of sessions whose file mtime matches the target date.
+    Collect(CollectArgs),
 }
 
 // ── Argument structs ────────────────────────────────────────────────────────
@@ -207,6 +211,13 @@ pub struct ForgetArgs {
     pub yes: bool,
 }
 
+#[derive(Debug, Args)]
+pub struct CollectArgs {
+    /// Target date (YYYY-MM-DD). Defaults to today in the local timezone.
+    #[arg(long)]
+    pub date: Option<NaiveDate>,
+}
+
 // ── CLI ↔ domain-type glue ──────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -310,8 +321,14 @@ fn resolve_data_dir(cli_override: Option<PathBuf>) -> Result<PathBuf> {
 /// Run the CLI. Dispatches to the appropriate subcommand and returns its
 /// result. Errors propagate to `main` which serializes them to stderr.
 pub async fn run(cli: Cli) -> Result<()> {
-    let data_dir = resolve_data_dir(cli.data_dir)?;
     let format = cli.format;
+
+    // Collect/extract don't need the store — skip opening LanceDB.
+    if let Command::Collect(args) = cli.cmd {
+        return cmd_collect(args);
+    }
+
+    let data_dir = resolve_data_dir(cli.data_dir)?;
     let store = FactsStore::open(&data_dir)
         .await
         .with_context(|| format!("opening store at {}", data_dir.display()))?;
@@ -324,6 +341,7 @@ pub async fn run(cli: Cli) -> Result<()> {
         Command::Update(args) => cmd_update(&store, args, format).await,
         Command::Delete { id, yes } => cmd_delete(&store, id, yes, format).await,
         Command::Forget(args) => cmd_forget(&store, args, format).await,
+        Command::Collect(_) => unreachable!("handled above"),
     }
 }
 
@@ -470,6 +488,14 @@ async fn cmd_forget(
             Ok(())
         }
     }
+}
+
+fn cmd_collect(args: CollectArgs) -> Result<()> {
+    let target = args.date.unwrap_or_else(|| Local::now().date_naive());
+    let home = dirs::home_dir().context("no HOME directory available")?;
+    let stdout = std::io::stdout();
+    let mut out = stdout.lock();
+    crate::sessions::collect::run(&home, target, &mut out)
 }
 
 // ── I/O helpers ─────────────────────────────────────────────────────────────

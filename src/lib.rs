@@ -8,5 +8,6 @@
 
 pub mod cli;
 pub mod facts;
+pub mod sessions;
 
 pub use facts::{Fact, FactType, Origin, Outcome};
