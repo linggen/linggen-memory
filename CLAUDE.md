@@ -2,7 +2,7 @@
 
 ## Purpose
 
-linggen-memory is the **default memory-skill backend for Linggen** — a standalone Rust binary (`ling-mem`) that implements the `Memory.*` tool family (add, search, list, update, delete, forget) over a LanceDB store with semantic retrieval.
+linggen-memory is the **default memory-skill backend for Linggen** — a standalone Rust binary (`ling-mem`) that implements the `Memory_*` tool family (add, search, list, update, delete, forget) over a LanceDB store with semantic retrieval.
 
 Specs for this repo:
 - `doc/product-spec.md` — features, user-facing behavior, scenarios
@@ -16,7 +16,7 @@ The main Linggen repo owns the integration side (see `../linggen/doc/memory-spec
 - **Branch:** `memory-refactor` (active); `main` still reflects the archived code-indexing tool.
 - **Phase:** Phase 2 — memory-flavored schema + CRUD (see `~/.claude/plans/memory-system-rebuild.md`).
 - **Legacy tree preserved at:** `v0-legacy` git tag.
-- **Parallel work:** The Linggen built-in side (core markdown, `provides:` field, `Memory.*` dispatch, migration) is being done in a parallel Claude session on the main `linggen/` repo. Defer questions about Linggen-core internals to that session.
+- **Parallel work:** The Linggen built-in side (core markdown, `provides:` field, `Memory_*` dispatch, migration) is being done in a parallel Claude session on the main `linggen/` repo. Defer questions about Linggen-core internals to that session.
 
 ## Repo layout (single-crate, flat)
 
@@ -45,7 +45,7 @@ No workspace, no sub-crates. Anything new goes in `src/<module>/`.
 - All docs under `doc/` about the binary itself
 
 **Out of scope (lives in `../linggen/`):**
-- Linggen core's `provides:` field and Memory.* tool dispatch
+- Linggen core's `provides:` field and Memory_* tool dispatch
 - `~/.linggen/core/identity.md` + `style.md` markdown scaffolding
 - Migration from the old 5-file markdown memory
 - Spec docs for the Linggen-memory integration contract (`linggen/doc/memory-spec.md`)
@@ -57,7 +57,7 @@ No workspace, no sub-crates. Anything new goes in `src/<module>/`.
 - **Don't edit `v0-legacy`.** Tag is immutable; legacy source is `git checkout v0-legacy` away.
 - **Preserve release tooling.** `scripts/build-*.sh`, signing config, and CI live through the refactor.
 - **Dependency policy.** Use current major versions; `thiserror` is 2.x. LanceDB + Arrow must be a compatible triple — track the lance 0.39 × rustc 1.94 recursion-limit issue separately.
-- **CLI is primary.** All features must be reachable via `ling-mem` subcommands. The `Memory.*` tool-namespace dispatch in Linggen is sugar; the CLI must be complete on its own so Claude Code (Bash-only) can use it.
+- **CLI is primary.** All features must be reachable via `ling-mem` subcommands. The `Memory_*` tool-namespace dispatch in Linggen is sugar; the CLI must be complete on its own so Claude Code (Bash-only) can use it.
 
 ## Related
 

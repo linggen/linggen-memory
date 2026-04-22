@@ -17,7 +17,7 @@ Built as the default memory skill for [Linggen](https://github.com/linggen/lingg
 - **Typed facts.** Seven categories — `fact / preference / decision / tried / fixed / learned / built` — each with a clear retrieval trigger.
 - **Forgetting is first-class.** `archive`, `delete`, `forget` by filter. Time-decay and access-decay automatic.
 - **Three ways to use it:**
-  - As a **Linggen skill** — web app UI + `Memory.*` tool dispatch in the agent.
+  - As a **Linggen skill** — web app UI + `Memory_*` tool dispatch in the agent.
   - As a **Claude Code skill** — SKILL.md body, model calls the CLI via Bash.
   - **Standalone** — any script or tool can shell out to `ling-mem`.
 

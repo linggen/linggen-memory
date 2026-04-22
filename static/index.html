@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Memory · Browse</title>
+    <link rel="stylesheet" href="/assets/styles.css" />
+  </head>
+  <body>
+    <div id="app">
+      <header id="header">
+        <h1>Memory <span class="sub">· Browse</span></h1>
+        <div id="status">
+          <span id="count">—</span>
+          <span class="sep">·</span>
+          <button id="refresh" type="button" title="Refresh list">↻</button>
+          <button id="help-btn" type="button" title="Keyboard shortcuts (?)">?</button>
+          <span class="sep">·</span>
+          <span id="health" class="health unknown">⏻ checking…</span>
+        </div>
+      </header>
+
+      <div id="help-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="help-title"></div>
+
+      <section id="query-bar">
+        <input
+          id="query"
+          type="text"
+          placeholder="search memory or /type:preference /context:code/linggen /from:user /since:2026-01-01 …"
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <button id="add" type="button" disabled title="Add arrives in step 6">+ Add</button>
+        <div id="bulk-wrap">
+          <button id="bulk" type="button" aria-haspopup="menu" aria-expanded="false">⋯ Bulk ▾</button>
+          <div id="bulk-menu" role="menu" hidden></div>
+        </div>
+      </section>
+
+      <section id="filters-bar" hidden>
+        <div id="filter-chips"></div>
+        <div id="sort-group">
+          <label for="sort">sort</label>
+          <select id="sort">
+            <option value="newest">newest</option>
+            <option value="oldest">oldest</option>
+          </select>
+          <button id="clear-all" type="button" title="Remove all filters">clear all</button>
+        </div>
+      </section>
+
+      <section id="main" aria-label="facts">
+        <div id="list-pane" role="listbox" aria-label="fact list">
+          <div id="list" class="loading">
+            <div class="skel"></div>
+            <div class="skel"></div>
+            <div class="skel"></div>
+          </div>
+          <div id="list-footer"></div>
+        </div>
+
+        <aside id="detail-pane">
+          <div class="detail-empty">
+            Select a fact on the left to see details.
+          </div>
+        </aside>
+      </section>
+    </div>
+
+    <script type="module" src="/assets/app.js"></script>
+  </body>
+</html>

@@ -51,6 +51,20 @@ arrow = "57"
 arrow-array = "57"
 arrow-schema = "57"
 
+# Daemon: HTTP server + signals
+axum = "0.8"
+tower = "0.5"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
+# Static assets for the Data Browser UI. Default behaviour: debug builds
+# read from disk at runtime (live-edit static/ without recompile), release
+# builds bake files into the binary.
+rust-embed = "8"
+mime_guess = "2"
+
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.29", features = ["signal", "process"] }
+
 [dev-dependencies]
 tempfile = "3"
 

@@ -18,15 +18,17 @@ linggen-memory/
 │   ├── main.rs          # ling-mem binary entry
 │   ├── lib.rs           # public API
 │   ├── facts/           # Fact types, enums, Arrow/LanceDB plumbing
-│   ├── embed/           # embedding model (added in store commit)
-│   ├── store/           # FactsStore — LanceDB open/insert/search/...
+│   ├── embed/           # embedding model
 │   ├── cli/             # clap subcommand dispatch
-│   └── (no server/, no HTTP daemon — CLI-only binary)
-# Note: the user-facing webpage lives in the skill wrapper
-# (skills/memory/ui/ in the main Linggen repo), not here.
+│   ├── sessions/        # session scanning / extraction
+│   ├── daemon/          # pidfile + lifecycle + serve entry
+│   └── http/            # axum router: /api/memory/*, /api/health, UI
+├── static/              # Data Browser UI (index.html, app.js, styles.css)
+│                        # embedded via rust-embed at compile time
 ├── doc/
-│   ├── product-spec.md  # this file's sibling
-│   └── tech-spec.md     # you are here
+│   ├── product-spec.md  # features and scenarios
+│   ├── tech-spec.md     # you are here
+│   └── ui-spec.md       # Data Browser layout + interactions
 ├── scripts/             # build + release (cross-compile)
 ├── assets/              # icon.icns etc.
 ├── DESIGN.md            # rolling locked-decisions log
@@ -111,7 +113,12 @@ If the configured model output dimension doesn't match the table's `FixedSizeLis
 | `delete <id>` | Hard delete | `--yes` to skip confirmation |
 | `forget` | Bulk delete by filter | `--context`, `--type`, `--older-than`; requires `--yes` |
 
-Deferred or out-of-scope: `archive` (soft-delete; deferred if `delete` proves insufficient), `serve` (HTTP daemon; the skill webpage lives outside this binary so `serve` isn't needed for v0.1).
+In-scope but not listed above (daemon lifecycle): `serve`, `start`, `stop`,
+`restart`, `status`. These run the axum HTTP server that hosts both the
+REST API and the Data Browser UI. See the [Skill integration](#skill-integration)
+section below and `ui-spec.md`.
+
+Deferred: `archive` (soft-delete; may land if `delete` proves insufficient).
 
 ### I/O contract
 
@@ -173,12 +180,12 @@ Release profile: `strip = true`, `lto = "thin"`, `codegen-units = 1`.
 
 The **linggen-memory skill** is a thin wrapper in the main Linggen repo's skills tree. Its responsibilities:
 
-- `SKILL.md` frontmatter: `provides: [memory]`, `app:` launcher pointing at the skill's own static HTML (`skills/memory/ui/`), `install: install.sh`.
-- Web UI: lives inside the skill, not the binary. Static HTML/JS calls back to Linggen to invoke `ling-mem` via bash or `Memory.*` tool dispatch. Binary stays CLI-only.
+- `SKILL.md` frontmatter: `provides: [memory]`, `app:` launcher pointing at the daemon's bound port (`http://127.0.0.1:<port>/`), `install: install.sh`, `daemon: { subdir: linggen-memory, port: 9888, healthcheck: /api/health }`.
+- Web UI: **served by the daemon itself**. Static HTML/JS/CSS live under `static/` in this repo and are embedded into the binary via `rust-embed`. The skill wrapper does not ship any UI assets — Linggen just opens the daemon URL in an iframe. Calls from the page go to `/api/memory/*` on the same origin; Linggen's `Memory_*` tool dispatch is an alternate entry point that hits the same endpoints.
 - `install.sh`: detect platform via `uname`, download matching release binary from GitHub Releases, extract to the skill's `bin/` directory.
 - No scripts beyond install — the binary handles everything else.
 
-For Claude Code compatibility, the SKILL.md body documents the CLI so a model invoking the skill via Bash can use it directly (the `Memory.*` tool namespace is a Linggen-only convenience).
+For Claude Code compatibility, the SKILL.md body documents the CLI so a model invoking the skill via Bash can use it directly (the `Memory_*` tool namespace is a Linggen-only convenience). A CC user gets the same Data Browser at the same URL — all they need is to run `ling-mem serve`.
 
 ## Release process
 

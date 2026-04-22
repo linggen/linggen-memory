@@ -7,8 +7,9 @@
 //! the intended consumers; external Rust users should prefer invoking the CLI.
 
 pub mod cli;
+pub mod daemon;
 pub mod embed;
 pub mod facts;
-pub mod sessions;
+pub mod http;
 
 pub use facts::{Fact, FactType, Origin, Outcome};

@@ -11,7 +11,7 @@ See also:
 ## Binary and CLI
 
 - **Binary name:** `ling-mem` (already the name in `backend/api/Cargo.toml`). "linggen-memory" remains the repo / product name.
-- **v0.1 is CLI-only.** No daemon / `serve` subcommand. The skill's webpage (in `skills/memory/ui/` in the main Linggen repo) is a static HTML/JS app that calls `ling-mem` via Linggen's bash or `Memory.*` tool dispatch — the binary doesn't host HTTP.
+- **v0.1 is CLI-only.** No daemon / `serve` subcommand. The skill's webpage (in `skills/memory/ui/` in the main Linggen repo) is a static HTML/JS app that calls `ling-mem` via Linggen's bash or `Memory_*` tool dispatch — the binary doesn't host HTTP.
 - **Usage pattern:** single-user per invocation. Linggen (or Claude Code) invokes `ling-mem` as a subprocess; the binary opens LanceDB, runs the op, writes JSON to stdout, closes, exits.
 
 ## Storage

@@ -316,22 +316,27 @@ impl FactsStore {
     }
 
     /// Non-semantic browse. Returns up to `limit` facts matching `filters`,
-    /// sorted by `effective_timestamp` according to `order`.
+    /// skipping the first `offset` in sort order.
     ///
     /// Sorting is done in-process after the batch returns — LanceDB's query
     /// builder doesn't expose an ORDER BY equivalent for list-style queries
-    /// without a vector. For v0.1 row counts this is fine; revisit if files
-    /// grow past ~100k rows.
+    /// without a vector. Pagination is over-fetch-and-slice: we ask LanceDB
+    /// for `limit + offset` rows, sort, and return the `[offset .. offset+limit]`
+    /// window. For v0.1 row counts this is fine; revisit if files grow past
+    /// ~100k rows.
     pub async fn list(
         &self,
         filters: &Filters,
         order: SortOrder,
         limit: usize,
+        offset: usize,
     ) -> Result<Vec<Fact>> {
-        // Fetch up to `limit` rows matching the filter. We pull more than
-        // `limit` only when LanceDB might return unsorted rows and we need
-        // to top-N-sort; for v0.1 we trust the filter to narrow enough.
-        let mut q = self.table.query().limit(limit);
+        let fetch = limit.saturating_add(offset);
+        if fetch == 0 {
+            return Ok(Vec::new());
+        }
+
+        let mut q = self.table.query().limit(fetch);
         if let Some(sql) = filters.to_sql() {
             q = q.only_if(sql);
         }
@@ -342,6 +347,12 @@ impl FactsStore {
             SortOrder::Newest => b.effective_timestamp().cmp(&a.effective_timestamp()),
             SortOrder::Oldest => a.effective_timestamp().cmp(&b.effective_timestamp()),
         });
+
+        if offset >= facts.len() {
+            return Ok(Vec::new());
+        }
+        facts.drain(..offset);
+        facts.truncate(limit);
         Ok(facts)
     }
 
@@ -559,7 +570,7 @@ mod tests {
         store.insert(&[old, mid, new]).await.unwrap();
 
         let results = store
-            .list(&Filters::default(), SortOrder::Newest, 10)
+            .list(&Filters::default(), SortOrder::Newest, 10, 0)
             .await
             .unwrap();
         assert_eq!(results.len(), 3);
@@ -568,11 +579,58 @@ mod tests {
         assert_eq!(results[2].content, "old");
 
         let oldest_first = store
-            .list(&Filters::default(), SortOrder::Oldest, 10)
+            .list(&Filters::default(), SortOrder::Oldest, 10, 0)
             .await
             .unwrap();
         assert_eq!(oldest_first[0].content, "old");
         assert_eq!(oldest_first[2].content, "new");
+    }
+
+    #[tokio::test]
+    async fn list_offset_pages_through_results() {
+        let (store, _dir) = fresh_store().await;
+
+        let mut a = make_fact("a", FactType::Fact);
+        a.occurred_at = Some(Utc::now() - Duration::days(5));
+        let mut b = make_fact("b", FactType::Fact);
+        b.occurred_at = Some(Utc::now() - Duration::days(4));
+        let mut c = make_fact("c", FactType::Fact);
+        c.occurred_at = Some(Utc::now() - Duration::days(3));
+        let mut d = make_fact("d", FactType::Fact);
+        d.occurred_at = Some(Utc::now() - Duration::days(2));
+        let mut e = make_fact("e", FactType::Fact);
+        e.occurred_at = Some(Utc::now() - Duration::days(1));
+
+        store.insert(&[a, b, c, d, e]).await.unwrap();
+
+        let page1 = store
+            .list(&Filters::default(), SortOrder::Oldest, 2, 0)
+            .await
+            .unwrap();
+        assert_eq!(page1.len(), 2);
+        assert_eq!(page1[0].content, "a");
+        assert_eq!(page1[1].content, "b");
+
+        let page2 = store
+            .list(&Filters::default(), SortOrder::Oldest, 2, 2)
+            .await
+            .unwrap();
+        assert_eq!(page2.len(), 2);
+        assert_eq!(page2[0].content, "c");
+        assert_eq!(page2[1].content, "d");
+
+        let page3 = store
+            .list(&Filters::default(), SortOrder::Oldest, 2, 4)
+            .await
+            .unwrap();
+        assert_eq!(page3.len(), 1);
+        assert_eq!(page3[0].content, "e");
+
+        let past_end = store
+            .list(&Filters::default(), SortOrder::Oldest, 2, 10)
+            .await
+            .unwrap();
+        assert!(past_end.is_empty());
     }
 
     #[tokio::test]
@@ -597,6 +655,7 @@ mod tests {
                 },
                 SortOrder::Newest,
                 10,
+                0,
             )
             .await
             .unwrap();
@@ -621,6 +680,7 @@ mod tests {
                 },
                 SortOrder::Newest,
                 10,
+                0,
             )
             .await
             .unwrap();
@@ -647,6 +707,7 @@ mod tests {
                 },
                 SortOrder::Newest,
                 10,
+                0,
             )
             .await
             .unwrap();

@@ -66,7 +66,7 @@ No `activity` catch-all. Weekly-status-style entries (the drift category in prio
 
 1. **Active injection (push).** When a session starts or a turn arrives, relevant facts are auto-attached to the prompt — scope-filtered, top-k by vector similarity. The assistant doesn't need to ask.
 2. **Tool (pull).** `ling-mem search <query>` — invoked by the model when it decides memory would help.
-3. **Browse (human).** The skill's webpage — filter, sort, star, bulk-archive, bulk-forget. Ships with the Linggen memory skill (`skills/memory/ui/`), not the `ling-mem` binary. Also nightly markdown export for git-sync and audit.
+3. **Browse (human).** The **Data Browser** webpage — filter, semantic search, edit-in-place, bulk-delete, bulk-forget. Served by the `ling-mem` daemon itself (`ling-mem serve`) from assets baked into the binary; the same origin hosts both the UI and the REST API. See `ui-spec.md`.
 
 ## The four forgetting mechanisms
 
@@ -91,29 +91,29 @@ ling-mem collect --since 2026-04-01
 ling-mem extract <session-path> --source cc
 ```
 
-Web UI: provided by the Linggen memory skill, not the `ling-mem` binary.
-See the skill's `skills/memory/ui/` in the main Linggen repo.
+Web UI: served by `ling-mem serve` at the daemon's bound origin. Static
+assets live under `static/` in this repo and are embedded via `rust-embed`.
+See `ui-spec.md` for layout, interactions, and endpoint mapping.
 
 Default output: NDJSON on stdout. `--format=text` for human-readable. Errors on stderr with non-zero exit.
 
 ## How it fits with Linggen
 
 - Installed as a Linggen **skill** that advertises `provides: [memory]`.
-- The skill ships its own static HTML/JS at `skills/memory/ui/`. Linggen's `app: launcher: web` opens it in-app; the page calls `ling-mem` via Linggen's bash or `Memory.*` tool dispatch.
-- Linggen's core routes `Memory.*` tool calls to the skill, which shells out to `ling-mem`.
-- Separately, the skill's `SKILL.md` body is readable by any Claude Code session — same binary, same CLI, just invoked via Bash.
+- The skill wrapper is thin: it downloads the `ling-mem` binary and declares `app: launcher: web` pointing at the daemon's bound port. The binary serves the UI itself — Linggen just opens the URL in an iframe.
+- Linggen's core routes `Memory_*` tool calls to the skill, which shells out to `ling-mem` (or posts to the daemon over HTTP — same methods, same envelope).
+- Separately, the skill's `SKILL.md` body is readable by any Claude Code session — same binary, same CLI, same web UI; just invoked via Bash instead of Linggen's dispatch.
 
 See `tech-spec.md` for the repo layout, CLI contract, schema, and release process.
 
 ## Out of scope for v0.1 (`ling-mem` binary)
 
 - Soft-delete / `archive` (deferred until the hard-delete behavior proves insufficient)
-- HTTP daemon mode (`serve`) — the skill webpage lives outside the binary, so the binary stays CLI-only
 - Multi-provider memory skills (Linggen picks one active provider; switching is user-initiated)
 - Team-shared memory across multiple users
 - Sync protocol other than "nightly markdown export → git"
 
-Web UI details are out-of-scope for *this repo*; they're tracked on the skill wrapper in the main Linggen repo.
+Web UI details live in `ui-spec.md`; the binary ships the browser.
 
 ## Future directions
 

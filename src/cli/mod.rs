@@ -15,7 +15,7 @@
 
 use crate::facts::{FactPatch, FactType, FactsStore, Filters, Origin, Outcome, SortOrder};
 use anyhow::{anyhow, Context, Result};
-use chrono::{DateTime, Local, NaiveDate, Utc};
+use chrono::{DateTime, Utc};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
@@ -77,12 +77,34 @@ pub enum Command {
     /// Bulk-delete by filter. Refuses empty filters.
     Forget(ForgetArgs),
 
-    /// Scan session stores (Claude Code + Linggen) and emit NDJSON manifest
-    /// of sessions whose file mtime matches the target date.
-    Collect(CollectArgs),
+    // Session-scanning utilities (`collect` + `extract`) used to live here.
+    // They moved to `skills/memory/scripts/` as bash helpers — the daemon is
+    // a pure data service; reading session files isn't its concern.
 
-    /// Flatten a session JSONL file into `[role]: text` lines on stdout.
-    Extract(ExtractArgs),
+    /// Run the HTTP daemon in the foreground. Blocks until SIGTERM / SIGINT.
+    /// What `start` re-exec's, and what launchd/systemd should call.
+    Serve {
+        #[arg(long, default_value_t = crate::daemon::DEFAULT_PORT)]
+        port: u16,
+    },
+
+    /// Spawn the daemon in the background and wait for it to bind.
+    Start {
+        #[arg(long, default_value_t = crate::daemon::DEFAULT_PORT)]
+        port: u16,
+    },
+
+    /// SIGTERM the running daemon and wait for it to exit.
+    Stop,
+
+    /// Stop + start.
+    Restart {
+        #[arg(long, default_value_t = crate::daemon::DEFAULT_PORT)]
+        port: u16,
+    },
+
+    /// Report daemon state: pidfile, liveness, health probe.
+    Status,
 }
 
 // ── Argument structs ────────────────────────────────────────────────────────
@@ -146,6 +168,11 @@ pub struct ListArgs {
 
     #[arg(long, default_value_t = 50)]
     pub limit: usize,
+
+    /// Skip this many rows in sort order. Pairs with `--limit` to page
+    /// through results larger than one batch.
+    #[arg(long, default_value_t = 0)]
+    pub offset: usize,
 }
 
 #[derive(Debug, Args, Default, Clone)]
@@ -212,42 +239,6 @@ pub struct ForgetArgs {
     /// Confirm the bulk delete. Required — enforces a think-twice step.
     #[arg(long)]
     pub yes: bool,
-}
-
-#[derive(Debug, Args)]
-pub struct CollectArgs {
-    /// Target date (YYYY-MM-DD). Defaults to today in the local timezone.
-    #[arg(long)]
-    pub date: Option<NaiveDate>,
-}
-
-#[derive(Debug, Args)]
-pub struct ExtractArgs {
-    /// Path to the session `.jsonl` file.
-    pub filepath: PathBuf,
-
-    /// Session source format.
-    #[arg(long, value_enum)]
-    pub source: CliSource,
-
-    /// Target date (YYYY-MM-DD). Defaults to today in the local timezone.
-    #[arg(long)]
-    pub date: Option<NaiveDate>,
-}
-
-#[derive(Debug, Clone, Copy, ValueEnum)]
-pub enum CliSource {
-    Cc,
-    Linggen,
-}
-
-impl From<CliSource> for crate::sessions::Source {
-    fn from(v: CliSource) -> Self {
-        match v {
-            CliSource::Cc => crate::sessions::Source::ClaudeCode,
-            CliSource::Linggen => crate::sessions::Source::Linggen,
-        }
-    }
 }
 
 // ── CLI ↔ domain-type glue ──────────────────────────────────────────────────
@@ -355,19 +346,35 @@ fn resolve_data_dir(cli_override: Option<PathBuf>) -> Result<PathBuf> {
 pub async fn run(cli: Cli) -> Result<()> {
     let format = cli.format;
 
-    // Collect/extract don't need the store — skip opening LanceDB.
-    match &cli.cmd {
-        Command::Collect(_) | Command::Extract(_) => {
-            return match cli.cmd {
-                Command::Collect(args) => cmd_collect(args),
-                Command::Extract(args) => cmd_extract(args),
-                _ => unreachable!(),
-            };
+    // Lifecycle commands don't need the LanceDB store — route them
+    // before opening it.
+    let data_dir = resolve_data_dir(cli.data_dir)?;
+    let skill_dir = crate::daemon::skill_dir(&data_dir);
+    match cli.cmd {
+        Command::Serve { port } => {
+            return crate::daemon::serve::run(&data_dir, &skill_dir, port).await
+        }
+        Command::Start { port } => {
+            let outcome = crate::daemon::lifecycle::start(&data_dir, &skill_dir, port).await?;
+            return emit_lifecycle(&outcome);
+        }
+        Command::Stop => {
+            let outcome = crate::daemon::lifecycle::stop(&skill_dir).await?;
+            return emit_lifecycle(&outcome);
+        }
+        Command::Restart { port } => {
+            let outcome =
+                crate::daemon::lifecycle::restart(&data_dir, &skill_dir, port).await?;
+            return emit_lifecycle(&outcome);
+        }
+        Command::Status => {
+            let value = crate::daemon::lifecycle::status(&skill_dir).await?;
+            println!("{}", serde_json::to_string_pretty(&value)?);
+            return Ok(());
         }
         _ => {}
     }
 
-    let data_dir = resolve_data_dir(cli.data_dir)?;
     let store = FactsStore::open(&data_dir)
         .await
         .with_context(|| format!("opening store at {}", data_dir.display()))?;
@@ -380,8 +387,17 @@ pub async fn run(cli: Cli) -> Result<()> {
         Command::Update(args) => cmd_update(&store, args, format).await,
         Command::Delete { id, yes } => cmd_delete(&store, id, yes, format).await,
         Command::Forget(args) => cmd_forget(&store, args, format).await,
-        Command::Collect(_) | Command::Extract(_) => unreachable!("handled above"),
+        Command::Serve { .. }
+        | Command::Start { .. }
+        | Command::Stop
+        | Command::Restart { .. }
+        | Command::Status => unreachable!("handled above"),
     }
+}
+
+fn emit_lifecycle(outcome: &crate::daemon::lifecycle::LifecycleOutcome) -> Result<()> {
+    println!("{}", serde_json::to_string_pretty(&outcome.to_json())?);
+    Ok(())
 }
 
 // ── Subcommand handlers ─────────────────────────────────────────────────────
@@ -468,7 +484,12 @@ fn embed_missing(facts: &mut [crate::facts::Fact]) -> Result<()> {
 
 async fn cmd_list(store: &FactsStore, args: ListArgs, format: OutputFormat) -> Result<()> {
     let results = store
-        .list(&args.filters.into_filters(), args.sort.into(), args.limit)
+        .list(
+            &args.filters.into_filters(),
+            args.sort.into(),
+            args.limit,
+            args.offset,
+        )
         .await?;
     emit_facts(&results, format)
 }
@@ -538,20 +559,9 @@ async fn cmd_forget(store: &FactsStore, args: ForgetArgs, format: OutputFormat) 
     }
 }
 
-fn cmd_collect(args: CollectArgs) -> Result<()> {
-    let target = args.date.unwrap_or_else(|| Local::now().date_naive());
-    let home = dirs::home_dir().context("no HOME directory available")?;
-    let stdout = std::io::stdout();
-    let mut out = stdout.lock();
-    crate::sessions::collect::run(&home, target, &mut out)
-}
-
-fn cmd_extract(args: ExtractArgs) -> Result<()> {
-    let target = args.date.unwrap_or_else(|| Local::now().date_naive());
-    let stdout = std::io::stdout();
-    let mut out = stdout.lock();
-    crate::sessions::extract::run(&args.filepath, args.source.into(), target, &mut out)
-}
+// Session-scanning utilities (`cmd_collect` + `cmd_extract`) moved to
+// bash scripts in `skills/memory/scripts/`. The daemon stays focused on
+// the fact store.
 
 // ── I/O helpers ─────────────────────────────────────────────────────────────
 

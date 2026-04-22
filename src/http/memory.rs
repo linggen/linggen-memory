@@ -1,0 +1,327 @@
+//! `/api/memory/<method>` — RPC-style endpoints, 1:1 with the `Memory.*`
+//! tools in Linggen. Each endpoint POSTs JSON args and returns
+//! `{ok, data}` or `{ok:false, error, code}` via `envelope::ApiError`.
+//!
+//! Semantics mirror the CLI handlers in `crate::cli` — this module is
+//! the network-facing path to the same `FactsStore` operations. Once
+//! Phase 4 lands in Linggen, the CLI data-ops wrappers are removed and
+//! HTTP becomes the only dispatch path.
+
+use super::envelope::{ok, ApiError};
+use super::state::SharedState;
+use crate::facts::{Fact, FactPatch, FactType, Filters, Origin, Outcome, SortOrder};
+use axum::extract::State;
+use axum::response::Response;
+use axum::routing::post;
+use axum::{Json, Router};
+use chrono::{DateTime, Utc};
+use serde::Deserialize;
+use serde_json::{json, Value};
+use uuid::Uuid;
+
+/// Serialize a fact for HTTP response, stripping the 384-dim embedding
+/// vector. Callers never need the raw vector over the wire, and including
+/// it bloats every response by ~5 KB / row (noisy for the model, for logs,
+/// and for the data UI). The CLI's NDJSON output keeps vectors — they
+/// matter for `add --stdin` round-trips.
+fn fact_public(fact: &Fact) -> Value {
+    let mut v = serde_json::to_value(fact).unwrap_or_else(|_| Value::Null);
+    if let Some(obj) = v.as_object_mut() {
+        obj.remove("vector");
+    }
+    v
+}
+
+fn facts_public(facts: &[Fact]) -> Vec<Value> {
+    facts.iter().map(fact_public).collect()
+}
+
+/// Memory subrouter. Mounted at `/api/memory/` by the parent router.
+pub fn router() -> Router<SharedState> {
+    Router::new()
+        .route("/api/memory/add", post(add))
+        .route("/api/memory/get", post(get))
+        .route("/api/memory/search", post(search))
+        .route("/api/memory/list", post(list))
+        .route("/api/memory/update", post(update))
+        .route("/api/memory/delete", post(delete))
+        .route("/api/memory/forget", post(forget))
+}
+
+// ── Request DTOs ────────────────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct AddRequest {
+    pub content: String,
+    #[serde(default)]
+    pub contexts: Vec<String>,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    pub r#type: Option<FactType>,
+    /// Origin. Canonical name is `from` (matches the `Fact` field);
+    /// accept `origin` as an alias for callers that avoid reserved words.
+    #[serde(default, alias = "origin")]
+    pub from: Option<Origin>,
+    pub outcome: Option<Outcome>,
+    pub cwd: Option<String>,
+    pub occurred_at: Option<DateTime<Utc>>,
+    pub source_session: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GetRequest {
+    pub id: Uuid,
+}
+
+/// Filter block shared by `search`, `list`, and `forget`. All fields
+/// optional; an empty block matches every row. Every enum-typed field
+/// accepts the lowercase variant name (`"fact"`, `"positive"`, …).
+#[derive(Debug, Default, Deserialize)]
+pub struct FilterDTO {
+    #[serde(default)]
+    pub contexts: Vec<String>,
+    /// Narrow to one `FactType`. Linggen's tool schema is singular;
+    /// internally we convert to `Filters.types: Vec<FactType>`.
+    pub r#type: Option<FactType>,
+    #[serde(default, alias = "origin")]
+    pub from: Option<Origin>,
+    pub outcome: Option<Outcome>,
+    pub since: Option<DateTime<Utc>>,
+    /// Upper bound on `COALESCE(occurred_at, created_at)`. `older_than`
+    /// is accepted as an alias (legacy shape from the v0.1 translate_args
+    /// table in Linggen core).
+    #[serde(default, alias = "older_than")]
+    pub until: Option<DateTime<Utc>>,
+}
+
+impl FilterDTO {
+    fn into_filters(self) -> Filters {
+        Filters {
+            contexts: self.contexts,
+            types: self.r#type.into_iter().collect(),
+            origin: self.from,
+            outcome: self.outcome,
+            since: self.since,
+            until: self.until,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SearchRequest {
+    pub query: String,
+    #[serde(flatten)]
+    pub filters: FilterDTO,
+    #[serde(default = "default_search_limit")]
+    pub limit: usize,
+}
+
+fn default_search_limit() -> usize {
+    10
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SortDTO {
+    #[default]
+    Newest,
+    Oldest,
+}
+
+impl From<SortDTO> for SortOrder {
+    fn from(v: SortDTO) -> Self {
+        match v {
+            SortDTO::Newest => SortOrder::Newest,
+            SortDTO::Oldest => SortOrder::Oldest,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ListRequest {
+    #[serde(flatten)]
+    pub filters: FilterDTO,
+    #[serde(default)]
+    pub sort: SortDTO,
+    #[serde(default = "default_list_limit")]
+    pub limit: usize,
+    /// Number of rows to skip in the sorted result. `0` = first page.
+    #[serde(default)]
+    pub offset: usize,
+}
+
+fn default_list_limit() -> usize {
+    50
+}
+
+/// Update semantics mirror the CLI: explicit set-vs-clear via twin
+/// fields (`outcome` / `clear_outcome`, `cwd` / `clear_cwd`). Absent
+/// fields mean "leave unchanged." Set wins over clear if both are given.
+#[derive(Debug, Deserialize)]
+pub struct UpdateRequest {
+    pub id: Uuid,
+    pub content: Option<String>,
+    pub contexts: Option<Vec<String>>,
+    pub tags: Option<Vec<String>>,
+    pub r#type: Option<FactType>,
+    #[serde(default, alias = "origin")]
+    pub from: Option<Origin>,
+    pub outcome: Option<Outcome>,
+    #[serde(default)]
+    pub clear_outcome: bool,
+    pub cwd: Option<String>,
+    #[serde(default)]
+    pub clear_cwd: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DeleteRequest {
+    pub id: Uuid,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct ForgetRequest {
+    #[serde(flatten)]
+    pub filters: FilterDTO,
+}
+
+// ── Handlers ────────────────────────────────────────────────────────────────
+
+async fn add(
+    State(state): State<SharedState>,
+    Json(req): Json<AddRequest>,
+) -> Result<Response, ApiError> {
+    if req.content.trim().is_empty() {
+        return Err(ApiError::bad_request("content must not be empty"));
+    }
+
+    let mut fact = Fact::new(
+        req.content,
+        req.r#type.unwrap_or(FactType::Fact),
+        req.from.unwrap_or_default(),
+    );
+    fact.contexts = req.contexts;
+    fact.tags = req.tags;
+    fact.outcome = req.outcome;
+    fact.cwd = req.cwd;
+    fact.occurred_at = req.occurred_at;
+    fact.source_session = req.source_session;
+
+    // Embed the content so the row is immediately searchable.
+    let vector = state
+        .embedder
+        .embed_one(&fact.content)
+        .map_err(ApiError::internal)?;
+    fact.vector = Some(vector);
+
+    state.store.insert(std::slice::from_ref(&fact)).await?;
+    Ok(ok(fact_public(&fact)))
+}
+
+async fn get(
+    State(state): State<SharedState>,
+    Json(req): Json<GetRequest>,
+) -> Result<Response, ApiError> {
+    match state.store.get(req.id).await? {
+        Some(fact) => Ok(ok(fact_public(&fact))),
+        None => Err(ApiError::not_found(format!("no fact with id {}", req.id))),
+    }
+}
+
+async fn search(
+    State(state): State<SharedState>,
+    Json(req): Json<SearchRequest>,
+) -> Result<Response, ApiError> {
+    if req.query.trim().is_empty() {
+        return Err(ApiError::bad_request("query must not be empty"));
+    }
+
+    let vector = state
+        .embedder
+        .embed_one(&req.query)
+        .map_err(ApiError::internal)?;
+    let results = state
+        .store
+        .search(&vector, &req.filters.into_filters(), req.limit)
+        .await?;
+    Ok(ok(facts_public(&results)))
+}
+
+async fn list(
+    State(state): State<SharedState>,
+    Json(req): Json<ListRequest>,
+) -> Result<Response, ApiError> {
+    let results = state
+        .store
+        .list(
+            &req.filters.into_filters(),
+            req.sort.into(),
+            req.limit,
+            req.offset,
+        )
+        .await?;
+    Ok(ok(facts_public(&results)))
+}
+
+async fn update(
+    State(state): State<SharedState>,
+    Json(req): Json<UpdateRequest>,
+) -> Result<Response, ApiError> {
+    let outcome_patch = match (req.outcome, req.clear_outcome) {
+        (Some(o), _) => Some(Some(o)),
+        (None, true) => Some(None),
+        (None, false) => None,
+    };
+    let cwd_patch = match (req.cwd, req.clear_cwd) {
+        (Some(v), _) => Some(Some(v)),
+        (None, true) => Some(None),
+        (None, false) => None,
+    };
+
+    let patch = FactPatch {
+        content: req.content,
+        contexts: req.contexts,
+        tags: req.tags,
+        r#type: req.r#type,
+        origin: req.from,
+        outcome: outcome_patch,
+        cwd: cwd_patch,
+        ..Default::default()
+    };
+
+    match state.store.update(req.id, &patch).await? {
+        Some(fact) => Ok(ok(fact_public(&fact))),
+        None => Err(ApiError::not_found(format!("no fact with id {}", req.id))),
+    }
+}
+
+async fn delete(
+    State(state): State<SharedState>,
+    Json(req): Json<DeleteRequest>,
+) -> Result<Response, ApiError> {
+    let removed = state.store.delete(req.id).await?;
+    Ok(ok(json!({"id": req.id, "removed": removed})))
+}
+
+async fn forget(
+    State(state): State<SharedState>,
+    Json(req): Json<ForgetRequest>,
+) -> Result<Response, ApiError> {
+    let filters = req.filters.into_filters();
+    // Refuse empty filters — bulk delete must be intentional. Matches the
+    // CLI's refusal when no filter flags are passed.
+    if filters.contexts.is_empty()
+        && filters.types.is_empty()
+        && filters.origin.is_none()
+        && filters.outcome.is_none()
+        && filters.since.is_none()
+        && filters.until.is_none()
+    {
+        return Err(ApiError::bad_request(
+            "forget refuses an empty filter — supply at least one of \
+             contexts, type, from, outcome, since, until",
+        ));
+    }
+    let removed = state.store.forget(&filters).await?;
+    Ok(ok(json!({"removed": removed})))
+}
