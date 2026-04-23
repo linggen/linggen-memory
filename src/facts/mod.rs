@@ -15,5 +15,7 @@ pub mod types;
 pub use schema::{
     build_schema, facts_to_record_batch, record_batch_to_facts, TABLE_NAME, VECTOR_DIM,
 };
-pub use store::{FactPatch, FactsStore, Filters, SortOrder};
+pub use store::{
+    FactPatch, FactsStore, Filters, InsertOutcome, SortOrder, DEDUP_SIMILARITY_THRESHOLD,
+};
 pub use types::{Fact, FactType, Origin, Outcome, ParseEnumError};

@@ -164,6 +164,88 @@ fn escape_sql(s: &str) -> String {
     s.replace('\'', "''")
 }
 
+/// Cosine-similarity threshold above which a candidate is merged into the
+/// nearest existing fact instead of being inserted as a new row. Embeddings
+/// from the default MiniLM encoder are L2-normalized, so dot product is
+/// cosine similarity; values at/above 0.88 have empirically been
+/// restatements of the same idea in different wording.
+pub const DEDUP_SIMILARITY_THRESHOLD: f32 = 0.88;
+
+/// Outcome of [`FactsStore::insert_with_dedup`]. Either the candidate was
+/// inserted as a new row, or it collapsed into an existing one.
+#[derive(Debug, Clone)]
+pub enum InsertOutcome {
+    /// The candidate had no semantic near-neighbor and was inserted fresh.
+    Added(Fact),
+    /// The candidate's top search hit exceeded the similarity threshold;
+    /// the existing row was rewritten with the merged content/contexts/tags
+    /// and its id is preserved.
+    Merged {
+        /// The post-merge fact (same id as the existing row).
+        fact: Fact,
+        /// Cosine similarity between candidate and the merge target.
+        similarity: f32,
+        /// Id of the existing row that absorbed the candidate (same as
+        /// `fact.id`; surfaced separately for clarity in telemetry).
+        previous_id: Uuid,
+    },
+}
+
+/// Dot-product cosine similarity for two equal-length vectors. Guards
+/// against zero-length or mismatched-dim inputs by returning 0.0.
+fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+    if a.is_empty() || a.len() != b.len() {
+        return 0.0;
+    }
+    let dot: f32 = a.iter().zip(b).map(|(x, y)| x * y).sum();
+    let na: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
+    let nb: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
+    if na == 0.0 || nb == 0.0 {
+        return 0.0;
+    }
+    dot / (na * nb)
+}
+
+/// Merge a near-duplicate `candidate` into an `existing` row. Keeps the
+/// existing id, created_at, and origin (original authorship); unions
+/// contexts and tags; prefers the longer content (more signal). Scalar
+/// optional fields on the candidate overwrite the existing value only
+/// when the candidate actually carries a value — a `None` never clears.
+fn merge_fact(existing: &Fact, candidate: &Fact) -> Fact {
+    let mut merged = existing.clone();
+
+    if candidate.content.len() > existing.content.len() {
+        merged.content = candidate.content.clone();
+        merged.vector = candidate.vector.clone();
+    }
+
+    for c in &candidate.contexts {
+        if !merged.contexts.contains(c) {
+            merged.contexts.push(c.clone());
+        }
+    }
+    for t in &candidate.tags {
+        if !merged.tags.contains(t) {
+            merged.tags.push(t.clone());
+        }
+    }
+
+    if candidate.outcome.is_some() {
+        merged.outcome = candidate.outcome;
+    }
+    if candidate.cwd.is_some() {
+        merged.cwd = candidate.cwd.clone();
+    }
+    if candidate.occurred_at.is_some() {
+        merged.occurred_at = candidate.occurred_at;
+    }
+    if candidate.source_session.is_some() {
+        merged.source_session = candidate.source_session.clone();
+    }
+
+    merged
+}
+
 /// The LanceDB-backed memory store.
 pub struct FactsStore {
     _conn: Connection,
@@ -242,6 +324,49 @@ impl FactsStore {
             .context("adding batch to facts table")?;
 
         Ok(facts.len())
+    }
+
+    /// Insert a single fact with near-duplicate protection.
+    ///
+    /// Runs a type-scoped nearest-neighbour search first. If the top hit's
+    /// cosine similarity to the candidate meets [`DEDUP_SIMILARITY_THRESHOLD`],
+    /// the candidate is merged into that row (see [`merge_fact`]) and the
+    /// existing id is preserved. Otherwise the candidate is inserted fresh.
+    ///
+    /// The candidate must already carry a populated [`Fact::vector`];
+    /// without an embedding we cannot score similarity, so the call falls
+    /// back to a plain insert and returns `InsertOutcome::Added`.
+    pub async fn insert_with_dedup(&self, fact: Fact) -> Result<InsertOutcome> {
+        let Some(vector) = fact.vector.clone() else {
+            self.insert(std::slice::from_ref(&fact)).await?;
+            return Ok(InsertOutcome::Added(fact));
+        };
+
+        let filters = Filters {
+            types: vec![fact.r#type],
+            ..Filters::default()
+        };
+        let hits = self.search(&vector, &filters, 1).await?;
+
+        if let Some(top) = hits.into_iter().next() {
+            if let Some(top_vec) = top.vector.as_ref() {
+                let similarity = cosine_similarity(&vector, top_vec);
+                if similarity >= DEDUP_SIMILARITY_THRESHOLD {
+                    let previous_id = top.id;
+                    let merged = merge_fact(&top, &fact);
+                    self.delete(previous_id).await?;
+                    self.insert(std::slice::from_ref(&merged)).await?;
+                    return Ok(InsertOutcome::Merged {
+                        fact: merged,
+                        similarity,
+                        previous_id,
+                    });
+                }
+            }
+        }
+
+        self.insert(std::slice::from_ref(&fact)).await?;
+        Ok(InsertOutcome::Added(fact))
     }
 
     /// Fetch one fact by id. Returns `None` if the id is not present.
@@ -887,5 +1012,145 @@ mod tests {
         let err = store.forget(&Filters::default()).await.unwrap_err();
         assert!(err.to_string().contains("empty filter"));
         assert_eq!(store.count().await.unwrap(), 1);
+    }
+
+    // ── insert_with_dedup tests ────────────────────────────────────────────
+
+    /// Unit vector with a single 1.0 at `idx`; cosine similarity with its
+    /// twin is 1.0, with a disjoint-index vector is 0.0. Sidesteps flaky
+    /// float comparisons against the real embedding distribution.
+    fn unit_vec_at(idx: usize) -> Vec<f32> {
+        let mut v = vec![0.0_f32; VECTOR_DIM as usize];
+        v[idx] = 1.0;
+        v
+    }
+
+    #[tokio::test]
+    async fn dedup_adds_when_store_is_empty() {
+        let (store, _dir) = fresh_store().await;
+        let f = with_vector(make_fact("first", FactType::Fact), 1.0);
+        let outcome = store.insert_with_dedup(f.clone()).await.unwrap();
+        match outcome {
+            InsertOutcome::Added(got) => assert_eq!(got.id, f.id),
+            InsertOutcome::Merged { .. } => panic!("empty store should never merge"),
+        }
+        assert_eq!(store.count().await.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn dedup_merges_near_duplicate_and_keeps_existing_id() {
+        let (store, _dir) = fresh_store().await;
+
+        let mut existing = make_fact("original phrasing", FactType::Fact);
+        existing.vector = Some(unit_vec_at(0));
+        existing.contexts = vec!["code/linggen".into()];
+        existing.tags = vec!["topic:setup".into()];
+        let existing_id = existing.id;
+        store.insert(&[existing.clone()]).await.unwrap();
+
+        // Candidate: identical vector → cosine 1.0 → above threshold.
+        // Longer content, new context, new tag.
+        let mut candidate = make_fact("original phrasing with more detail", FactType::Fact);
+        candidate.vector = Some(unit_vec_at(0));
+        candidate.contexts = vec!["code/linggen".into(), "team/core".into()];
+        candidate.tags = vec!["topic:setup".into(), "intent:learn".into()];
+
+        let outcome = store.insert_with_dedup(candidate).await.unwrap();
+        let (merged, similarity, previous_id) = match outcome {
+            InsertOutcome::Merged {
+                fact,
+                similarity,
+                previous_id,
+            } => (fact, similarity, previous_id),
+            InsertOutcome::Added(_) => panic!("identical vector should merge"),
+        };
+
+        assert_eq!(previous_id, existing_id);
+        assert_eq!(merged.id, existing_id);
+        assert!(similarity >= DEDUP_SIMILARITY_THRESHOLD);
+        assert_eq!(merged.content, "original phrasing with more detail");
+        assert_eq!(
+            merged.contexts,
+            vec!["code/linggen".to_string(), "team/core".to_string()]
+        );
+        assert_eq!(
+            merged.tags,
+            vec!["topic:setup".to_string(), "intent:learn".to_string()]
+        );
+        assert_eq!(store.count().await.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn dedup_inserts_when_below_threshold() {
+        let (store, _dir) = fresh_store().await;
+
+        let mut existing = make_fact("first", FactType::Fact);
+        existing.vector = Some(unit_vec_at(0));
+        store.insert(&[existing]).await.unwrap();
+
+        // Orthogonal vector → cosine 0.0 → far below threshold.
+        let mut candidate = make_fact("unrelated", FactType::Fact);
+        candidate.vector = Some(unit_vec_at(1));
+
+        let outcome = store.insert_with_dedup(candidate.clone()).await.unwrap();
+        match outcome {
+            InsertOutcome::Added(got) => assert_eq!(got.id, candidate.id),
+            InsertOutcome::Merged { similarity, .. } => {
+                panic!("orthogonal vectors should not merge (got similarity {similarity})")
+            }
+        }
+        assert_eq!(store.count().await.unwrap(), 2);
+    }
+
+    #[tokio::test]
+    async fn dedup_does_not_merge_across_types() {
+        let (store, _dir) = fresh_store().await;
+
+        let mut existing = make_fact("shared meaning", FactType::Fact);
+        existing.vector = Some(unit_vec_at(0));
+        store.insert(&[existing]).await.unwrap();
+
+        // Same vector, different type — must insert, not merge.
+        let mut candidate = make_fact("shared meaning", FactType::Preference);
+        candidate.vector = Some(unit_vec_at(0));
+
+        let outcome = store.insert_with_dedup(candidate).await.unwrap();
+        assert!(matches!(outcome, InsertOutcome::Added(_)));
+        assert_eq!(store.count().await.unwrap(), 2);
+    }
+
+    #[tokio::test]
+    async fn dedup_without_vector_falls_back_to_plain_insert() {
+        let (store, _dir) = fresh_store().await;
+
+        let mut existing = make_fact("anything", FactType::Fact);
+        existing.vector = Some(unit_vec_at(0));
+        store.insert(&[existing]).await.unwrap();
+
+        // Candidate has no vector at all → cannot score similarity → insert.
+        let candidate = make_fact("anything", FactType::Fact);
+        let outcome = store.insert_with_dedup(candidate.clone()).await.unwrap();
+        assert!(matches!(outcome, InsertOutcome::Added(_)));
+        assert_eq!(store.count().await.unwrap(), 2);
+    }
+
+    #[tokio::test]
+    async fn dedup_keeps_existing_content_when_candidate_is_shorter() {
+        let (store, _dir) = fresh_store().await;
+
+        let mut existing = make_fact("a much longer and more specific description", FactType::Fact);
+        existing.vector = Some(unit_vec_at(0));
+        store.insert(&[existing.clone()]).await.unwrap();
+
+        let mut candidate = make_fact("short", FactType::Fact);
+        candidate.vector = Some(unit_vec_at(0));
+
+        let outcome = store.insert_with_dedup(candidate).await.unwrap();
+        match outcome {
+            InsertOutcome::Merged { fact, .. } => {
+                assert_eq!(fact.content, existing.content);
+            }
+            InsertOutcome::Added(_) => panic!("identical vectors should merge"),
+        }
     }
 }

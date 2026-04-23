@@ -9,7 +9,9 @@
 
 use super::envelope::{ok, ApiError};
 use super::state::SharedState;
-use crate::facts::{Fact, FactPatch, FactType, Filters, Origin, Outcome, SortOrder};
+use crate::facts::{
+    Fact, FactPatch, FactType, Filters, InsertOutcome, Origin, Outcome, SortOrder,
+};
 use axum::extract::State;
 use axum::response::Response;
 use axum::routing::post;
@@ -66,6 +68,10 @@ pub struct AddRequest {
     pub cwd: Option<String>,
     pub occurred_at: Option<DateTime<Utc>>,
     pub source_session: Option<String>,
+    /// Bypass dedup: insert as a new row even if a near-duplicate exists.
+    /// Accepts `skip_dedup` (canonical) or `force` (alias).
+    #[serde(default, alias = "force")]
+    pub skip_dedup: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -195,6 +201,7 @@ async fn add(
         return Err(ApiError::bad_request("content must not be empty"));
     }
 
+    let skip_dedup = req.skip_dedup;
     let mut fact = Fact::new(
         req.content,
         req.r#type.unwrap_or(FactType::Fact),
@@ -214,8 +221,38 @@ async fn add(
         .map_err(ApiError::internal)?;
     fact.vector = Some(vector);
 
-    state.store.insert(std::slice::from_ref(&fact)).await?;
-    Ok(ok(fact_public(&fact)))
+    if skip_dedup {
+        state.store.insert(std::slice::from_ref(&fact)).await?;
+        return Ok(ok(json!({
+            "action": "added",
+            "fact": fact_public(&fact),
+        })));
+    }
+
+    let outcome = state.store.insert_with_dedup(fact).await?;
+    Ok(ok(outcome_public(&outcome)))
+}
+
+/// Wrap an [`InsertOutcome`] as the JSON payload returned by the add
+/// endpoint. Always includes `action` and `fact`; on a merge also
+/// includes `similarity` and `previous_id`.
+fn outcome_public(outcome: &InsertOutcome) -> Value {
+    match outcome {
+        InsertOutcome::Added(f) => json!({
+            "action": "added",
+            "fact": fact_public(f),
+        }),
+        InsertOutcome::Merged {
+            fact,
+            similarity,
+            previous_id,
+        } => json!({
+            "action": "merged",
+            "similarity": similarity,
+            "previous_id": previous_id,
+            "fact": fact_public(fact),
+        }),
+    }
 }
 
 async fn get(

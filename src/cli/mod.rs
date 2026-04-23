@@ -142,6 +142,11 @@ pub struct AddArgs {
     /// Read newline-delimited JSON facts from stdin, one per line.
     #[arg(long)]
     pub stdin: bool,
+
+    /// Insert as a new row even if a near-duplicate exists. Bulk stdin
+    /// imports always skip dedup regardless of this flag.
+    #[arg(long)]
+    pub skip_dedup: bool,
 }
 
 #[derive(Debug, Args)]
@@ -403,39 +408,85 @@ fn emit_lifecycle(outcome: &crate::daemon::lifecycle::LifecycleOutcome) -> Resul
 // ── Subcommand handlers ─────────────────────────────────────────────────────
 
 async fn cmd_add(store: &FactsStore, args: AddArgs, format: OutputFormat) -> Result<()> {
-    let mut facts = if args.stdin {
-        read_stdin_facts()?
-    } else {
-        let content = args
-            .content
-            .clone()
-            .ok_or_else(|| anyhow!("add: provide content or use --stdin"))?;
+    // Bulk stdin path: always plain insert. Dedup against hundreds of incoming
+    // rows would be O(N) searches per call; callers who want dedup for bulk
+    // imports should run `analyze-clean` afterwards.
+    if args.stdin {
+        let mut facts = read_stdin_facts()?;
+        embed_missing(&mut facts)?;
+        store.insert(&facts).await?;
+        return emit_added(&facts, format);
+    }
 
-        let mut fact = crate::facts::Fact::new(content, args.r#type.into(), args.from.into());
-        fact.contexts = args.contexts;
-        fact.tags = args.tags;
-        fact.outcome = args.outcome.map(Into::into);
-        fact.cwd = args.cwd;
-        fact.occurred_at = args.occurred_at;
-        fact.source_session = args.source_session;
-        vec![fact]
-    };
+    let content = args
+        .content
+        .clone()
+        .ok_or_else(|| anyhow!("add: provide content or use --stdin"))?;
 
-    embed_missing(&mut facts)?;
-    store.insert(&facts).await?;
+    let mut fact = crate::facts::Fact::new(content, args.r#type.into(), args.from.into());
+    fact.contexts = args.contexts;
+    fact.tags = args.tags;
+    fact.outcome = args.outcome.map(Into::into);
+    fact.cwd = args.cwd;
+    fact.occurred_at = args.occurred_at;
+    fact.source_session = args.source_session;
+
+    let mut batch = [fact];
+    embed_missing(&mut batch)?;
+    let [fact] = batch;
+
+    if args.skip_dedup {
+        store.insert(std::slice::from_ref(&fact)).await?;
+        return emit_added(std::slice::from_ref(&fact), format);
+    }
+
+    let outcome = store.insert_with_dedup(fact).await?;
+    emit_outcome(&outcome, format)
+}
+
+fn emit_added(facts: &[crate::facts::Fact], format: OutputFormat) -> Result<()> {
     match format {
         OutputFormat::Json => {
-            for f in &facts {
+            for f in facts {
                 writeln_ndjson(f)?;
             }
         }
         OutputFormat::Text => {
-            for f in &facts {
+            for f in facts {
                 println!("added {} — {}", f.id, truncate(&f.content, 80));
             }
         }
     }
     Ok(())
+}
+
+fn emit_outcome(
+    outcome: &crate::facts::InsertOutcome,
+    format: OutputFormat,
+) -> Result<()> {
+    use crate::facts::InsertOutcome;
+    match (format, outcome) {
+        (OutputFormat::Json, InsertOutcome::Added(f)) => writeln_ndjson(f),
+        (OutputFormat::Json, InsertOutcome::Merged { fact, .. }) => writeln_ndjson(fact),
+        (OutputFormat::Text, InsertOutcome::Added(f)) => {
+            println!("added {} — {}", f.id, truncate(&f.content, 80));
+            Ok(())
+        }
+        (OutputFormat::Text, InsertOutcome::Merged {
+            fact,
+            similarity,
+            previous_id,
+        }) => {
+            println!(
+                "merged into {} (similarity {:.2}, previous_id {}) — {}",
+                fact.id,
+                similarity,
+                previous_id,
+                truncate(&fact.content, 80),
+            );
+            Ok(())
+        }
+    }
 }
 
 async fn cmd_get(store: &FactsStore, id: Uuid, format: OutputFormat) -> Result<()> {
