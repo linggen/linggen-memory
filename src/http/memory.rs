@@ -17,9 +17,29 @@ use axum::response::Response;
 use axum::routing::post;
 use axum::{Json, Router};
 use chrono::{DateTime, Utc};
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use serde_json::{json, Value};
 use uuid::Uuid;
+
+/// Deserialize `Option<DateTime<Utc>>` while tolerating the shapes LLMs
+/// commonly produce for "no bound": omitted, `null`, or `""`. Non-empty
+/// strings must still be RFC-3339. Without this, a chat-generated
+/// `{"since": ""}` hits chrono's strict parser and surfaces as an
+/// opaque `422: premature end of input`.
+fn deserialize_optional_datetime<'de, D>(de: D) -> Result<Option<DateTime<Utc>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de::Error;
+
+    let s: Option<String> = Option::deserialize(de)?;
+    match s.as_deref() {
+        None | Some("") => Ok(None),
+        Some(raw) => DateTime::parse_from_rfc3339(raw)
+            .map(|dt| Some(dt.with_timezone(&Utc)))
+            .map_err(|e| D::Error::custom(format!("invalid RFC-3339 timestamp {raw:?}: {e}"))),
+    }
+}
 
 /// Serialize a fact for HTTP response, stripping the 384-dim embedding
 /// vector. Callers never need the raw vector over the wire, and including
@@ -66,6 +86,7 @@ pub struct AddRequest {
     pub from: Option<Origin>,
     pub outcome: Option<Outcome>,
     pub cwd: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_datetime")]
     pub occurred_at: Option<DateTime<Utc>>,
     pub source_session: Option<String>,
     /// Bypass dedup: insert as a new row even if a near-duplicate exists.
@@ -92,11 +113,16 @@ pub struct FilterDTO {
     #[serde(default, alias = "origin")]
     pub from: Option<Origin>,
     pub outcome: Option<Outcome>,
+    #[serde(default, deserialize_with = "deserialize_optional_datetime")]
     pub since: Option<DateTime<Utc>>,
     /// Upper bound on `COALESCE(occurred_at, created_at)`. `older_than`
     /// is accepted as an alias (legacy shape from the v0.1 translate_args
     /// table in Linggen core).
-    #[serde(default, alias = "older_than")]
+    #[serde(
+        default,
+        alias = "older_than",
+        deserialize_with = "deserialize_optional_datetime"
+    )]
     pub until: Option<DateTime<Utc>>,
 }
 

@@ -1209,8 +1209,27 @@ function renderBulkMenu() {
   const menu = document.getElementById('bulk-menu');
   menu.replaceChildren();
   const n = state.selected.size;
+  const loadedN = state.loaded.length;
   const filterActive = hasAnyFilter();
+  const allLoadedSelected = loadedN > 0 && n >= loadedN;
+  // If everything loaded is already selected AND nothing more to load → toggle becomes deselect.
+  const toggleOff = allLoadedSelected && !state.hasMore;
+  // Label reflects whether click will add, add-more, or clear.
+  let selectAllLabel;
+  if (toggleOff) {
+    selectAllLabel = `Deselect all (${n})`;
+  } else if (state.hasMore) {
+    selectAllLabel = `Select all (${loadedN}+ — load remaining)`;
+  } else {
+    selectAllLabel = `Select all (${loadedN})`;
+  }
   menu.append(
+    bulkItem(
+      selectAllLabel,
+      loadedN === 0,
+      null,
+      bulkSelectAll,
+    ),
     bulkItem(`Delete selected (${n})`, n === 0, 'danger', bulkDeleteSelected),
     bulkItem(
       'Forget by current filter…',
@@ -1226,6 +1245,34 @@ function renderBulkMenu() {
       closeBulkMenu();
     }),
   );
+}
+
+// Select every currently-loaded fact. If more pages exist (non-search mode),
+// load them first so a single click selects the entire store. Second click
+// (when all-loaded-selected and no more to load) deselects everything — the
+// menu label flips to "Deselect all" in that state.
+async function bulkSelectAll() {
+  const allLoadedSelected =
+    state.loaded.length > 0 && state.selected.size >= state.loaded.length;
+  if (allLoadedSelected && !state.hasMore) {
+    state.selected.clear();
+    renderBulkSummary();
+    renderList();
+    return;
+  }
+  // Load remaining pages before selecting (skip in search mode — pagination disabled there).
+  while (state.hasMore && !isSearchMode()) {
+    // eslint-disable-next-line no-await-in-loop
+    await loadMore();
+    // loadMore() may silently no-op if already loading; break to avoid an infinite loop
+    // if something unexpected leaves state.loading stuck.
+    if (state.loading) break;
+  }
+  for (const fact of state.loaded) {
+    state.selected.add(fact.id);
+  }
+  renderBulkSummary();
+  renderList();
 }
 
 function bulkItem(label, disabled, variant, onClick, hint) {
