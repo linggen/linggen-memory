@@ -6,7 +6,7 @@
 
 Built as the default memory skill for [Linggen](https://github.com/linggen/linggen); works equally well invoked from Claude Code or any tool that can shell out.
 
-> 🚀 **Status: v0.2.1 — prebuilt binaries available.** Active development continues on `memory-refactor`. The `main` branch reflects the archived code-indexing tool this project evolved from; see the `v0-legacy` tag for that snapshot.
+> 🚀 **Status: v0.2.1 — prebuilt binaries available.** Active development on `main`. The pre-refactor code-indexing tool is preserved at the `v0-legacy` git tag.
 
 ---
 
@@ -70,7 +70,6 @@ To build from source instead:
 ```bash
 git clone https://github.com/linggen/linggen-memory
 cd linggen-memory
-git checkout memory-refactor
 cargo build --release
 ./target/release/ling-mem --help
 ```
