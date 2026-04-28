@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.3.0] - 2026-04-28 — Self-update
+
+- **`ling-mem self-update`** — new subcommand. `--check` prints the latest
+  version (24h-cached probe of `linggen/linggen-memory` GitHub releases).
+  Without `--check`, downloads the matching `ling-mem-<slug>.tar.gz`,
+  verifies SHA-256, stops the daemon, atomic-renames the binary into
+  place (keeping `bin/ling-mem.prev` for rollback), and restarts the
+  daemon by spawning the new binary explicitly. Requires `--yes` to
+  proceed past the check.
+- **`ling-mem start` / `restart` JSON** — now embeds an `update` field
+  with the cached probe result, so the agent can prompt the user when a
+  newer release is available without an extra command.
+- **SKILL.md** — added an `## Updates` section telling the agent how to
+  surface the prompt and run `self-update --yes` on user confirmation.
+- **install.sh** — symlinks the installed binary onto PATH at
+  `~/.local/bin/ling-mem` (preferring the Linggen install when both
+  hosts are present), so bare `ling-mem` works in any shell. Drops the
+  CC CLAUDE.md hint's absolute-path parenthetical now that it's
+  redundant.
+
 ## [0.1.0] - 2026-04-21 — Memory skill rebuild
 
 **Complete rewrite.** Repo repurposed from a code-indexing tool into a

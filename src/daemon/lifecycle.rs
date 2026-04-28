@@ -21,6 +21,10 @@ const STOP_TIMEOUT: Duration = Duration::from_secs(10);
 const HEALTH_TIMEOUT: Duration = Duration::from_millis(500);
 
 /// Result of a lifecycle command — rendered as JSON to stdout.
+///
+/// `update` is attached only by [`start`] / [`restart`] (post-bind) so the
+/// agent can prompt the user when a newer release is available. It uses
+/// the cached probe — no network call on every start beyond the first.
 #[derive(Debug)]
 pub enum LifecycleOutcome {
     Running(PidInfo),
@@ -32,7 +36,14 @@ pub enum LifecycleOutcome {
 
 impl LifecycleOutcome {
     pub fn to_json(&self) -> serde_json::Value {
-        match self {
+        self.to_json_with_update(None)
+    }
+
+    pub fn to_json_with_update(
+        &self,
+        update: Option<&crate::update::UpdateInfo>,
+    ) -> serde_json::Value {
+        let mut value = match self {
             LifecycleOutcome::Running(info) => json!({
                 "state": "running",
                 "pid": info.pid,
@@ -59,7 +70,14 @@ impl LifecycleOutcome {
                 "previous_pid": previous_pid,
             }),
             LifecycleOutcome::NotRunning => json!({"state": "not_running"}),
+        };
+        if let (Some(update), Some(obj)) = (update, value.as_object_mut()) {
+            obj.insert(
+                "update".to_string(),
+                serde_json::to_value(update).unwrap_or(serde_json::Value::Null),
+            );
         }
+        value
     }
 }
 

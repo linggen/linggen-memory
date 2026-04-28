@@ -107,6 +107,30 @@ pub enum Command {
 
     /// Report daemon state: pidfile, liveness, health probe.
     Status,
+
+    /// Check for or apply a `ling-mem` self-update from GitHub releases.
+    /// With `--check`, report the latest version without downloading.
+    /// Otherwise download, verify, swap the binary, and restart the
+    /// daemon if it was running. Named `self-update` to avoid colliding
+    /// with `update`, which modifies fact rows.
+    SelfUpdate {
+        /// Print version info only; don't download or swap.
+        #[arg(long)]
+        check: bool,
+
+        /// Reinstall even if already on the latest version.
+        #[arg(long)]
+        force: bool,
+
+        /// Confirm the swap. Required for the actual update path —
+        /// scripted/agent callers must pass it explicitly.
+        #[arg(long)]
+        yes: bool,
+
+        /// Daemon port to use when restarting after the swap.
+        #[arg(long, default_value_t = crate::daemon::DEFAULT_PORT)]
+        port: u16,
+    },
 }
 
 // ── Argument structs ────────────────────────────────────────────────────────
@@ -363,7 +387,8 @@ pub async fn run(cli: Cli) -> Result<()> {
         }
         Command::Start { port } => {
             let outcome = crate::daemon::lifecycle::start(&data_dir, &skill_dir, port).await?;
-            return emit_lifecycle(&outcome);
+            let update = crate::update::check_quiet(&data_dir).await;
+            return emit_lifecycle_with_update(&outcome, Some(&update));
         }
         Command::Stop => {
             let outcome = crate::daemon::lifecycle::stop(&skill_dir).await?;
@@ -372,12 +397,21 @@ pub async fn run(cli: Cli) -> Result<()> {
         Command::Restart { port } => {
             let outcome =
                 crate::daemon::lifecycle::restart(&data_dir, &skill_dir, port).await?;
-            return emit_lifecycle(&outcome);
+            let update = crate::update::check_quiet(&data_dir).await;
+            return emit_lifecycle_with_update(&outcome, Some(&update));
         }
         Command::Status => {
             let value = crate::daemon::lifecycle::status(&skill_dir).await?;
             println!("{}", serde_json::to_string_pretty(&value)?);
             return Ok(());
+        }
+        Command::SelfUpdate {
+            check,
+            force,
+            yes,
+            port,
+        } => {
+            return cmd_self_update(&data_dir, &skill_dir, check, force, yes, port).await;
         }
         _ => {}
     }
@@ -402,7 +436,8 @@ pub async fn run(cli: Cli) -> Result<()> {
             | Command::Start { .. }
             | Command::Stop
             | Command::Restart { .. }
-            | Command::Status => unreachable!("handled above"),
+            | Command::Status
+            | Command::SelfUpdate { .. } => unreachable!("handled above"),
         };
     }
 
@@ -422,12 +457,21 @@ pub async fn run(cli: Cli) -> Result<()> {
         | Command::Start { .. }
         | Command::Stop
         | Command::Restart { .. }
-        | Command::Status => unreachable!("handled above"),
+        | Command::Status
+        | Command::SelfUpdate { .. } => unreachable!("handled above"),
     }
 }
 
 fn emit_lifecycle(outcome: &crate::daemon::lifecycle::LifecycleOutcome) -> Result<()> {
-    println!("{}", serde_json::to_string_pretty(&outcome.to_json())?);
+    emit_lifecycle_with_update(outcome, None)
+}
+
+fn emit_lifecycle_with_update(
+    outcome: &crate::daemon::lifecycle::LifecycleOutcome,
+    update: Option<&crate::update::UpdateInfo>,
+) -> Result<()> {
+    let value = outcome.to_json_with_update(update);
+    println!("{}", serde_json::to_string_pretty(&value)?);
     Ok(())
 }
 
@@ -639,6 +683,39 @@ async fn cmd_forget(store: &FactsStore, args: ForgetArgs, format: OutputFormat) 
 // Session-scanning utilities (`cmd_collect` + `cmd_extract`) moved to
 // bash scripts in `skills/memory/scripts/`. The daemon stays focused on
 // the fact store.
+
+async fn cmd_self_update(
+    data_dir: &std::path::Path,
+    skill_dir: &std::path::Path,
+    check_only: bool,
+    force: bool,
+    yes: bool,
+    port: u16,
+) -> Result<()> {
+    use crate::update;
+
+    if check_only {
+        let info = update::check(data_dir, true).await?;
+        println!("{}", serde_json::to_string_pretty(&info)?);
+        return Ok(());
+    }
+
+    if !yes {
+        return Err(anyhow!(
+            "refusing to update without --yes (the swap replaces the running binary)"
+        ));
+    }
+
+    let outcome = update::apply(update::ApplyOptions {
+        data_dir,
+        skill_dir,
+        port,
+        force,
+    })
+    .await?;
+    println!("{}", serde_json::to_string_pretty(&outcome)?);
+    Ok(())
+}
 
 // ── I/O helpers ─────────────────────────────────────────────────────────────
 
