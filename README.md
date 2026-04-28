@@ -52,13 +52,13 @@ The daemon (`ling-mem start`) also serves a built-in Data Browser at `http://127
 
 ## Install
 
-The `ling-mem` binary ships as part of the **`ling-mem` skill** (in the [linggen](https://github.com/linggen/linggen) repo at `skills/ling-mem/`). Installing the skill is the recommended path — it fetches the prebuilt binary, wires up the SKILL.md, and seeds the core memory files.
+The `ling-mem` binary ships as part of the **`ling-mem` skill** (in the [linggen/skills](https://github.com/linggen/skills) repo at `ling-mem/`). Installing the skill is the recommended path — it fetches the prebuilt binary, wires up the SKILL.md, and seeds the core memory files.
 
 Best experience: **Linggen agent**, which exposes typed `Memory_query` / `Memory_write` tools and a built-in dashboard. The skill also works with **any other agent** that can shell out (Claude Code, Codex, plain scripts) — they just call the `ling-mem` CLI directly.
 
 ```bash
-git clone https://github.com/linggen/linggen
-cd linggen/skills/ling-mem
+git clone https://github.com/linggen/skills
+cd skills/ling-mem
 ./install.sh                  # auto-detects ~/.linggen and/or ~/.claude
 ./install.sh --host=both      # force install to both
 LING_MEM_VERSION=v0.3.0 ./install.sh   # pin a specific version
@@ -102,7 +102,7 @@ linggen-memory/
 └── README.md           # you are here
 ```
 
-The thin **skill wrapper** (SKILL.md + dashboard + install.sh + scan/extract scripts) lives in the [`linggen` repo at `skills/ling-mem/`](https://github.com/linggen/linggen/tree/main/skills/ling-mem) — separate from this binary's source.
+The thin **skill wrapper** (SKILL.md + dashboard + install.sh + scan/extract scripts) lives in the [`linggen/skills` repo at `ling-mem/`](https://github.com/linggen/skills/tree/main/ling-mem) — separate from this binary's source.
 
 ---
 
