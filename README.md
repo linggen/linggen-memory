@@ -49,7 +49,9 @@ Default output is NDJSON on stdout — any model / script / shell can parse it.
 
 ## Install
 
-The recommended path is the `ling-mem` skill installer, which fetches the prebuilt binary from GitHub releases and wires up both Linggen and Claude Code if either is detected:
+The `ling-mem` binary ships as part of the **`ling-mem` skill** (in the [linggen](https://github.com/linggen/linggen) repo at `skills/ling-mem/`). Installing the skill is the recommended path — it fetches the prebuilt binary, wires up the SKILL.md, and seeds the core memory files.
+
+Best experience: **Linggen agent**, which exposes typed `Memory_query` / `Memory_write` tools and a built-in dashboard. The skill also works with **any other agent** that can shell out (Claude Code, Codex, plain scripts) — they just call the `ling-mem` CLI directly.
 
 ```bash
 git clone https://github.com/linggen/linggen
