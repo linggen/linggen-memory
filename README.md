@@ -6,7 +6,7 @@
 
 Built as the default memory skill for [Linggen](https://github.com/linggen/linggen); works equally well invoked from Claude Code or any tool that can shell out.
 
-> 🔧 **Status: v0.1 in active development on `memory-refactor`.** The main branch reflects the archived code-indexing tool this project evolved from. See the `v0-legacy` tag for that snapshot.
+> 🚀 **Status: v0.2.1 — prebuilt binaries available.** Active development continues on `memory-refactor`. The `main` branch reflects the archived code-indexing tool this project evolved from; see the `v0-legacy` tag for that snapshot.
 
 ---
 
@@ -14,7 +14,7 @@ Built as the default memory skill for [Linggen](https://github.com/linggen/lingg
 
 - **Remembers across sessions.** Facts about who you are, how you prefer to work, what you've tried, what worked, what didn't.
 - **Semantic retrieval.** Everything stored gets embedded (384-dim via `all-MiniLM-L6-v2`). Find "berth calibration" by asking about "dock alignment."
-- **Typed facts.** Seven categories — `fact / preference / decision / tried / fixed / learned / built` — each with a clear retrieval trigger.
+- **Typed facts.** Four default categories — `fact / preference / decision / learned` — plus `tried / fixed / built` for trajectory-level patterns.
 - **Forgetting is first-class.** `archive`, `delete`, `forget` by filter. Time-decay and access-decay automatic.
 - **Three ways to use it:**
   - As a **Linggen skill** — web app UI + `Memory_*` tool dispatch in the agent.
@@ -47,9 +47,21 @@ Default output is NDJSON on stdout — any model / script / shell can parse it.
 
 ---
 
-## Install (v0.1 — in development)
+## Install
 
-Currently no prebuilt releases. To build from source on the `memory-refactor` branch:
+The recommended path is the `ling-mem` skill installer, which fetches the prebuilt binary from GitHub releases and wires up both Linggen and Claude Code if either is detected:
+
+```bash
+git clone https://github.com/linggen/linggen
+cd linggen/skills/ling-mem
+./install.sh                  # auto-detects ~/.linggen and/or ~/.claude
+./install.sh --host=both      # force install to both
+LING_MEM_VERSION=v0.2.1 ./install.sh   # pin a specific version
+```
+
+Prebuilt binaries are available for macOS (Apple Silicon + Intel) and Linux (x86_64 + aarch64) on the [releases page](https://github.com/linggen/linggen-memory/releases).
+
+To build from source instead:
 
 ```bash
 git clone https://github.com/linggen/linggen-memory
@@ -59,7 +71,7 @@ cargo build --release
 ./target/release/ling-mem --help
 ```
 
-Prebuilt binaries for macOS (Intel + Apple Silicon) and Linux (x86_64 + aarch64) land once v0.1 tagging begins. See `doc/tech-spec.md` → *Release process*.
+See `doc/tech-spec.md` → *Release process* for the cross-compile + signing flow.
 
 ---
 
