@@ -1,0 +1,58 @@
+# Dockerfile for Linux multi-arch builds of ling-mem.
+# Use with: docker buildx build --platform linux/amd64,linux/arm64
+# Patterned on linggen/linggen/scripts/Dockerfile.linux (no UI step —
+# linggen-memory is a pure Rust binary with no embedded webapp).
+
+FROM rust:bookworm AS builder
+
+# Set automatically by Docker Buildx (amd64, arm64, ...).
+ARG TARGETARCH
+ARG BUILD_VERSION=0.0.0
+
+RUN apt-get update && apt-get install -y \
+    libssl-dev \
+    pkg-config \
+    cmake \
+    curl \
+    libclang-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# 1. Pre-build dependencies for layer caching. Stub main.rs + lib.rs so
+#    Cargo can resolve the crate without the real source tree, then warm
+#    the registry + target/ cache for the heavy deps (fastembed / lancedb).
+COPY Cargo.toml Cargo.lock ./
+RUN mkdir -p src && \
+    echo "fn main() {}" > src/main.rs && \
+    : > src/lib.rs && \
+    cargo build --release --bin ling-mem || true
+RUN rm -rf src
+
+# 2. Real source.
+COPY . .
+
+ENV LING_MEM_BUILD_VERSION=$BUILD_VERSION
+
+# 3. Build the binary. Touch every .rs so cargo invalidates the stub
+#    artifacts from step 1 even if mtimes survive the COPY.
+RUN find src -name "*.rs" -exec touch {} + && \
+    cargo build --release --bin ling-mem
+
+# 4. Validate + package. SLUG matches install.sh's TARGET names.
+RUN mkdir -p /app/dist-temp && \
+    if [ "$TARGETARCH" = "amd64" ]; then SLUG="x86_64"; else SLUG="aarch64"; fi && \
+    LING_BIN="/app/target/release/ling-mem" && \
+    LING_SIZE=$(stat -c%s "$LING_BIN") && \
+    if [ "$LING_SIZE" -lt 1000000 ]; then \
+        echo "Error: ling-mem binary too small ($LING_SIZE bytes)" >&2 && exit 1; \
+    fi && \
+    mkdir -p /app/dist-temp/staging && \
+    cp "$LING_BIN" /app/dist-temp/staging/ && \
+    cp /app/README.md /app/LICENSE /app/dist-temp/staging/ && \
+    cd /app/dist-temp/staging && \
+    tar -czf /app/dist-temp/ling-mem-linux-${SLUG}.tar.gz .
+
+# Stage 2: artifact extraction (tarballs only — no toolchain bloat).
+FROM scratch AS artifacts
+COPY --from=builder /app/dist-temp/*.tar.gz /

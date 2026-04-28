@@ -64,7 +64,7 @@ cd skills/ling-mem
 LING_MEM_VERSION=v0.3.0 ./install.sh   # pin a specific version
 ```
 
-Prebuilt binaries are available for macOS (Apple Silicon + Intel) and Linux (x86_64 + aarch64) on the [releases page](https://github.com/linggen/linggen-memory/releases).
+Prebuilt binaries are available for macOS Apple Silicon and Linux (x86_64 + aarch64) on the [releases page](https://github.com/linggen/linggen-memory/releases).
 
 To build from source instead:
 
