@@ -61,10 +61,14 @@ impl Filters {
             clauses.push(format!("({or})"));
         }
 
-        if let Some(o) = self.origin {
-            // `from` is a SQL keyword — double-quote the column name.
-            clauses.push(format!("\"from\" = '{}'", o.as_str()));
-        }
+        // NOTE: `from` is intentionally NOT pushed as a SQL clause here.
+        // The column name `from` is a SQL keyword, and LanceDB / DataFusion
+        // returns 0 rows for `"from" = 'value'` even though the column does
+        // hold values that match — likely a parser bug in the keyword path.
+        // Origin filtering happens post-fetch in `apply_origin_filter` below;
+        // skipping it in SQL avoids the keyword collision entirely. If the
+        // upstream parser is fixed later, restore the SQL clause and drop the
+        // post-filter for one less Rust pass over the rows.
 
         if let Some(o) = self.outcome {
             clauses.push(format!("outcome = '{}'", o.as_str()));
@@ -89,6 +93,16 @@ impl Filters {
         } else {
             Some(clauses.join(" AND "))
         }
+    }
+}
+
+/// Apply the `origin` filter post-fetch. `Filters::to_sql` deliberately
+/// skips `from` because LanceDB / DataFusion mis-handles the SQL keyword
+/// even when double-quoted (returns 0 rows). Cheap O(N) over the limited
+/// row set we already pulled.
+fn apply_origin_filter(facts: &mut Vec<Fact>, origin: Option<Origin>) {
+    if let Some(o) = origin {
+        facts.retain(|f| f.origin == o);
     }
 }
 
@@ -437,7 +451,9 @@ impl FactsStore {
             q = q.only_if(sql);
         }
 
-        self.collect_query(q).await
+        let mut facts = self.collect_query(q).await?;
+        apply_origin_filter(&mut facts, filters.origin);
+        Ok(facts)
     }
 
     /// Non-semantic browse. Returns up to `limit` facts matching `filters`,
@@ -461,12 +477,20 @@ impl FactsStore {
             return Ok(Vec::new());
         }
 
-        let mut q = self.table.query().limit(fetch);
+        // When an origin filter is set we can't push it into LanceDB SQL
+        // (see `apply_origin_filter` for the keyword bug), so we may over-fetch
+        // here and drop rows post-fetch. Skip the LanceDB-side limit in that
+        // case to avoid losing matching rows below the page window.
+        let mut q = self.table.query();
+        if filters.origin.is_none() {
+            q = q.limit(fetch);
+        }
         if let Some(sql) = filters.to_sql() {
             q = q.only_if(sql);
         }
 
         let mut facts = self.collect_query(q).await?;
+        apply_origin_filter(&mut facts, filters.origin);
 
         facts.sort_by(|a, b| match order {
             SortOrder::Newest => b.effective_timestamp().cmp(&a.effective_timestamp()),
@@ -512,13 +536,39 @@ impl FactsStore {
     /// would match every row, which is almost always a bug. Callers who
     /// genuinely want "forget everything" should iterate over all rows and
     /// delete by id, or drop the table directory externally.
+    ///
+    /// When `origin` is set, we can't push it as a SQL clause (LanceDB
+    /// reserved-word bug — see `apply_origin_filter`), so we fall back to
+    /// list-then-delete-by-id. The per-row delete cost is fine at our scale.
     pub async fn forget(&self, filters: &Filters) -> Result<usize> {
-        let Some(predicate) = filters.to_sql() else {
+        // Safety: an `origin`-only filter would render `to_sql()` as `None`
+        // (since origin isn't pushed into SQL anymore). Treat that as
+        // non-empty to avoid the "refusing to forget with empty filter"
+        // guard accidentally rejecting a perfectly valid origin-only request.
+        let predicate = filters.to_sql();
+        let has_any_filter = predicate.is_some() || filters.origin.is_some();
+        if !has_any_filter {
             return Err(anyhow!(
                 "refusing to forget with empty filter — provide at least one criterion"
             ));
-        };
+        }
 
+        if filters.origin.is_some() {
+            // Origin filter active → list rows that match, delete each by id.
+            // Use a generous limit to cover the whole store; pagination here
+            // would just complicate the count math.
+            let mut victims = self
+                .list(filters, SortOrder::Newest, usize::MAX, 0)
+                .await?;
+            apply_origin_filter(&mut victims, filters.origin);
+            let mut removed = 0;
+            for v in victims {
+                removed += self.delete_one(v.id).await? as usize;
+            }
+            return Ok(removed);
+        }
+
+        let predicate = predicate.expect("predicate exists when origin is None and filter non-empty");
         let before = self.count().await?;
         self.table
             .delete(&predicate)
@@ -677,7 +727,10 @@ mod tests {
         let sql = f.to_sql().unwrap();
         assert!(sql.contains("array_has(contexts, 'code/linggen')"));
         assert!(sql.contains("type = 'fixed'"));
-        assert!(sql.contains("\"from\" = 'user'"));
+        // origin/from is intentionally NOT in the SQL — applied post-fetch
+        // because LanceDB returns 0 rows for `"from" = 'user'` even though
+        // the column has matching values.
+        assert!(!sql.contains("\"from\""));
         assert!(sql.contains("outcome = 'positive'"));
         assert!(sql.contains(" AND "));
     }
