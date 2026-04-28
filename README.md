@@ -15,7 +15,7 @@ Built as the default memory skill for [Linggen](https://github.com/linggen/lingg
 - **Remembers across sessions.** Facts about who you are, how you prefer to work, what you've tried, what worked, what didn't.
 - **Semantic retrieval.** Everything stored gets embedded (384-dim via `all-MiniLM-L6-v2`). Find "berth calibration" by asking about "dock alignment."
 - **Typed facts.** Four default categories — `fact / preference / decision / learned` — plus `tried / fixed / built` for trajectory-level patterns.
-- **Forgetting is first-class.** `archive`, `delete`, `forget` by filter. Time-decay and access-decay automatic.
+- **Forgetting is first-class.** `delete` by id, `forget` by filter — refuses empty filters as a guardrail.
 - **Three ways to use it:**
   - As a **Linggen skill** — web app UI + `Memory_*` tool dispatch in the agent.
   - As a **Claude Code skill** — SKILL.md body, model calls the CLI via Bash.
@@ -37,13 +37,15 @@ ling-mem search "how do I format logs in dev" \
   --context code/linggen --limit 5
 
 # Browse by filter
-ling-mem list --type fixed --since 2026-01-01 --format=table
+ling-mem list --type preference --since 2026-01-01 --format text
 
 # Forget a finished project
 ling-mem forget --context trip-japan-2026 --yes
 ```
 
-Default output is NDJSON on stdout — any model / script / shell can parse it.
+Default output is NDJSON on stdout — any model / script / shell can parse it. Pass `--format text` for human-readable lines.
+
+The daemon (`ling-mem start`) also serves a built-in Data Browser at `http://127.0.0.1:9888` for hands-on filter / edit / batch-delete.
 
 ---
 
@@ -82,17 +84,25 @@ See `doc/tech-spec.md` → *Release process* for the cross-compile + signing flo
 ```
 linggen-memory/
 ├── Cargo.toml          # single crate
-├── src/                # all Rust code
-│                       # (no webui/ — the memory skill's UI lives in
-│                        #  skills/memory/ui/ in the main Linggen repo)
+├── src/                # all Rust code (CLI, HTTP daemon, embed pipeline,
+│                       #  LanceDB store)
+├── static/             # Data Browser UI (baked into the binary via rust-embed,
+│                       #  served at 127.0.0.1:9888 by the daemon)
 ├── doc/
 │   ├── product-spec.md # features, user-facing behavior, scenarios
-│   └── tech-spec.md    # schema, storage, CLI contract, release process
+│   ├── tech-spec.md    # schema, storage, CLI contract, release process
+│   └── ui-spec.md      # Data Browser UI: layout, endpoints, interactions
 ├── scripts/            # build + release (cross-compile via GitHub Actions)
 ├── assets/             # icon etc.
 ├── DESIGN.md           # rolling locked-decisions log
+├── CHANGELOG.md        # release notes per version
+├── RELEASES.md         # release process notes
+├── SIGNING.md          # minisign signing key + verification flow
+├── LICENSE             # MIT
 └── README.md           # you are here
 ```
+
+The thin **skill wrapper** (SKILL.md + dashboard + install.sh + scan/extract scripts) lives in the [`linggen` repo at `skills/ling-mem/`](https://github.com/linggen/linggen/tree/main/skills/ling-mem) — separate from this binary's source.
 
 ---
 
