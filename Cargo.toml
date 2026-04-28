@@ -1,6 +1,6 @@
 [package]
 name = "ling-mem"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2021"
 authors = ["linggen77@gmail.com"]
 description = "Semantic memory store — facts, activity, LanceDB-backed retrieval"
