@@ -17,15 +17,41 @@ use axum::response::Response;
 use axum::routing::post;
 use axum::{Json, Router};
 use chrono::{DateTime, Utc};
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer};
 use serde_json::{json, Value};
 use uuid::Uuid;
 
+/// Deserialize an `Option<T>` where empty strings, `null`, and missing
+/// keys all collapse to `None`. Wraps any string-or-enum field that LLMs
+/// commonly fill with `""` instead of omitting. Without this, a payload
+/// like `{"type": "", "from": ""}` hits serde's enum parser and surfaces
+/// as `422: premature end of input` — opaque, blocks the call.
+fn deserialize_optional_lenient<'de, D, T>(de: D) -> Result<Option<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: DeserializeOwned,
+{
+    let v = serde_json::Value::deserialize(de)?;
+    match v {
+        serde_json::Value::Null => Ok(None),
+        serde_json::Value::String(ref s) if s.trim().is_empty() => Ok(None),
+        other => serde_json::from_value(other)
+            .map(Some)
+            .map_err(serde::de::Error::custom),
+    }
+}
+
 /// Deserialize `Option<DateTime<Utc>>` while tolerating the shapes LLMs
-/// commonly produce for "no bound": omitted, `null`, or `""`. Non-empty
-/// strings must still be RFC-3339. Without this, a chat-generated
-/// `{"since": ""}` hits chrono's strict parser and surfaces as an
-/// opaque `422: premature end of input`.
+/// commonly produce. Without this, chat-generated date strings hit
+/// chrono's strict parser and surface as an opaque `422: premature end
+/// of input`.
+///
+/// Accepts:
+/// - Field omitted / `null` / `""` → `None`
+/// - Full RFC-3339 (`"2026-04-27T16:00:00Z"`) → parsed
+/// - Date-only (`"2026-04-27"`) → midnight UTC of that date
+/// - Date + time without TZ (`"2026-04-27T16:00:00"`) → assumed UTC
 fn deserialize_optional_datetime<'de, D>(de: D) -> Result<Option<DateTime<Utc>>, D::Error>
 where
     D: Deserializer<'de>,
@@ -33,12 +59,35 @@ where
     use serde::de::Error;
 
     let s: Option<String> = Option::deserialize(de)?;
-    match s.as_deref() {
-        None | Some("") => Ok(None),
-        Some(raw) => DateTime::parse_from_rfc3339(raw)
-            .map(|dt| Some(dt.with_timezone(&Utc)))
-            .map_err(|e| D::Error::custom(format!("invalid RFC-3339 timestamp {raw:?}: {e}"))),
+    let raw = match s.as_deref() {
+        None | Some("") => return Ok(None),
+        Some(s) => s.trim(),
+    };
+    if raw.is_empty() {
+        return Ok(None);
     }
+
+    // 1. Full RFC-3339 with timezone — the canonical form.
+    if let Ok(dt) = DateTime::parse_from_rfc3339(raw) {
+        return Ok(Some(dt.with_timezone(&Utc)));
+    }
+
+    // 2. Date-only "YYYY-MM-DD" → midnight UTC.
+    if let Ok(date) = chrono::NaiveDate::parse_from_str(raw, "%Y-%m-%d") {
+        if let Some(naive) = date.and_hms_opt(0, 0, 0) {
+            return Ok(Some(DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc)));
+        }
+    }
+
+    // 3. Date + time without timezone "YYYY-MM-DDTHH:MM:SS" → assume UTC.
+    //    Some LLMs drop the trailing 'Z'. Accept it to avoid the 422.
+    if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(raw, "%Y-%m-%dT%H:%M:%S") {
+        return Ok(Some(DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc)));
+    }
+
+    Err(D::Error::custom(format!(
+        "invalid timestamp {raw:?}: expected RFC-3339 (e.g. \"2026-04-27T16:00:00Z\") or date-only (\"2026-04-27\")"
+    )))
 }
 
 /// Serialize a fact for HTTP response, stripping the 384-dim embedding
@@ -79,11 +128,13 @@ pub struct AddRequest {
     pub contexts: Vec<String>,
     #[serde(default)]
     pub tags: Vec<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_lenient")]
     pub r#type: Option<FactType>,
     /// Origin. Canonical name is `from` (matches the `Fact` field);
     /// accept `origin` as an alias for callers that avoid reserved words.
-    #[serde(default, alias = "origin")]
+    #[serde(default, alias = "origin", deserialize_with = "deserialize_optional_lenient")]
     pub from: Option<Origin>,
+    #[serde(default, deserialize_with = "deserialize_optional_lenient")]
     pub outcome: Option<Outcome>,
     pub cwd: Option<String>,
     #[serde(default, deserialize_with = "deserialize_optional_datetime")]
@@ -109,9 +160,11 @@ pub struct FilterDTO {
     pub contexts: Vec<String>,
     /// Narrow to one `FactType`. Linggen's tool schema is singular;
     /// internally we convert to `Filters.types: Vec<FactType>`.
+    #[serde(default, deserialize_with = "deserialize_optional_lenient")]
     pub r#type: Option<FactType>,
-    #[serde(default, alias = "origin")]
+    #[serde(default, alias = "origin", deserialize_with = "deserialize_optional_lenient")]
     pub from: Option<Origin>,
+    #[serde(default, deserialize_with = "deserialize_optional_lenient")]
     pub outcome: Option<Outcome>,
     #[serde(default, deserialize_with = "deserialize_optional_datetime")]
     pub since: Option<DateTime<Utc>>,
@@ -195,9 +248,11 @@ pub struct UpdateRequest {
     pub content: Option<String>,
     pub contexts: Option<Vec<String>>,
     pub tags: Option<Vec<String>>,
+    #[serde(default, deserialize_with = "deserialize_optional_lenient")]
     pub r#type: Option<FactType>,
-    #[serde(default, alias = "origin")]
+    #[serde(default, alias = "origin", deserialize_with = "deserialize_optional_lenient")]
     pub from: Option<Origin>,
+    #[serde(default, deserialize_with = "deserialize_optional_lenient")]
     pub outcome: Option<Outcome>,
     #[serde(default)]
     pub clear_outcome: bool,

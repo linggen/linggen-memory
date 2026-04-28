@@ -21,6 +21,8 @@ use std::io::{BufRead, Write};
 use std::path::PathBuf;
 use uuid::Uuid;
 
+mod client;
+
 /// Top-level CLI. All subcommands share the flags declared here (data dir,
 /// output format, quiet).
 #[derive(Debug, Parser)]
@@ -378,6 +380,30 @@ pub async fn run(cli: Cli) -> Result<()> {
             return Ok(());
         }
         _ => {}
+    }
+
+    // Prefer the running daemon when one is reachable. This eliminates the
+    // CLI/daemon data-path split: with the daemon up, the CLI is a typed
+    // shell client over HTTP and there's exactly one writer to the store.
+    // If no daemon is running, autostart one (matches Linggen engine
+    // semantics in `engine::capability_tools::dispatch`). Direct
+    // `FactsStore` mode below remains a fallback for when autostart fails
+    // (e.g. port in use, binary missing).
+    if let Some(base_url) = client::try_running_or_start(&data_dir, &skill_dir).await {
+        return match cli.cmd {
+            Command::Add(args) => client::add(&base_url, args, format).await,
+            Command::Get { id } => client::get(&base_url, id, format).await,
+            Command::Search(args) => client::search(&base_url, args, format).await,
+            Command::List(args) => client::list(&base_url, args, format).await,
+            Command::Update(args) => client::update(&base_url, args, format).await,
+            Command::Delete { id, yes } => client::delete(&base_url, id, yes, format).await,
+            Command::Forget(args) => client::forget(&base_url, args, format).await,
+            Command::Serve { .. }
+            | Command::Start { .. }
+            | Command::Stop
+            | Command::Restart { .. }
+            | Command::Status => unreachable!("handled above"),
+        };
     }
 
     let store = FactsStore::open(&data_dir)
