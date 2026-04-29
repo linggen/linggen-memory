@@ -1,5 +1,45 @@
 # Changelog
 
+## [0.3.2] - 2026-04-28 — Origin filter fix + Linux cross-build
+
+### Fixed
+
+- **`origin` filter returning 0 rows** — `Filters::to_sql` no longer
+  emits a `"from" = '<value>'` clause. LanceDB / DataFusion mishandles
+  the SQL keyword even when double-quoted and returns an empty result
+  set. Origin filtering is now applied post-fetch in
+  `apply_origin_filter`. `forget` with an origin-only filter falls back
+  to list-then-delete-by-id and no longer trips the empty-filter guard.
+
+### Build
+
+- **`Dockerfile.linux`**: install `protobuf-compiler`. `lance-encoding`
+  (a LanceDB dep) has a `build.rs` that invokes `protoc`; without it
+  the multi-arch Linux build fails. The macOS host picks up `protoc`
+  from Homebrew, so this only surfaced in the Docker pipeline.
+
+## [0.3.1] - 2026-04-28 — Linux release pipeline
+
+### Build
+
+- **Cross-build Linux x86_64 + aarch64 via Docker buildx**.
+  `release.sh` now drives both the host (cargo build for macOS native)
+  and a multi-arch Linux build through a shared `linggen-builder`
+  buildx instance. New `scripts/Dockerfile.linux` (rust:bookworm +
+  libssl/cmake/clang, dep-cache layer using stub main.rs/lib.rs) and
+  `scripts/build-linux.sh` thin wrapper. `release.sh` adds
+  `--skip-linux`, signs and checksums every Linux tarball, uploads
+  them all to the GitHub release.
+- Drop `--locked` from the host `cargo build` so version bumps don't
+  fail when `Cargo.lock` hasn't been refreshed yet (an explicit
+  `cargo update --offline` runs after `sync_cargo_version`).
+
+### Removed
+
+- Internal-only docs **`DESIGN.md`**, **`RELEASES.md`**, **`SIGNING.md`**
+  — content has either landed in `doc/` or moved to repo-level GitHub
+  workflow comments. Released artifacts unaffected.
+
 ## [0.3.0] - 2026-04-28 — Self-update
 
 - **`ling-mem self-update`** — new subcommand. `--check` prints the latest

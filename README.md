@@ -6,7 +6,7 @@
 
 Built as the default memory skill for [Linggen](https://github.com/linggen/linggen); works equally well invoked from Claude Code or any tool that can shell out.
 
-> 🚀 **Status: v0.3.0 — prebuilt binaries available.** Active development on `main`. The pre-refactor code-indexing tool is preserved at the `v0-legacy` git tag.
+> 🚀 **Status: v0.3.2 — prebuilt binaries available** for macOS Apple Silicon and Linux (x86_64 + aarch64). Active development on `main`. The pre-refactor code-indexing tool is preserved at the `v0-legacy` git tag.
 
 ---
 
@@ -61,7 +61,7 @@ git clone https://github.com/linggen/skills
 cd skills/ling-mem
 ./install.sh                  # auto-detects ~/.linggen and/or ~/.claude
 ./install.sh --host=both      # force install to both
-LING_MEM_VERSION=v0.3.0 ./install.sh   # pin a specific version
+LING_MEM_VERSION=v0.3.2 ./install.sh   # pin a specific version
 ```
 
 Prebuilt binaries are available for macOS Apple Silicon and Linux (x86_64 + aarch64) on the [releases page](https://github.com/linggen/linggen-memory/releases).
@@ -92,12 +92,9 @@ linggen-memory/
 │   ├── product-spec.md # features, user-facing behavior, scenarios
 │   ├── tech-spec.md    # schema, storage, CLI contract, release process
 │   └── ui-spec.md      # Data Browser UI: layout, endpoints, interactions
-├── scripts/            # build + release (cross-compile via GitHub Actions)
+├── scripts/            # release.sh + Dockerfile.linux (multi-arch buildx)
 ├── assets/             # icon etc.
-├── DESIGN.md           # rolling locked-decisions log
 ├── CHANGELOG.md        # release notes per version
-├── RELEASES.md         # release process notes
-├── SIGNING.md          # minisign signing key + verification flow
 ├── LICENSE             # MIT
 └── README.md           # you are here
 ```
