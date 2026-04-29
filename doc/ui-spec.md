@@ -1,5 +1,6 @@
 ---
 type: spec
+reader: Coding agent and users
 audience: implementation — web UI layout, interactions, daemon integration
 ---
 

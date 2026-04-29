@@ -1,5 +1,6 @@
 ---
 type: spec
+reader: Coding agent and users
 audience: product — features, user-facing behavior, scenarios
 ---
 
