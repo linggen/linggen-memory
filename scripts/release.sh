@@ -9,17 +9,20 @@ set -euo pipefail
 #
 # Usage:
 #   ./scripts/release.sh <version> [--draft] [--platform mac|linux]
-#                                  [--skip-build] [--no-upload]
+#                                  [--native] [--skip-build] [--no-upload]
 #
 #   <version>      Tag name, with or without leading 'v' (e.g. v0.4.0 or 0.4.0).
 #   --draft        Leave the GitHub release as a draft; don't publish.
 #   --platform     mac (host must be macOS) | linux (Docker buildx required).
 #                  Default = current host (no cross-build).
+#   --native       Linux only: skip Docker + cross-compile. Uses host's cargo
+#                  toolchain to build for the host arch only. Much faster
+#                  (no QEMU); ships a single-arch tarball matching the host.
 #   --skip-build   Reuse existing dist/ artifacts instead of rebuilding.
 #   --no-upload    Build + package locally only; skip GitHub upload entirely.
 #
 # Requires: cargo, tar, gh (GitHub CLI, authenticated).
-# Optional: docker buildx (for --platform linux).
+# Optional: docker buildx (for --platform linux without --native).
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 source "$ROOT_DIR/scripts/lib-common.sh"
@@ -29,6 +32,7 @@ VERSION=""
 KEEP_DRAFT=false
 SKIP_BUILD=false
 NO_UPLOAD=false
+NATIVE=false
 PLATFORM=""
 
 while [[ $# -gt 0 ]]; do
@@ -36,9 +40,10 @@ while [[ $# -gt 0 ]]; do
     --draft)       KEEP_DRAFT=true;  shift ;;
     --skip-build)  SKIP_BUILD=true;  shift ;;
     --no-upload)   NO_UPLOAD=true;   shift ;;
+    --native)      NATIVE=true;      shift ;;
     --platform)    PLATFORM="${2:-}"; shift 2 ;;
     --platform=*)  PLATFORM="${1#--platform=}"; shift ;;
-    -h|--help)     sed -n '3,22p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help)     sed -n '3,24p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *)
       if [ -z "$VERSION" ]; then VERSION="$1"; fi
       shift ;;
@@ -65,8 +70,12 @@ if [ "$PLATFORM" = "mac" ] && [ "$OS_LOWER" != "darwin" ]; then
   echo "Error: --platform mac requires a macOS host" >&2
   exit 1
 fi
-if [ "$PLATFORM" = "linux" ] && ! (command -v docker >/dev/null && docker buildx version >/dev/null 2>&1); then
-  echo "Error: --platform linux requires Docker + buildx" >&2
+if [ "$PLATFORM" = "linux" ] && [ "$NATIVE" = "false" ] && ! (command -v docker >/dev/null && docker buildx version >/dev/null 2>&1); then
+  echo "Error: --platform linux requires Docker + buildx (or pass --native)" >&2
+  exit 1
+fi
+if [ "$NATIVE" = "true" ] && [ "$PLATFORM" != "linux" ]; then
+  echo "Error: --native is only valid with --platform linux" >&2
   exit 1
 fi
 
@@ -81,7 +90,11 @@ HOST_TARBALL="$DIST_DIR/$HOST_TARBALL_NAME"
 
 echo "─────────────────────────────────────────────────────────"
 echo "  linggen-memory release: $TAG"
-echo "  platform: $PLATFORM"
+if [ "$NATIVE" = "true" ]; then
+  echo "  platform: $PLATFORM (native, single-arch)"
+else
+  echo "  platform: $PLATFORM"
+fi
 echo "─────────────────────────────────────────────────────────"
 
 # ── Step 1: build ────────────────────────────────────────────────────────────
@@ -121,8 +134,42 @@ elif [ "$PLATFORM" = "mac" ]; then
 
   (cd "$DIST_DIR" && shasum -a 256 "$HOST_TARBALL_NAME" > "${HOST_TARBALL_NAME}.sha256")
   echo "  built → $HOST_TARBALL ($(du -h "$HOST_TARBALL" | awk '{print $1}'))"
+elif [ "$NATIVE" = "true" ]; then
+  # PLATFORM = linux, --native: cargo on host, single arch matching host.
+  HOST_ARCH=$(uname -m)
+  case "$HOST_ARCH" in
+    x86_64|aarch64) ;;
+    *) echo "Error: --native only supports x86_64 / aarch64 hosts (got '$HOST_ARCH')" >&2; exit 1 ;;
+  esac
+  NATIVE_TARBALL_NAME="ling-mem-linux-${HOST_ARCH}.tar.gz"
+  NATIVE_TARBALL="$DIST_DIR/linux/$NATIVE_TARBALL_NAME"
+
+  echo ""
+  echo "Step 1a/4: Syncing Cargo.toml version to $VERSION_NUM"
+  sync_cargo_version "$VERSION_NUM" "$ROOT_DIR/Cargo.toml"
+  (cd "$ROOT_DIR" && cargo update --workspace --offline >/dev/null 2>&1) || true
+
+  echo ""
+  echo "Step 1b/4: cargo build --release (native, host: linux-$HOST_ARCH)"
+  rm -rf "$DIST_DIR/linux"
+  mkdir -p "$DIST_DIR/linux"
+  (cd "$ROOT_DIR" && cargo build --release --bin ling-mem)
+
+  BUILT_VER=$("$ROOT_DIR/target/release/ling-mem" --version 2>/dev/null | awk '{print $2}' || true)
+  if [ "$BUILT_VER" != "$VERSION_NUM" ]; then
+    echo "Error: built binary reports '$BUILT_VER', expected '$VERSION_NUM'" >&2
+    exit 1
+  fi
+
+  STAGING="$(mktemp -d)"
+  cp "$ROOT_DIR/target/release/ling-mem" "$STAGING/"
+  cp "$ROOT_DIR/README.md" "$ROOT_DIR/LICENSE" "$STAGING/"
+  (cd "$STAGING" && tar czf "$NATIVE_TARBALL" .)
+  rm -rf "$STAGING"
+  (cd "$DIST_DIR/linux" && shasum -a 256 "$NATIVE_TARBALL_NAME" > "${NATIVE_TARBALL_NAME}.sha256")
+  echo "  built → $NATIVE_TARBALL ($(du -h "$NATIVE_TARBALL" | awk '{print $1}'))"
 else
-  # PLATFORM = linux
+  # PLATFORM = linux: Docker multi-arch path (amd64 + arm64).
   echo ""
   echo "Step 1a/4: Syncing Cargo.toml version to $VERSION_NUM"
   sync_cargo_version "$VERSION_NUM" "$ROOT_DIR/Cargo.toml"
