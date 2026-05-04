@@ -427,12 +427,36 @@ impl FactsStore {
     /// Returns up to `limit` facts sorted by vector similarity (closest
     /// first). Rows with null vectors are never returned — they wouldn't
     /// have a similarity score.
+    ///
+    /// Thin wrapper around [`Self::search_scored`] that drops the per-row
+    /// score. Callers that want to gate on similarity should use
+    /// `search_scored` directly.
     pub async fn search(
         &self,
         query_vec: &[f32],
         filters: &Filters,
         limit: usize,
     ) -> Result<Vec<Fact>> {
+        let scored = self.search_scored(query_vec, filters, limit, None).await?;
+        Ok(scored.into_iter().map(|(f, _)| f).collect())
+    }
+
+    /// Nearest-neighbor search that also returns the cosine similarity of
+    /// each row against the query, with an optional `min_score` floor that
+    /// drops rows below the threshold.
+    ///
+    /// Score range is `[-1.0, 1.0]` (cosine of unit-normalized embeddings,
+    /// effectively `[0.0, 1.0]` in practice for MiniLM-L6-v2 outputs). A
+    /// `min_score` of `Some(0.5)` keeps moderately-relevant hits and drops
+    /// noise; `None` disables filtering. Computed post-fetch from the
+    /// stored vectors — same arithmetic as the dedup path.
+    pub async fn search_scored(
+        &self,
+        query_vec: &[f32],
+        filters: &Filters,
+        limit: usize,
+        min_score: Option<f32>,
+    ) -> Result<Vec<(Fact, f32)>> {
         if query_vec.len() != super::schema::VECTOR_DIM as usize {
             return Err(anyhow!(
                 "query vector has len {} but schema dim is {}",
@@ -453,7 +477,23 @@ impl FactsStore {
 
         let mut facts = self.collect_query(q).await?;
         apply_origin_filter(&mut facts, filters.origin);
-        Ok(facts)
+
+        let mut scored: Vec<(Fact, f32)> = facts
+            .into_iter()
+            .map(|f| {
+                let score = f
+                    .vector
+                    .as_ref()
+                    .map(|v| cosine_similarity(query_vec, v))
+                    .unwrap_or(0.0);
+                (f, score)
+            })
+            .collect();
+
+        if let Some(threshold) = min_score {
+            scored.retain(|(_, score)| *score >= threshold);
+        }
+        Ok(scored)
     }
 
     /// Non-semantic browse. Returns up to `limit` facts matching `filters`,

@@ -191,8 +191,11 @@ pub(crate) async fn search(base: &str, args: SearchArgs, format: OutputFormat) -
     let mut body = filter_body(&args.filters);
     body["query"] = Value::String(args.query);
     body["limit"] = json!(args.limit);
+    if let Some(s) = args.min_score {
+        body["min_score"] = json!(s);
+    }
     let data = post(base, "/api/memory/search", &body).await?;
-    emit_fact_array(&data, format)
+    emit_scored_fact_array(&data, format)
 }
 
 pub(crate) async fn list(base: &str, args: ListArgs, format: OutputFormat) -> Result<()> {
@@ -399,6 +402,29 @@ fn emit_fact_array(data: &Value, format: OutputFormat) -> Result<()> {
         .collect::<Result<Vec<_>, _>>()
         .context("parsing facts from daemon response")?;
     super::emit_facts(&facts, format)
+}
+
+/// Emit a search response — each row carries a `score` field which we
+/// strip before deserializing the Fact, then attach back when printing.
+/// JSON output: re-add `score`. Text output: prefix with `0.NN`.
+fn emit_scored_fact_array(data: &Value, format: OutputFormat) -> Result<()> {
+    let arr = data
+        .as_array()
+        .ok_or_else(|| anyhow!("expected array, got {data}"))?;
+    let mut scored: Vec<(Fact, f32)> = Vec::with_capacity(arr.len());
+    for v in arr {
+        let mut row = v.clone();
+        let score = row
+            .as_object_mut()
+            .and_then(|o| o.remove("score"))
+            .and_then(|s| s.as_f64())
+            .map(|f| f as f32)
+            .unwrap_or(0.0);
+        let fact: Fact = serde_json::from_value(row)
+            .context("parsing fact from daemon response")?;
+        scored.push((fact, score));
+    }
+    super::emit_scored_facts(&scored, format)
 }
 
 fn writeln_ndjson<T: serde::Serialize>(value: &T) -> Result<()> {

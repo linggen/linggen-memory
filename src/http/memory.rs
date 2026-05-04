@@ -107,6 +107,21 @@ fn facts_public(facts: &[Fact]) -> Vec<Value> {
     facts.iter().map(fact_public).collect()
 }
 
+/// Like [`fact_public`] but adds the `score` field so search responses
+/// expose the cosine similarity of each row against the query.
+fn scored_facts_public(scored: &[(Fact, f32)]) -> Vec<Value> {
+    scored
+        .iter()
+        .map(|(f, score)| {
+            let mut v = fact_public(f);
+            if let Some(obj) = v.as_object_mut() {
+                obj.insert("score".into(), json!(score));
+            }
+            v
+        })
+        .collect()
+}
+
 /// Memory subrouter. Mounted at `/api/memory/` by the parent router.
 pub fn router() -> Router<SharedState> {
     Router::new()
@@ -199,6 +214,11 @@ pub struct SearchRequest {
     pub filters: FilterDTO,
     #[serde(default = "default_search_limit")]
     pub limit: usize,
+    /// Drop rows whose cosine similarity to the query falls below this
+    /// threshold. Range `[-1.0, 1.0]`; in practice MiniLM-L6-v2 outputs
+    /// land in `[0.0, 1.0]`. Omit to disable filtering.
+    #[serde(default)]
+    pub min_score: Option<f32>,
 }
 
 fn default_search_limit() -> usize {
@@ -360,9 +380,14 @@ async fn search(
         .map_err(ApiError::internal)?;
     let results = state
         .store
-        .search(&vector, &req.filters.into_filters(), req.limit)
+        .search_scored(
+            &vector,
+            &req.filters.into_filters(),
+            req.limit,
+            req.min_score,
+        )
         .await?;
-    Ok(ok(facts_public(&results)))
+    Ok(ok(scored_facts_public(&results)))
 }
 
 async fn list(

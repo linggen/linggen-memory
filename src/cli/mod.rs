@@ -187,6 +187,12 @@ pub struct SearchArgs {
 
     #[arg(long, default_value_t = 10)]
     pub limit: usize,
+
+    /// Drop rows whose cosine similarity to the query falls below this
+    /// threshold. Range `[-1.0, 1.0]`; in practice MiniLM-L6-v2 scores
+    /// land in `[0.0, 1.0]`. Try 0.5 to drop noise; omit to disable.
+    #[arg(long)]
+    pub min_score: Option<f32>,
 }
 
 #[derive(Debug, Args)]
@@ -571,9 +577,46 @@ async fn cmd_search(store: &FactsStore, args: SearchArgs, format: OutputFormat) 
         crate::embed::Embedder::new().context("initializing embedder for search query")?;
     let vec = embedder.embed_one(&args.query)?;
     let results = store
-        .search(&vec, &args.filters.into_filters(), args.limit)
+        .search_scored(
+            &vec,
+            &args.filters.into_filters(),
+            args.limit,
+            args.min_score,
+        )
         .await?;
-    emit_facts(&results, format)
+    emit_scored_facts(&results, format)
+}
+
+/// Emit scored search hits, attaching the cosine similarity to each row.
+/// JSON output adds a `score` field; text output prefixes the score so
+/// users can eyeball relevance without parsing JSON.
+fn emit_scored_facts(scored: &[(crate::facts::Fact, f32)], format: OutputFormat) -> Result<()> {
+    match format {
+        OutputFormat::Json => {
+            for (f, score) in scored {
+                let mut v = serde_json::to_value(f)
+                    .context("serializing fact to JSON for scored search output")?;
+                if let Some(obj) = v.as_object_mut() {
+                    obj.insert("score".into(), serde_json::json!(score));
+                }
+                let line = serde_json::to_string(&v)
+                    .context("encoding scored fact JSON")?;
+                println!("{line}");
+            }
+        }
+        OutputFormat::Text => {
+            for (f, score) in scored {
+                println!(
+                    "{:.2} {} [{}] {}",
+                    score,
+                    f.id,
+                    f.r#type,
+                    truncate(&f.content, 120)
+                );
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Embed `content` into `vector` for every fact missing a vector but
