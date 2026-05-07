@@ -948,7 +948,11 @@ function buildAddPayload(e) {
 async function saveNewFact() {
   const body = buildAddPayload(state.draft.edited);
   try {
-    const fact = await api('/api/memory/add', body);
+    // `/api/memory/add` returns `{action, fact, [similarity], [previous_id]}`
+    // — the wrapper carries dedup metadata that other endpoints don't have.
+    // Unwrap to the fact itself for list / draft state.
+    const result = await api('/api/memory/add', body);
+    const fact = result.fact ?? result;
     state.loaded.unshift(fact);
     state.offset += 1;
     state.selectedId = fact.id;

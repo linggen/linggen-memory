@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.4.3] - 2026-05-07 — pin fastembed cache to data dir
+## [0.4.3] - 2026-05-07 — pin fastembed cache to data dir + dashboard add-fact sync fix
 
 ### Fixed
 
@@ -12,6 +12,20 @@
   `<data_dir>/cache/fastembed/` (defaults to `~/.linggen/cache/fastembed/`)
   before any embedder constructs, so there is one cache, regardless of CWD.
   Existing user-set `FASTEMBED_CACHE_DIR` is honored.
+- **Dashboard "+ Add" form: post-save state out of sync with what got
+  saved.** After clicking Save on a new fact, the dashboard left the
+  textarea empty and surfaced a spurious "Content is required" message —
+  even though the fact had landed in the store correctly (a refresh
+  showed it). Cause: `/api/memory/add` returns
+  `{action, fact, [similarity], [previous_id]}` to carry dedup metadata,
+  unlike `/api/memory/list` and `/api/memory/update` which return a flat
+  fact. The dashboard's `saveNewFact` was treating the wrapper object as
+  if it were the fact, so `fact.content` was undefined and `cloneDraft`
+  filled the new draft with empty defaults. Fix: unwrap to `result.fact`
+  in `saveNewFact` (with a `?? result` fallback so the code still works
+  if the API ever flattens). API contract unchanged — `/api/memory/add`
+  still returns the wrapped shape, so CLI and other consumers that
+  inspect `action` / `previous_id` keep working.
 
 ## [0.4.2] - 2026-05-07 — CLI rename + `init` + cached upgrade probe in `status`
 
