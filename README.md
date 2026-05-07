@@ -16,7 +16,7 @@ Built as the default memory skill for [Linggen](https://github.com/linggen/lingg
 - **Semantic retrieval.** Everything stored gets embedded (384-dim via `all-MiniLM-L6-v2`). Find "berth calibration" by asking about "dock alignment."
 - **Typed facts.** Four default categories — `fact / preference / decision / learned` — plus `tried / fixed / built` for trajectory-level patterns.
 - **Forgetting is first-class.** `delete` by id, `forget` by filter — refuses empty filters as a guardrail.
-- **Self-updating.** `ling-mem self-update --check` reports the latest release; `ling-mem start` embeds the same probe in its JSON so the agent can prompt the user when a new version ships. `self-update --yes` swaps the binary atomically and restarts the daemon.
+- **Self-updating.** `ling-mem upgrade --check` reports the latest release; `ling-mem start`, `restart`, and `status` all embed the same cached probe in their JSON so the agent can prompt the user when a new version ships without making extra network calls. `upgrade --yes` swaps the binary atomically and restarts the daemon. (`self-update` still works as an alias.)
 - **Three ways to use it:**
   - As a **Linggen skill** — web app UI + `Memory_*` tool dispatch in the agent.
   - As a **Claude Code skill** — SKILL.md body, model calls the CLI via Bash.

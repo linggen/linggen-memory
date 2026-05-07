@@ -1,11 +1,12 @@
 //! Self-update for the `ling-mem` binary.
 //!
-//! Two callable surfaces:
+//! Three callable surfaces:
 //!
 //! | Function | Used by |
 //! |:---------|:--------|
-//! | [`check`] / [`check_quiet`] | `ling-mem update --check`, and (cached) `ling-mem start` |
-//! | [`apply`]                   | `ling-mem update [--yes]` |
+//! | [`check`] / [`check_quiet`] | `ling-mem upgrade --check`, and (cached) `ling-mem start` / `ling-mem restart` |
+//! | [`read_cached`]             | `ling-mem status` (no network) |
+//! | [`apply`]                   | `ling-mem upgrade --yes` |
 //!
 //! Release source: `linggen/linggen-memory` GitHub releases. Tag pattern
 //! `vX.Y.Z`. Asset layout per release (see `scripts/release.sh`):
@@ -168,6 +169,31 @@ pub async fn check_quiet(data_dir: &Path) -> UpdateInfo {
         Ok(info) => info,
         Err(_) => UpdateInfo::current_only(),
     }
+}
+
+/// Cache-only probe — never hits the network. Used by `status`, which is
+/// called frequently and must stay fast. Returns `None` if the cache is
+/// missing, expired, or stale relative to the current binary version.
+/// Callers should treat `None` as "no recent check available" rather than
+/// "no update available."
+pub fn read_cached(data_dir: &Path) -> Option<UpdateInfo> {
+    read_cache(data_dir)
+}
+
+/// Returns the cache's `fetched_at` (unix seconds) when present and fresh,
+/// so callers can surface a `checked_at` timestamp alongside a cached
+/// `UpdateInfo`. None when the cache is missing or expired.
+pub fn cache_fetched_at(data_dir: &Path) -> Option<u64> {
+    let raw = fs::read(cache_path(data_dir)).ok()?;
+    let entry: CacheEntry = serde_json::from_slice(&raw).ok()?;
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_secs();
+    if now.saturating_sub(entry.fetched_at) > CACHE_TTL_SECS {
+        return None;
+    }
+    if entry.info.current != env!("CARGO_PKG_VERSION") {
+        return None;
+    }
+    Some(entry.fetched_at)
 }
 
 #[derive(Debug, Deserialize)]

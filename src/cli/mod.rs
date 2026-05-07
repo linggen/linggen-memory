@@ -65,8 +65,12 @@ pub enum Command {
     /// Non-semantic browse — metadata filters only.
     List(ListArgs),
 
-    /// Modify fields of an existing fact.
-    Update(UpdateArgs),
+    /// Modify fields of an existing fact. Aliased as `update` for back-
+    /// compat with pre-rename scripts; new callers should prefer `edit`,
+    /// which doesn't collide with the more conventional binary-update sense
+    /// of the word.
+    #[command(alias = "update")]
+    Edit(UpdateArgs),
 
     /// Hard-delete a fact by id.
     Delete {
@@ -105,15 +109,25 @@ pub enum Command {
         port: u16,
     },
 
-    /// Report daemon state: pidfile, liveness, health probe.
+    /// Report daemon state: pidfile, liveness, health probe. Also surfaces
+    /// the most recent (cached) upgrade probe so callers know whether a
+    /// newer binary is available without making any network call.
     Status,
 
-    /// Check for or apply a `ling-mem` self-update from GitHub releases.
+    /// Seed the data directory: ensure `<data-dir>/memory/` exists and that
+    /// `identity.md` and `style.md` are present (touching empty files when
+    /// missing). Idempotent — never overwrites existing content. Mirrors
+    /// the `seed_core_memory` step that `install.sh` performs, so hosts
+    /// that bypass `install.sh` (OpenClaw via ClawHub, recovery after a
+    /// data-dir wipe) can call it directly.
+    Init,
+
+    /// Check for or apply a `ling-mem` upgrade from GitHub releases.
     /// With `--check`, report the latest version without downloading.
     /// Otherwise download, verify, swap the binary, and restart the
-    /// daemon if it was running. Named `self-update` to avoid colliding
-    /// with `update`, which modifies fact rows.
-    SelfUpdate {
+    /// daemon if it was running. Aliased as `self-update` for back-compat.
+    #[command(alias = "self-update")]
+    Upgrade {
         /// Print version info only; don't download or swap.
         #[arg(long)]
         check: bool,
@@ -122,7 +136,7 @@ pub enum Command {
         #[arg(long)]
         force: bool,
 
-        /// Confirm the swap. Required for the actual update path —
+        /// Confirm the swap. Required for the actual upgrade path —
         /// scripted/agent callers must pass it explicitly.
         #[arg(long)]
         yes: bool,
@@ -407,17 +421,40 @@ pub async fn run(cli: Cli) -> Result<()> {
             return emit_lifecycle_with_update(&outcome, Some(&update));
         }
         Command::Status => {
-            let value = crate::daemon::lifecycle::status(&skill_dir).await?;
+            let mut value = crate::daemon::lifecycle::status(&skill_dir).await?;
+            // Merge the cached upgrade probe (if any) so callers see
+            // available-update info without `status` itself hitting the
+            // network. Probes are populated by `start` / `restart` /
+            // `upgrade --check` and live for 24h.
+            if let (Some(info), Some(map)) = (
+                crate::update::read_cached(&data_dir),
+                value.as_object_mut(),
+            ) {
+                let mut update = serde_json::to_value(&info)?;
+                if let (Some(fetched_at), Some(update_obj)) = (
+                    crate::update::cache_fetched_at(&data_dir),
+                    update.as_object_mut(),
+                ) {
+                    update_obj.insert(
+                        "checked_at".to_string(),
+                        serde_json::Value::Number(fetched_at.into()),
+                    );
+                }
+                map.insert("update".to_string(), update);
+            }
             println!("{}", serde_json::to_string_pretty(&value)?);
             return Ok(());
         }
-        Command::SelfUpdate {
+        Command::Init => {
+            return cmd_init(&data_dir);
+        }
+        Command::Upgrade {
             check,
             force,
             yes,
             port,
         } => {
-            return cmd_self_update(&data_dir, &skill_dir, check, force, yes, port).await;
+            return cmd_upgrade(&data_dir, &skill_dir, check, force, yes, port).await;
         }
         _ => {}
     }
@@ -435,7 +472,7 @@ pub async fn run(cli: Cli) -> Result<()> {
             Command::Get { id } => client::get(&base_url, id, format).await,
             Command::Search(args) => client::search(&base_url, args, format).await,
             Command::List(args) => client::list(&base_url, args, format).await,
-            Command::Update(args) => client::update(&base_url, args, format).await,
+            Command::Edit(args) => client::update(&base_url, args, format).await,
             Command::Delete { id, yes } => client::delete(&base_url, id, yes, format).await,
             Command::Forget(args) => client::forget(&base_url, args, format).await,
             Command::Serve { .. }
@@ -443,7 +480,8 @@ pub async fn run(cli: Cli) -> Result<()> {
             | Command::Stop
             | Command::Restart { .. }
             | Command::Status
-            | Command::SelfUpdate { .. } => unreachable!("handled above"),
+            | Command::Init
+            | Command::Upgrade { .. } => unreachable!("handled above"),
         };
     }
 
@@ -456,7 +494,7 @@ pub async fn run(cli: Cli) -> Result<()> {
         Command::Get { id } => cmd_get(&store, id, format).await,
         Command::Search(args) => cmd_search(&store, args, format).await,
         Command::List(args) => cmd_list(&store, args, format).await,
-        Command::Update(args) => cmd_update(&store, args, format).await,
+        Command::Edit(args) => cmd_update(&store, args, format).await,
         Command::Delete { id, yes } => cmd_delete(&store, id, yes, format).await,
         Command::Forget(args) => cmd_forget(&store, args, format).await,
         Command::Serve { .. }
@@ -464,7 +502,8 @@ pub async fn run(cli: Cli) -> Result<()> {
         | Command::Stop
         | Command::Restart { .. }
         | Command::Status
-        | Command::SelfUpdate { .. } => unreachable!("handled above"),
+        | Command::Init
+        | Command::Upgrade { .. } => unreachable!("handled above"),
     }
 }
 
@@ -727,7 +766,41 @@ async fn cmd_forget(store: &FactsStore, args: ForgetArgs, format: OutputFormat) 
 // bash scripts in `skills/memory/scripts/`. The daemon stays focused on
 // the fact store.
 
-async fn cmd_self_update(
+/// Implements `ling-mem init` — idempotent seeding of the data directory
+/// and core memory files. Mirrors the `seed_core_memory` step in
+/// `install.sh` so non-`install.sh` install paths (OpenClaw via ClawHub,
+/// or recovery after a `rm -rf ~/.linggen`) can self-recover by running
+/// this command. Output reports which files were newly created.
+fn cmd_init(data_dir: &std::path::Path) -> Result<()> {
+    let memory_dir = data_dir.join("memory");
+    std::fs::create_dir_all(&memory_dir)
+        .with_context(|| format!("creating {}", memory_dir.display()))?;
+
+    fn touch_if_missing(path: &std::path::Path) -> Result<bool> {
+        if path.exists() {
+            return Ok(false);
+        }
+        std::fs::write(path, b"")
+            .with_context(|| format!("creating {}", path.display()))?;
+        Ok(true)
+    }
+
+    let identity = memory_dir.join("identity.md");
+    let style = memory_dir.join("style.md");
+    let identity_created = touch_if_missing(&identity)?;
+    let style_created = touch_if_missing(&style)?;
+
+    let report = serde_json::json!({
+        "data_dir": data_dir,
+        "memory_dir": memory_dir,
+        "identity_md": { "path": identity, "created": identity_created },
+        "style_md":    { "path": style,    "created": style_created },
+    });
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    Ok(())
+}
+
+async fn cmd_upgrade(
     data_dir: &std::path::Path,
     skill_dir: &std::path::Path,
     check_only: bool,

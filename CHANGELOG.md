@@ -1,6 +1,36 @@
 # Changelog
 
-## [0.3.2] - 2026-04-28 — Origin filter fix + Linux cross-build
+## [0.4.2] - 2026-05-07 — CLI rename + `init` + cached upgrade probe in `status`
+
+### Added
+
+- **`ling-mem upgrade`** — primary spelling for the binary-update command,
+  matching `apt upgrade` / `brew upgrade` convention. The previous spelling
+  `ling-mem self-update` continues to work as a hidden alias for back-compat;
+  scripts and skill instructions can be migrated at leisure.
+- **`ling-mem edit <id>`** — primary spelling for the row-edit command. The
+  previous spelling `ling-mem update <id>` continues to work as a hidden
+  alias. Removes the semantic foot-gun where `ling-mem update` looked like a
+  binary-update command but was actually a row mutation.
+- **`ling-mem init`** — idempotent seeder that mirrors `seed_core_memory`
+  from `install.sh`. Creates `<data-dir>/memory/` plus empty `identity.md`
+  and `style.md` if missing. Intended for hosts that bypass `install.sh`
+  (OpenClaw via ClawHub) and for recovery after a `rm -rf ~/.linggen`. Output
+  reports per-file `created: true|false` so callers can tell what changed.
+- **`ling-mem status` now includes a cached `update` block** — same shape
+  that `start` and `restart` already returned. Reads from the existing 24h
+  on-disk cache (no extra network call), so frequent pollers get current-vs-
+  latest visibility without a GitHub round-trip per check. Adds a
+  `checked_at` unix-seconds timestamp so callers can reason about freshness.
+
+### Internal
+
+- New `update::read_cached(data_dir)` and `update::cache_fetched_at(data_dir)`
+  surfaces — pure cache reads with no network fallback. `check_quiet` (used
+  by `start` / `restart`) and `check` (used by `upgrade --check`) keep their
+  network-on-miss behavior.
+
+
 
 ### Fixed
 

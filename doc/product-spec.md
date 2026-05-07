@@ -82,7 +82,7 @@ No `activity` catch-all. Weekly-status-style entries (the drift category in prio
 ling-mem add "prefers concise replies" --type preference --from user
 ling-mem search "dock calibration" --context code/sanji --limit 5
 ling-mem list --type fixed --since 2026-01-01
-ling-mem update <id> --tags "intent:learn,topic:rust"
+ling-mem edit <id> --tags "intent:learn,topic:rust"
 ling-mem archive <id>
 ling-mem delete <id>
 ling-mem forget --context code/sanji --older-than 30d
