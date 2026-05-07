@@ -400,6 +400,17 @@ pub async fn run(cli: Cli) -> Result<()> {
     // Lifecycle commands don't need the LanceDB store — route them
     // before opening it.
     let data_dir = resolve_data_dir(cli.data_dir)?;
+    // Pin fastembed's model cache to <data_dir>/cache/fastembed so the
+    // ~87 MB MiniLM ONNX bundle isn't redownloaded into a `.fastembed_cache/`
+    // dir every time `ling-mem` is invoked from a different CWD. fastembed
+    // reads FASTEMBED_CACHE_DIR before falling back to its CWD-relative
+    // default; setting it here once covers every code path that constructs
+    // an Embedder.
+    if std::env::var_os("FASTEMBED_CACHE_DIR").is_none() {
+        let cache_dir = data_dir.join("cache").join("fastembed");
+        let _ = std::fs::create_dir_all(&cache_dir);
+        std::env::set_var("FASTEMBED_CACHE_DIR", &cache_dir);
+    }
     let skill_dir = crate::daemon::skill_dir(&data_dir);
     match cli.cmd {
         Command::Serve { port } => {
