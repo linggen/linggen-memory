@@ -4,15 +4,20 @@
 //!
 //! POST https://linggen.dev/api/track  (Pages Function — see linggensite repo)
 //!
-//! On every daemon start:
+//! On daemon start:
 //! - `install` event the first time the binary runs on this machine
 //!   (installation_id newly created; payload.via from the install marker).
 //! - `install` event whenever the version changes from the last recorded one
 //!   (payload.via = "upgrade", payload.from_version, payload.to_version).
-//! - `heartbeat` event at most once per UTC day (rate-limited locally).
 //!
 //! On every Memory.* HTTP call:
 //! - `command` event with payload.verb = "memory.search" / "memory.add" / etc.
+//!
+//! No dedicated heartbeat — DAU is derived server-side from any event row
+//! (`COUNT(DISTINCT installation_id) WHERE date(created_at) = today`). An
+//! active user always produces at least one `command` event per day; idle
+//! users wouldn't be retained anyway, so not counting them is the honest
+//! definition of "active".
 //!
 //! ## What we never send
 //!

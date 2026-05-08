@@ -108,8 +108,9 @@ The thin **skill wrapper** (SKILL.md + dashboard + install.sh + scan/extract scr
 `ling-mem` sends a small amount of anonymous usage data to `https://linggen.dev/api/track` so we can see whether anyone's using it and which features matter. Specifically:
 
 - **`install`** — once on first launch on a machine, and once after each upgrade. Includes the install source (e.g. `wrapper`, `linggen`, `clawhub`, `unknown`) and the previous + current versions.
-- **`heartbeat`** — once per UTC day on the daemon's first start of the day.
 - **`command`** — one event per `Memory.*` HTTP call, with the verb name only (`memory.search`, `memory.add`, `memory.forget`, …).
+
+Daily/weekly active counts are derived server-side from any event row, so there's no separate heartbeat ping — every active user already produces at least one `command` event per day.
 
 What's **never** sent: fact content, query text, embeddings, file paths, your IP (the receiver doesn't store it), or any user-identifying string. The `installation_id` is a random UUIDv4 generated on first run and stored at `~/.linggen/installation_id`.
 

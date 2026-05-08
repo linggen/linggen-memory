@@ -52,22 +52,24 @@ impl Telemetry {
         }
     }
 
-    /// Fire the appropriate launch event(s): `install` on first run or
-    /// version change, plus `heartbeat` once per UTC day. Non-blocking —
-    /// spawns background tasks for the network calls. Reads/writes the
-    /// per-product state file at `~/.linggen/.{product}-telemetry`.
+    /// Fire the `install` event when appropriate: first launch ever on this
+    /// machine, or a version change since the previous launch. No
+    /// heartbeat — DAU is derived server-side from any event row, since
+    /// every active user produces at least one `command` event per day.
+    /// Non-blocking; persists `last_version` synchronously so a crash
+    /// before the POST returns doesn't cause double-fires next start.
     pub fn launch(&self) {
         if !self.inner.enabled || self.inner.installation_id.is_empty() {
             return;
         }
         let state_path = state_path(&self.inner.data_dir, self.inner.product);
         let prev = load_state(&state_path).unwrap_or_default();
-        let today = utc_today();
 
-        // install event: first launch ever on this machine, OR a version change.
         let install_payload = if prev.last_version.is_empty() {
-            // installation_id was either just created OR existed but ling-mem
-            // never wrote a state file before. Either way, treat as install.
+            // installation_id was either just created OR existed but this
+            // product never wrote a state file before. Either way, treat
+            // as install. `via` comes from the install-source marker
+            // file written by the installer; missing → "unknown".
             let mut p = read_install_source(&self.inner.data_dir, self.inner.product);
             p.insert("via".into(), p.get("via").cloned().unwrap_or_else(|| "unknown".into()));
             Some(p)
@@ -85,18 +87,7 @@ impl Telemetry {
             self.spawn_post("install", Some(serde_json::to_value(payload).unwrap_or(serde_json::Value::Null)));
         }
 
-        // heartbeat: at most once per UTC day.
-        if prev.last_heartbeat_utc != today {
-            self.spawn_post("heartbeat", None);
-        }
-
-        // Persist the new high-water marks. Do this synchronously so a crash
-        // before the background POST returns doesn't cause double-fires next
-        // start — the state file reflects intent, not delivery.
-        let new_state = State {
-            last_version: APP_VERSION.into(),
-            last_heartbeat_utc: today,
-        };
+        let new_state = State { last_version: APP_VERSION.into() };
         let _ = save_state(&state_path, &new_state);
     }
 
@@ -171,8 +162,6 @@ fn is_opted_out(data_dir: &Path) -> bool {
 struct State {
     #[serde(default)]
     last_version: String,
-    #[serde(default)]
-    last_heartbeat_utc: String,
 }
 
 fn state_path(data_dir: &Path, product: &str) -> PathBuf {
@@ -228,9 +217,4 @@ fn platform_name() -> &'static str {
     }
 }
 
-// ── time ───────────────────────────────────────────────────────────────────
-
-fn utc_today() -> String {
-    chrono::Utc::now().format("%Y-%m-%d").to_string()
-}
 
