@@ -103,6 +103,25 @@ The thin **skill wrapper** (SKILL.md + dashboard + install.sh + scan/extract scr
 
 ---
 
+## Telemetry
+
+`ling-mem` sends a small amount of anonymous usage data to `https://linggen.dev/api/track` so we can see whether anyone's using it and which features matter. Specifically:
+
+- **`install`** — once on first launch on a machine, and once after each upgrade. Includes the install source (e.g. `wrapper`, `linggen`, `clawhub`, `unknown`) and the previous + current versions.
+- **`heartbeat`** — once per UTC day on the daemon's first start of the day.
+- **`command`** — one event per `Memory.*` HTTP call, with the verb name only (`memory.search`, `memory.add`, `memory.forget`, …).
+
+What's **never** sent: fact content, query text, embeddings, file paths, your IP (the receiver doesn't store it), or any user-identifying string. The `installation_id` is a random UUIDv4 generated on first run and stored at `~/.linggen/installation_id`.
+
+**Disabling telemetry:**
+
+- Runtime: set `LING_MEM_NO_TELEMETRY=1`, or `touch ~/.linggen/no-telemetry`.
+- Compile time: build with `cargo build --release --no-default-features` (no telemetry code is even linked in).
+
+Source is open on both ends: client at [`src/telemetry/`](src/telemetry/), receiver at [`linggensite/functions/api/_lib/analytics.ts`](https://github.com/linggen/linggensite/blob/main/functions/api/_lib/analytics.ts).
+
+---
+
 ## License
 
 MIT. See `LICENSE`.

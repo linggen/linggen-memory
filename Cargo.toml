@@ -8,6 +8,14 @@ repository = "https://github.com/linggen/linggen-memory"
 license = "MIT"
 readme = "README.md"
 
+[features]
+# Anonymous usage telemetry (install/upgrade/heartbeat/command events sent to
+# linggen.dev/api/track). See src/telemetry/mod.rs for the exact field list.
+# Disable at runtime: env LING_MEM_NO_TELEMETRY=1 OR file ~/.linggen/no-telemetry.
+# Disable at compile time: cargo build --no-default-features.
+default = ["telemetry"]
+telemetry = []
+
 [[bin]]
 name = "ling-mem"
 path = "src/main.rs"

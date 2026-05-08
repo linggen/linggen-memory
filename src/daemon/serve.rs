@@ -58,6 +58,12 @@ pub async fn run(data_dir: &Path, skill_dir: &Path, port: u16) -> Result<()> {
     tracing::info!("ling-mem daemon listening on {bound}");
     eprintln!("ling-mem daemon listening on http://{bound}");
 
+    // Anonymous usage telemetry (install/upgrade/heartbeat). See
+    // src/telemetry/mod.rs for the field list and opt-out paths. Constructed
+    // before the FactsStore so the launch ping can race with LanceDB init.
+    let telemetry = crate::telemetry::Telemetry::new("ling-mem", data_dir);
+    telemetry.launch();
+
     // Shared resources: FactsStore + Embedder are expensive to initialize
     // (LanceDB connection, ONNX model load). Build once, share across
     // every request via Arc<AppState>.
@@ -70,7 +76,7 @@ pub async fn run(data_dir: &Path, skill_dir: &Path, port: u16) -> Result<()> {
         embedder: Arc::new(embedder),
     });
 
-    let router = http::build_router(state);
+    let router = http::build_router(state, telemetry);
     let result = axum::serve(listener, router)
         .with_graceful_shutdown(shutdown_signal())
         .await

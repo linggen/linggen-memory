@@ -18,6 +18,10 @@ mod memory;
 pub mod state;
 mod ui;
 
+use crate::telemetry::Telemetry;
+use axum::extract::Request;
+use axum::middleware::{self, Next};
+use axum::response::Response;
 use axum::routing::get;
 use axum::Router;
 use state::SharedState;
@@ -25,11 +29,33 @@ use state::SharedState;
 /// Compose the full router for the daemon.
 ///
 /// `state` carries the shared FactsStore and Embedder — opened once at
-/// daemon startup and reused across all requests.
-pub fn build_router(state: SharedState) -> Router {
+/// daemon startup and reused across all requests. `telemetry` is the
+/// anonymous-usage telemetry handle (no-op when opted out / feature
+/// disabled); it's wrapped around the Memory subrouter so every Memory.*
+/// call records a `command` event.
+pub fn build_router(state: SharedState, telemetry: Telemetry) -> Router {
     Router::new()
         .route("/api/health", get(health::handler))
-        .merge(memory::router())
+        .merge(memory::router().layer(middleware::from_fn_with_state(
+            telemetry,
+            command_telemetry_layer,
+        )))
         .merge(ui::router())
         .with_state(state)
+}
+
+/// Middleware: emit a `command` telemetry event for every `/api/memory/*`
+/// request. The verb is parsed from the URI path (the segment after
+/// `/api/memory/`); requests with unexpected paths are skipped.
+async fn command_telemetry_layer(
+    axum::extract::State(telemetry): axum::extract::State<Telemetry>,
+    request: Request,
+    next: Next,
+) -> Response {
+    if let Some(verb) = request.uri().path().strip_prefix("/api/memory/") {
+        if !verb.is_empty() {
+            telemetry.command(&format!("memory.{verb}"));
+        }
+    }
+    next.run(request).await
 }

@@ -11,6 +11,7 @@ pub mod daemon;
 pub mod embed;
 pub mod facts;
 pub mod http;
+pub mod telemetry;
 pub mod update;
 
 pub use facts::{Fact, FactType, Origin, Outcome};
