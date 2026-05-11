@@ -174,6 +174,45 @@ impl FactPatch {
     }
 }
 
+/// Verify the existing table's `vector` column dimension matches the dim
+/// the current build expects ([`super::schema::VECTOR_DIM`]). When a user
+/// upgrades from a release indexed with a different embedding model
+/// (e.g. v0.4.x's MiniLM-L6-v2 = 384-dim → v0.5+'s Qwen3-Embedding-0.6B
+/// = 1024-dim), the data is incompatible and continuing would surface as
+/// cryptic LanceDB errors on insert / search. Bail with a clear message
+/// instead.
+async fn check_schema_dim(table: &lancedb::Table, lancedb_dir: &Path) -> Result<()> {
+    use arrow_schema::DataType;
+
+    let schema = table
+        .schema()
+        .await
+        .context("reading existing facts table schema")?;
+    let vector_field = schema
+        .field_with_name("vector")
+        .context("existing facts table is missing the `vector` column")?;
+
+    let actual_dim = match vector_field.data_type() {
+        DataType::FixedSizeList(_, dim) => *dim,
+        other => {
+            return Err(anyhow!(
+                "facts table `vector` column has unexpected type {other:?}; expected FixedSizeList<Float32>"
+            ));
+        }
+    };
+
+    let expected = super::schema::VECTOR_DIM;
+    if actual_dim != expected {
+        return Err(anyhow!(
+            "ling-mem schema mismatch: existing data at `{}` was indexed with {actual_dim}-dim embeddings, but this build uses {expected}-dim Qwen3-Embedding-0.6B. \
+             The two are incompatible. To start fresh, remove the data dir:\n\n  rm -rf {}\n\nA non-destructive `ling-mem reindex` migration command is planned for a follow-up release.",
+            lancedb_dir.display(),
+            lancedb_dir.display()
+        ));
+    }
+    Ok(())
+}
+
 fn escape_sql(s: &str) -> String {
     s.replace('\'', "''")
 }
@@ -295,10 +334,13 @@ impl FactsStore {
             .context("listing LanceDB tables")?;
 
         let table = if names.iter().any(|n| n == TABLE_NAME) {
-            conn.open_table(TABLE_NAME)
+            let t = conn
+                .open_table(TABLE_NAME)
                 .execute()
                 .await
-                .with_context(|| format!("opening `{TABLE_NAME}` table"))?
+                .with_context(|| format!("opening `{TABLE_NAME}` table"))?;
+            check_schema_dim(&t, &lancedb_dir).await?;
+            t
         } else {
             let schema = build_schema();
             // lancedb 0.27 needs a boxed RecordBatchReader (Scannable is
@@ -999,7 +1041,7 @@ mod tests {
             .search(&[0.0; 100], &Filters::default(), 1)
             .await
             .unwrap_err();
-        assert!(err.to_string().contains("dim is 384"));
+        assert!(err.to_string().contains(&format!("dim is {VECTOR_DIM}")));
     }
 
     // ── update + delete + forget tests ─────────────────────────────────────

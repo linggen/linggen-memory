@@ -2,7 +2,7 @@
 //!
 //! Defines:
 //! - [`TABLE_NAME`] — the LanceDB table name used by the store.
-//! - [`VECTOR_DIM`] — embedding dimension (384, matches `all-MiniLM-L6-v2`).
+//! - [`VECTOR_DIM`] — embedding dimension (1024, matches `Qwen3-Embedding-0.6B`).
 //! - [`build_schema`] — the 12-field Arrow schema matching `doc/tech-spec.md`.
 //! - [`facts_to_record_batch`] — encode `&[Fact]` as a single `RecordBatch`.
 //! - [`record_batch_to_facts`] — decode a `RecordBatch` back into `Vec<Fact>`.
@@ -25,9 +25,9 @@ use uuid::Uuid;
 /// Name of the LanceDB table holding memory facts.
 pub const TABLE_NAME: &str = "facts";
 
-/// Embedding vector dimensionality. Locked for v0.1 by the default model
-/// (`sentence-transformers/all-MiniLM-L6-v2`, 384-dim).
-pub const VECTOR_DIM: i32 = 384;
+/// Embedding vector dimensionality. Locked by the default model
+/// (`Qwen/Qwen3-Embedding-0.6B`, 1024-dim).
+pub const VECTOR_DIM: i32 = 1024;
 
 const TZ_UTC: &str = "UTC";
 
@@ -427,7 +427,7 @@ mod tests {
         let mut f = Fact::new("x", FactType::Fact, Origin::Derived);
         f.vector = Some(vec![0.0; 128]);
         let err = facts_to_record_batch(&[f]).unwrap_err();
-        assert!(err.to_string().contains("expects 384"));
+        assert!(err.to_string().contains(&format!("expects {VECTOR_DIM}")));
     }
 
     #[test]

@@ -1,6 +1,6 @@
 [package]
 name = "ling-mem"
-version = "0.4.4"
+version = "0.5.0"
 edition = "2021"
 authors = ["linggen77@gmail.com"]
 description = "Semantic memory store — facts, activity, LanceDB-backed retrieval"
@@ -50,8 +50,13 @@ regex = "1"
 serde_yml = "0.0"
 once_cell = "1"
 
-# Embeddings — MiniLM-L6-v2 via ONNX Runtime (384-dim, matches facts schema)
-fastembed = "4"
+# Embeddings — Qwen3-Embedding-0.6B via candle (1024-dim, multilingual, matches
+# facts schema). The qwen3 feature pulls in candle-core + candle-nn. macOS gets
+# Metal acceleration via the target-specific block below.
+fastembed = { version = "5", features = ["qwen3"] }
+# candle-core provides the Device + DType types Qwen3TextEmbedding::from_hf needs.
+# Version must align with the candle-core pulled in by fastembed's qwen3 feature.
+candle-core = "0.10"
 
 # Storage — arrow 57 aligns with lance 4.x / lancedb 0.27's internal version
 lancedb = "0.27"
@@ -72,6 +77,10 @@ mime_guess = "2"
 
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.29", features = ["signal", "process"] }
+
+# macOS-only Metal acceleration for the Qwen3 embedder (candle backend).
+[target.'cfg(target_os = "macos")'.dependencies]
+fastembed = { version = "5", features = ["qwen3", "metal"] }
 
 [dev-dependencies]
 tempfile = "3"

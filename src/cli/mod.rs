@@ -625,7 +625,7 @@ async fn cmd_get(store: &FactsStore, id: Uuid, format: OutputFormat) -> Result<(
 async fn cmd_search(store: &FactsStore, args: SearchArgs, format: OutputFormat) -> Result<()> {
     let embedder =
         crate::embed::Embedder::new().context("initializing embedder for search query")?;
-    let vec = embedder.embed_one(&args.query)?;
+    let vec = embedder.embed_query(&args.query)?;
     let results = store
         .search_scored(
             &vec,

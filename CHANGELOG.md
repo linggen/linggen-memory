@@ -1,5 +1,47 @@
 # Changelog
 
+## [0.5.0] - 2026-05-11 — Qwen3-Embedding-0.6B swap (multilingual)
+
+### Changed
+
+- **Embedding model: MiniLM-L6-v2 (384-dim, English-only) → Qwen3-Embedding-0.6B
+  (1024-dim, 100+ languages).** Backed by `fastembed` v5's `qwen3` feature
+  (candle backend), with Metal acceleration on macOS. Same-token-overlap
+  retrieval scores jump from ~0.05–0.08 (MiniLM) to ~0.4–0.7 (Qwen3) on
+  short factual rows. Chinese / mixed-language content is now properly
+  embedded — previously Chinese tokens were emitted as essentially-random
+  vectors and unsearchable.
+- **`VECTOR_DIM` 384 → 1024.** The `facts` table's `vector` field is now
+  a `FixedSizeList<Float32, 1024>`. Existing v0.4.x data is therefore
+  **schema-incompatible**. On open, the store now surfaces a clear error
+  pointing to the data dir; remove `~/.linggen/memory/facts.lancedb/`
+  to start fresh. A non-destructive `ling-mem reindex` migration command
+  is planned for a follow-up release.
+- **CLI / HTTP search now uses query-side prefixing** (`"query: "`) and
+  add uses passage-side (`"passage: "`) per Qwen3's retrieval convention.
+
+### Added
+
+- `Embedder::embed_query` for the search side; `embed_one` / `embed_many`
+  remain for stored passages. Two sites updated: `cli/mod.rs` search path
+  and `http/memory.rs` `/api/memory/search`.
+- Schema-mismatch detection on `FactsStore::open` — surfaces a clear
+  error pointing to the data dir when an incompatible legacy table
+  is detected.
+
+### Performance
+
+- First-run download: ~1.2 GB (Qwen3-Embedding-0.6B BF16) vs ~23 MB MiniLM.
+- Resident RAM: ~1.5–2 GB for the embedder (model + activations + overhead)
+  vs ~50 MB for MiniLM.
+- Per-embed latency (Apple Silicon Metal): ~80–200 ms vs ~5–10 ms for
+  MiniLM. Acceptable for once-per-`search` and once-per-`add` calls.
+
+### Breaking
+
+- Existing LanceDB facts table is incompatible. Remove the data dir to
+  start fresh; migration tool coming in v0.5.1.
+
 ## [0.4.4] - 2026-05-07 — dashboard add-fact UI sync fix
 
 ### Fixed

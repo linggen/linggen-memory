@@ -376,7 +376,7 @@ async fn search(
 
     let vector = state
         .embedder
-        .embed_one(&req.query)
+        .embed_query(&req.query)
         .map_err(ApiError::internal)?;
     let results = state
         .store
