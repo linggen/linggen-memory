@@ -721,7 +721,19 @@ input[type="text"]:disabled { opacity: 0.6; }
 .row-outcome.negative { color: var(--err); }
 .row-outcome.neutral  { color: var(--text-dim); }
 
+.row-score {
+  margin-left: auto;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-variant-numeric: tabular-nums;
+  text-transform: none;
+  color: var(--text);
+}
+
 .row-age { margin-left: auto; text-transform: none; }
+.row-score ~ .row-age { margin-left: 0; }
 
 .row-content {
   font-size: 13.5px;

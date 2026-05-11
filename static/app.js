@@ -520,6 +520,14 @@ function renderRowHead(fact) {
     head.appendChild(oc);
   }
 
+  if (typeof fact.score === 'number') {
+    const score = document.createElement('span');
+    score.className = 'row-score';
+    score.textContent = fact.score.toFixed(3);
+    score.title = `Relevance score (cosine similarity, range [-1, 1]; higher = closer match)`;
+    head.appendChild(score);
+  }
+
   const age = document.createElement('span');
   age.className = 'row-age';
   age.textContent = relAge(fact.occurred_at ?? fact.created_at);

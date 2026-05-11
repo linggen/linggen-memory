@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.5.1] - 2026-05-11 — dashboard relevance-score chip
+
+### Added
+
+- **Dashboard now renders the relevance score on each result card** when
+  in search mode. Score is shown as a chip in the row header (right side,
+  before the timestamp), formatted to 3 decimals. Title attribute
+  documents that it's cosine similarity in `[-1, 1]`. Hidden in list
+  mode where no score is meaningful.
+- Score data was already in `/api/memory/search` responses since v0.5.0
+  — only the rendering was missing.
+
 ## [0.5.0] - 2026-05-11 — Qwen3-Embedding-0.6B swap (multilingual)
 
 ### Changed
