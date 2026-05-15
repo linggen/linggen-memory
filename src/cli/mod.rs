@@ -446,7 +446,7 @@ async fn open_store(data_dir: &std::path::Path, episodic: bool) -> Result<FactsS
     if episodic {
         FactsStore::open_episodic(data_dir).await
     } else {
-        FactsStore::open(data_dir).await
+        FactsStore::open_semantic(data_dir).await
     }
 }
 

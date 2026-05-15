@@ -1,7 +1,7 @@
-//! Arrow + LanceDB schema for the `facts` table.
+//! Arrow + LanceDB schema for the memory tables.
 //!
 //! Defines:
-//! - [`TABLE_NAME`] — the LanceDB table name used by the store.
+//! - [`SEMANTIC_TABLE_NAME`] — the curated long-term (semantic) table.
 //! - [`VECTOR_DIM`] — embedding dimension (1024, matches `Qwen3-Embedding-0.6B`).
 //! - [`build_schema`] — the 14-field Arrow schema matching `doc/tech-spec.md`.
 //! - [`facts_to_record_batch`] — encode `&[Fact]` as a single `RecordBatch`.
@@ -22,12 +22,15 @@ use std::str::FromStr;
 use std::sync::Arc;
 use uuid::Uuid;
 
-/// Name of the LanceDB table holding memory facts.
-pub const TABLE_NAME: &str = "facts";
+/// Name of the LanceDB table holding curated long-term memory (semantic
+/// memory, in brain terms). Both `tier=core` and `tier=semantic` rows
+/// live here.
+pub const SEMANTIC_TABLE_NAME: &str = "semantic";
 
-/// Name of the LanceDB table holding staged episodic experience. Same row
-/// schema as `facts` (reuses [`build_schema`]); a separate table so its
-/// ANN index stays isolated from the curated facts index.
+/// Name of the LanceDB table holding staged short-term experience
+/// (episodic memory) awaiting consolidation. Same row schema as the
+/// semantic table (reuses [`build_schema`]); a separate table so its ANN
+/// index stays isolated from the curated semantic index.
 pub const EPISODIC_TABLE_NAME: &str = "episodic";
 
 /// Embedding vector dimensionality. Locked by the default model

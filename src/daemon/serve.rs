@@ -79,7 +79,7 @@ pub async fn run(data_dir: &Path, skill_dir: &Path, port: u16) -> Result<()> {
     // Shared resources: FactsStore + Embedder are expensive to initialize
     // (LanceDB connection, ONNX model load). Build once, share across
     // every request via Arc<AppState>.
-    let store = FactsStore::open(data_dir)
+    let store = FactsStore::open_semantic(data_dir)
         .await
         .with_context(|| format!("opening facts store under {}", data_dir.display()))?;
     let embedder = Embedder::new().context("initializing embedder")?;

@@ -1,17 +1,19 @@
-//! [`FactsStore`] — LanceDB wrapper around the `facts` table.
+//! [`FactsStore`] — LanceDB wrapper around one memory table.
 //!
 //! The store is opened once per `ling-mem` invocation (CLI is one-shot in
 //! v0.1). It owns a LanceDB [`Connection`] and a [`Table`] handle for one
-//! table; the table is auto-created on first open if missing. `open` binds
-//! the `facts` table, `open_episodic` the `episodic` table (same connection,
-//! same schema, per-table ANN-index isolation).
+//! table; the table is auto-created on first open if missing. `open_semantic`
+//! binds the `semantic` table (curated long-term memory), `open_episodic`
+//! the `episodic` table (staged short-term memory) — same connection, same
+//! schema, per-table ANN-index isolation.
 //!
 //! See `doc/tech-spec.md` for the full CLI contract. This module implements
-//! just the storage primitives: `open`, `insert`, `get`. Search, list, and
-//! mutation ops land in subsequent commits.
+//! just the storage primitives: `open_semantic`, `insert`, `get`. Search,
+//! list, and mutation ops land in subsequent commits.
 
 use super::schema::{
-    build_schema, facts_to_record_batch, record_batch_to_facts, EPISODIC_TABLE_NAME, TABLE_NAME,
+    build_schema, facts_to_record_batch, record_batch_to_facts, EPISODIC_TABLE_NAME,
+    SEMANTIC_TABLE_NAME,
 };
 use super::types::{Fact, FactType, Origin, Outcome, Tier};
 use anyhow::{anyhow, Context, Result};
@@ -331,31 +333,35 @@ pub struct FactsStore {
 }
 
 impl FactsStore {
-    /// Open (or auto-create) the curated facts store rooted at `data_dir`.
+    /// Open (or auto-create) the curated long-term (semantic) store
+    /// rooted at `data_dir`.
     ///
-    /// The actual LanceDB directory is `data_dir/memory/facts.lancedb/` —
-    /// appending `memory/facts.lancedb/` to the Linggen-per-user data dir.
-    /// If the dir doesn't exist, both the directories and an empty `facts`
-    /// table are created.
-    pub async fn open(data_dir: &Path) -> Result<Self> {
-        Self::open_named(data_dir, TABLE_NAME).await
+    /// The actual LanceDB directory is `data_dir/memory/memory.lancedb/` —
+    /// appending `memory/memory.lancedb/` to the Linggen-per-user data dir.
+    /// If the dir doesn't exist, both the directories and an empty
+    /// `semantic` table are created.
+    pub async fn open_semantic(data_dir: &Path) -> Result<Self> {
+        Self::open_named(data_dir, SEMANTIC_TABLE_NAME).await
     }
 
-    /// Open (or auto-create) the episodic store rooted at `data_dir`.
+    /// Open (or auto-create) the short-term (episodic) store rooted at
+    /// `data_dir`.
     ///
-    /// Lives in the same `data_dir/memory/facts.lancedb/` connection as
-    /// [`Self::open`] but is a separate LanceDB table reusing the identical
-    /// Fact schema. Separate tables give per-table ANN-index isolation, so
-    /// staged episodic rows never pollute the curated facts index.
+    /// Lives in the same `data_dir/memory/memory.lancedb/` connection as
+    /// [`Self::open_semantic`] but is a separate LanceDB table reusing the
+    /// identical Fact schema. Separate tables give per-table ANN-index
+    /// isolation, so staged episodic rows never pollute the curated
+    /// semantic index.
     pub async fn open_episodic(data_dir: &Path) -> Result<Self> {
         Self::open_named(data_dir, EPISODIC_TABLE_NAME).await
     }
 
-    /// Shared open-or-create body for [`Self::open`] / [`Self::open_episodic`].
-    /// Connects to the single `data_dir/memory/facts.lancedb/` directory and
-    /// opens-or-creates `table_name` against [`build_schema`].
+    /// Shared open-or-create body for [`Self::open_semantic`] /
+    /// [`Self::open_episodic`]. Connects to the single
+    /// `data_dir/memory/memory.lancedb/` directory and opens-or-creates
+    /// `table_name` against [`build_schema`].
     async fn open_named(data_dir: &Path, table_name: &str) -> Result<Self> {
-        let lancedb_dir = data_dir.join("memory").join("facts.lancedb");
+        let lancedb_dir = data_dir.join("memory").join("memory.lancedb");
         tokio::fs::create_dir_all(&lancedb_dir)
             .await
             .with_context(|| format!("creating memory dir at {}", lancedb_dir.display()))?;
@@ -790,7 +796,7 @@ mod tests {
 
     async fn fresh_store() -> (FactsStore, TempDir) {
         let dir = TempDir::new().unwrap();
-        let store = FactsStore::open(dir.path()).await.unwrap();
+        let store = FactsStore::open_semantic(dir.path()).await.unwrap();
         (store, dir)
     }
 
@@ -808,14 +814,14 @@ mod tests {
     async fn open_is_idempotent() {
         let dir = TempDir::new().unwrap();
         {
-            let store = FactsStore::open(dir.path()).await.unwrap();
+            let store = FactsStore::open_semantic(dir.path()).await.unwrap();
             store
                 .insert(&[make_fact("first", FactType::Fact)])
                 .await
                 .unwrap();
         }
         // Re-opening finds the table and sees the existing row.
-        let store = FactsStore::open(dir.path()).await.unwrap();
+        let store = FactsStore::open_semantic(dir.path()).await.unwrap();
         assert_eq!(store.count().await.unwrap(), 1);
     }
 
@@ -823,7 +829,7 @@ mod tests {
     async fn episodic_table_is_separate_from_facts() {
         let dir = TempDir::new().unwrap();
         // Same lancedb dir, two tables in one connection.
-        let facts = FactsStore::open(dir.path()).await.unwrap();
+        let facts = FactsStore::open_semantic(dir.path()).await.unwrap();
         let episodic = FactsStore::open_episodic(dir.path()).await.unwrap();
 
         let fact = make_fact("curated fact", FactType::Fact);
