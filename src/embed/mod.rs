@@ -98,6 +98,100 @@ impl Embedder {
     }
 }
 
+// ── Tests ───────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cosine(a: &[f32], b: &[f32]) -> f32 {
+        let dot: f32 = a.iter().zip(b).map(|(x, y)| x * y).sum();
+        let na: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
+        let nb: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
+        if na == 0.0 || nb == 0.0 {
+            0.0
+        } else {
+            dot / (na * nb)
+        }
+    }
+
+    /// Empirical probe for the dedup threshold (Phase 1a, sub-step 4).
+    /// Ignored by default — needs the ~1.2 GB Qwen3-Embedding-0.6B weights.
+    /// Run with: `cargo test --lib embed::tests::dedup_threshold_probe
+    /// -- --ignored --nocapture` and read the printed sims off stderr.
+    #[test]
+    #[ignore = "downloads/loads the 1.2GB Qwen3 model; run manually to retune DEDUP_SIMILARITY_THRESHOLD"]
+    fn dedup_threshold_probe() {
+        let e = Embedder::new().expect("embedder");
+
+        // Restatement pairs: same fact, reworded — these SHOULD merge.
+        let restatements = [
+            (
+                "the user prefers concise replies without preamble",
+                "user wants short answers and no fluff at the start",
+            ),
+            (
+                "webrtc data channel closes after 30 seconds of inactivity",
+                "the WebRTC DC drops the connection once it's been idle for half a minute",
+            ),
+            (
+                "the user's cat is named Xiaoman",
+                "user has a cat called Xiaoman",
+            ),
+        ];
+
+        // Related-but-distinct pairs: same topic, different fact — these
+        // must NOT merge (merging would lose information).
+        let related = [
+            (
+                "the user prefers concise replies without preamble",
+                "the user prefers dark mode in the editor",
+            ),
+            (
+                "webrtc data channel closes after 30 seconds of inactivity",
+                "webrtc uses STUN servers for NAT traversal",
+            ),
+            (
+                "the user's cat is named Xiaoman",
+                "the user has a dog named Rex",
+            ),
+        ];
+
+        eprintln!("\n=== RESTATEMENT (should merge — want high sim) ===");
+        let mut restate_sims = Vec::new();
+        for (a, b) in restatements {
+            let va = e.embed_one(a).unwrap();
+            let vb = e.embed_one(b).unwrap();
+            let s = cosine(&va, &vb);
+            restate_sims.push(s);
+            eprintln!("{s:.4}  | {a:?} <> {b:?}");
+        }
+
+        eprintln!("\n=== RELATED-BUT-DISTINCT (should NOT merge — want lower sim) ===");
+        let mut related_sims = Vec::new();
+        for (a, b) in related {
+            let va = e.embed_one(a).unwrap();
+            let vb = e.embed_one(b).unwrap();
+            let s = cosine(&va, &vb);
+            related_sims.push(s);
+            eprintln!("{s:.4}  | {a:?} <> {b:?}");
+        }
+
+        let min_restate = restate_sims.iter().cloned().fold(f32::INFINITY, f32::min);
+        let max_related = related_sims
+            .iter()
+            .cloned()
+            .fold(f32::NEG_INFINITY, f32::max);
+        eprintln!("\nmin restatement sim = {min_restate:.4}");
+        eprintln!("max related sim     = {max_related:.4}");
+        eprintln!(
+            "→ a clean threshold sits between {max_related:.4} and {min_restate:.4} \
+             (e.g. {:.2})\n",
+            (max_related + min_restate) / 2.0
+        );
+    }
+}
+
 /// Pick the best available compute device for candle: Metal on macOS,
 /// otherwise CPU. Falls back silently if Metal fails to initialize
 /// (e.g. inside a sandboxed environment).

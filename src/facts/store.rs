@@ -237,10 +237,17 @@ fn escape_sql(s: &str) -> String {
 /// Cosine-similarity threshold above which a candidate is merged into the
 /// nearest existing fact instead of being inserted as a new row. Qwen3-
 /// Embedding-0.6B outputs are L2-normalized unit vectors, so dot product
-/// is cosine similarity. NOTE: 0.88 was tuned empirically against the
-/// v0.4 MiniLM encoder; Qwen3's score distribution differs (relevant
-/// hits cluster ~0.4–0.7), so this constant is due a re-validation pass.
-pub const DEDUP_SIMILARITY_THRESHOLD: f32 = 0.88;
+/// is cosine similarity.
+///
+/// Tuned empirically against the real Qwen3-Embedding-0.6B encoder
+/// (`embed::tests::dedup_threshold_probe`, 2026-05-15): reworded
+/// restatements of the same fact scored 0.78–0.97 (min 0.7825), while
+/// related-but-distinct facts on the same topic scored 0.53–0.65 (max
+/// 0.6464). 0.75 sits cleanly in that gap — above every distinct pair
+/// (≈0.10 margin) and below every genuine restatement (≈0.03 margin).
+/// It deliberately leans toward under-merging: a missed merge only
+/// leaves a near-duplicate, whereas a wrong merge loses a distinct fact.
+pub const DEDUP_SIMILARITY_THRESHOLD: f32 = 0.75;
 
 /// Outcome of [`FactsStore::insert_with_dedup`]. Either the candidate was
 /// inserted as a new row, or it collapsed into an existing one.
