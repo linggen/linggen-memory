@@ -377,6 +377,7 @@ impl FilterArgs {
             outcome: self.outcome.map(Into::into),
             since: self.since,
             until: self.until,
+            tier: None, // Phase 1b wires the real --tier flag here
         }
     }
 }
