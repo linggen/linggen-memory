@@ -46,14 +46,14 @@ Respect `LINGGEN_DATA_DIR` env var (convention shared with the main Linggen bina
 ```
 $LINGGEN_DATA_DIR/
 └── memory/
-    └── facts.lancedb/   # LanceDB table directory
+    └── memory.lancedb/  # one LanceDB dir; holds the `semantic` + `episodic` tables
 ```
 
 Multi-user isolation is path-level, not in-row: Linggen sets `LINGGEN_DATA_DIR` per user context before invoking `ling-mem`. The binary is single-user per invocation and has no `user_id` concept.
 
 ## Fact schema (13 fields)
 
-LanceDB table name: `facts`.
+LanceDB table name: `semantic` (curated long-term memory; holds both `tier=core` and `tier=semantic` rows).
 
 | Field | Arrow type | Null? | Purpose |
 |:--|:--|:--:|:--|
@@ -153,11 +153,11 @@ Fact serialization matches the Rust `Fact` struct with one rename: the Rust fiel
 
 ### LanceDB table creation
 
-The `facts` table is created lazily on first write if it doesn't exist. Arrow schema is built from the field list above with explicit null-vs-non-null flags. Table directory: `$LINGGEN_DATA_DIR/memory/facts.lancedb/`.
+The `semantic` table is created lazily on first write if it doesn't exist. Arrow schema is built from the field list above with explicit null-vs-non-null flags. LanceDB directory: `$LINGGEN_DATA_DIR/memory/memory.lancedb/`.
 
 ### Episodic table
 
-A second table `episodic` lives in the same `facts.lancedb` connection, identical schema, holding staged experience awaiting consolidation. Separate table = per-table ANN index isolated from curated facts. The `sys:consolidated` tag marks rows the consolidator has processed. Eviction reuses the age-based `forget` path.
+A second table `episodic` lives in the same `memory.lancedb` connection, identical schema, holding staged short-term experience awaiting consolidation. Separate table = per-table ANN index isolated from the curated `semantic` index. Past-TTL rows are removed by the `evict` subcommand (the engine owns the TTL policy and passes an absolute cutoff).
 
 ### Search
 
