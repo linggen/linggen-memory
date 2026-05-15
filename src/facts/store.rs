@@ -16,7 +16,7 @@ use super::schema::{
 use super::types::{Fact, FactType, Origin, Outcome};
 use anyhow::{anyhow, Context, Result};
 use arrow_array::{RecordBatch, RecordBatchIterator, RecordBatchReader};
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, SubsecRound, Utc};
 use futures::TryStreamExt;
 use lancedb::{
     connect,
@@ -628,6 +628,10 @@ impl FactsStore {
             return Ok(None);
         };
         patch.apply(&mut existing);
+        // Touch the decay/TTL clock. Microsecond-truncated to match the
+        // `created_at` precision (see `Fact::new`) so the value round-trips
+        // through LanceDB's `Timestamp(Microsecond)` column intact.
+        existing.updated_at = Some(Utc::now().trunc_subsecs(6));
         self.delete_one(id).await?;
         self.insert(std::slice::from_ref(&existing)).await?;
         Ok(Some(existing))
@@ -1179,6 +1183,28 @@ mod tests {
             .await
             .unwrap();
         assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn update_stamps_updated_at() {
+        let (store, _dir) = fresh_store().await;
+        let f = make_fact("before", FactType::Fact);
+        let id = f.id;
+        let created_at = f.created_at;
+        assert!(f.updated_at.is_none());
+        store.insert(&[f]).await.unwrap();
+
+        let patch = FactPatch {
+            content: Some("after".into()),
+            ..Default::default()
+        };
+        let updated = store.update(id, &patch).await.unwrap().unwrap();
+        let stamped = updated.updated_at.expect("update must stamp updated_at");
+        assert!(stamped >= created_at);
+
+        // Persisted through the store roundtrip, not just the return value.
+        let got = store.get(id).await.unwrap().unwrap();
+        assert_eq!(got.updated_at, Some(stamped));
     }
 
     #[tokio::test]
