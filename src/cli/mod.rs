@@ -8,7 +8,7 @@
 //!   (default) for NDJSON.
 //! - **Data dir**: `--data-dir`, then `$LINGGEN_DATA_DIR`, then `~/.linggen/`.
 //! - **Search**: takes a plain text query; the query is embedded on the fly
-//!   via [`crate::embed::Embedder`] (MiniLM-L6-v2) and filtered against the
+//!   via [`crate::embed::Embedder`] (Qwen3-Embedding-0.6B) and filtered against the
 //!   LanceDB vector column.
 //! - **Add**: auto-embeds content for any inserted fact that doesn't already
 //!   carry a vector, so the row is immediately searchable.
@@ -191,9 +191,9 @@ pub struct AddArgs {
 
 #[derive(Debug, Args)]
 pub struct SearchArgs {
-    /// Text query — embedded on the fly via MiniLM-L6-v2 (384-dim).
-    /// First-run downloads the ONNX model (~23 MB); subsequent calls
-    /// load from cache.
+    /// Text query — embedded on the fly via Qwen3-Embedding-0.6B (1024-dim).
+    /// First-run downloads the model weights (~1.2 GB BF16); subsequent
+    /// calls load from cache.
     pub query: String,
 
     #[command(flatten)]
@@ -203,8 +203,8 @@ pub struct SearchArgs {
     pub limit: usize,
 
     /// Drop rows whose cosine similarity to the query falls below this
-    /// threshold. Range `[-1.0, 1.0]`; in practice MiniLM-L6-v2 scores
-    /// land in `[0.0, 1.0]`. Try 0.5 to drop noise; omit to disable.
+    /// threshold. Range `[-1.0, 1.0]`; in practice Qwen3-Embedding-0.6B
+    /// scores land in `[0.0, 1.0]`. Try 0.3 to drop noise; omit to disable.
     #[arg(long)]
     pub min_score: Option<f32>,
 }
@@ -401,7 +401,7 @@ pub async fn run(cli: Cli) -> Result<()> {
     // before opening it.
     let data_dir = resolve_data_dir(cli.data_dir)?;
     // Pin fastembed's model cache to <data_dir>/cache/fastembed so the
-    // ~87 MB MiniLM ONNX bundle isn't redownloaded into a `.fastembed_cache/`
+    // ~1.2 GB Qwen3-Embedding-0.6B weights aren't redownloaded into a `.fastembed_cache/`
     // dir every time `ling-mem` is invoked from a different CWD. fastembed
     // reads FASTEMBED_CACHE_DIR before falling back to its CWD-relative
     // default; setting it here once covers every code path that constructs

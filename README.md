@@ -13,7 +13,7 @@ Built as the default memory skill for [Linggen](https://github.com/linggen/lingg
 ## What it does
 
 - **Remembers across sessions.** Facts about who you are, how you prefer to work, what you've tried, what worked, what didn't.
-- **Semantic retrieval.** Everything stored gets embedded (384-dim via `all-MiniLM-L6-v2`). Find "berth calibration" by asking about "dock alignment."
+- **Semantic retrieval.** Everything stored gets embedded (1024-dim via `Qwen3-Embedding-0.6B`, multilingual). Find "berth calibration" by asking about "dock alignment."
 - **Typed facts.** Four default categories — `fact / preference / decision / learned` — plus `tried / fixed / built` for trajectory-level patterns.
 - **Forgetting is first-class.** `delete` by id, `forget` by filter — refuses empty filters as a guardrail.
 - **Self-updating.** `ling-mem upgrade --check` reports the latest release; `ling-mem start`, `restart`, and `status` all embed the same cached probe in their JSON so the agent can prompt the user when a new version ships without making extra network calls. `upgrade --yes` swaps the binary atomically and restarts the daemon. (`self-update` still works as an alias.)

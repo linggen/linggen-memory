@@ -90,9 +90,9 @@ where
     )))
 }
 
-/// Serialize a fact for HTTP response, stripping the 384-dim embedding
+/// Serialize a fact for HTTP response, stripping the 1024-dim embedding
 /// vector. Callers never need the raw vector over the wire, and including
-/// it bloats every response by ~5 KB / row (noisy for the model, for logs,
+/// it bloats every response by ~13 KB / row (noisy for the model, for logs,
 /// and for the data UI). The CLI's NDJSON output keeps vectors — they
 /// matter for `add --stdin` round-trips.
 fn fact_public(fact: &Fact) -> Value {
@@ -215,8 +215,8 @@ pub struct SearchRequest {
     #[serde(default = "default_search_limit")]
     pub limit: usize,
     /// Drop rows whose cosine similarity to the query falls below this
-    /// threshold. Range `[-1.0, 1.0]`; in practice MiniLM-L6-v2 outputs
-    /// land in `[0.0, 1.0]`. Omit to disable filtering.
+    /// threshold. Range `[-1.0, 1.0]`; in practice Qwen3-Embedding-0.6B
+    /// outputs land in `[0.0, 1.0]`. Omit to disable filtering.
     #[serde(default)]
     pub min_score: Option<f32>,
 }
