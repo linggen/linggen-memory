@@ -13,7 +13,7 @@
 use super::schema::{
     build_schema, facts_to_record_batch, record_batch_to_facts, EPISODIC_TABLE_NAME, TABLE_NAME,
 };
-use super::types::{Fact, FactType, Origin, Outcome};
+use super::types::{Fact, FactType, Origin, Outcome, Tier};
 use anyhow::{anyhow, Context, Result};
 use arrow_array::{RecordBatch, RecordBatchIterator, RecordBatchReader};
 use chrono::{DateTime, SubsecRound, Utc};
@@ -43,6 +43,7 @@ pub struct Filters {
     pub types: Vec<FactType>,
     pub origin: Option<Origin>,
     pub outcome: Option<Outcome>,
+    pub tier: Option<Tier>,
     pub since: Option<DateTime<Utc>>,
     pub until: Option<DateTime<Utc>>,
 }
@@ -82,6 +83,12 @@ impl Filters {
 
         if let Some(o) = self.outcome {
             clauses.push(format!("outcome = '{}'", o.as_str()));
+        }
+
+        // Unlike `from`, `tier` is not a SQL keyword, so the plain equality
+        // clause is safe to push down — no post-fetch filter needed.
+        if let Some(t) = self.tier {
+            clauses.push(format!("tier = '{}'", t.as_str()));
         }
 
         if let Some(since) = self.since {
@@ -692,6 +699,51 @@ impl FactsStore {
         Ok(before.saturating_sub(after))
     }
 
+    /// Evict rows whose decay clock has fallen before `cutoff`. Deletes
+    /// every row where `COALESCE(updated_at, created_at) < cutoff` — i.e.
+    /// an `update` resets a row's age (the touch-resets-clock semantics).
+    /// Returns the number of rows removed.
+    ///
+    /// Used against the episodic store: the consolidation pass calls this
+    /// with `cutoff = now − Settings.EPISODIC_TTL` to drop staged rows that
+    /// were never promoted into curated facts. There is no TTL column and
+    /// no TTL argument — the caller owns the TTL policy and passes only the
+    /// resolved cutoff instant.
+    pub async fn evict_expired(&self, cutoff: DateTime<Utc>) -> Result<usize> {
+        let predicate = format!(
+            "COALESCE(updated_at, created_at) < TIMESTAMP '{}'",
+            cutoff.format("%Y-%m-%d %H:%M:%S%.6f")
+        );
+        let before = self.count().await?;
+        self.table
+            .delete(&predicate)
+            .await
+            .context("evicting expired rows")?;
+        let after = self.count().await?;
+        Ok(before.saturating_sub(after))
+    }
+
+    /// All `tier='core'` facts — the always-load identity/preference set.
+    ///
+    /// No vector, no similarity gate, no pagination cap: core is the small
+    /// durable set surfaced eagerly on every turn, so it's read whole rather
+    /// than retrieved. Filters by `tier = 'core'` in SQL (no LanceDB row
+    /// limit — `list`'s over-fetch math can't express "unbounded"), then
+    /// sorts newest-first in process to match `list`'s default order.
+    pub async fn core_facts(&self) -> Result<Vec<Fact>> {
+        let filters = Filters {
+            tier: Some(Tier::Core),
+            ..Filters::default()
+        };
+        let mut q = self.table.query();
+        if let Some(sql) = filters.to_sql() {
+            q = q.only_if(sql);
+        }
+        let mut facts = self.collect_query(q).await?;
+        facts.sort_by(|a, b| b.effective_timestamp().cmp(&a.effective_timestamp()));
+        Ok(facts)
+    }
+
     /// Delete the single row with the given id. Returns the number removed
     /// (0 or 1 in practice). Private — public API uses `delete` / `update`.
     async fn delete_one(&self, id: Uuid) -> Result<usize> {
@@ -874,6 +926,7 @@ mod tests {
             types: vec![FactType::Fixed],
             origin: Some(Origin::User),
             outcome: Some(Outcome::Positive),
+            tier: Some(Tier::Core),
             since: None,
             until: None,
         };
@@ -885,6 +938,8 @@ mod tests {
         // the column has matching values.
         assert!(!sql.contains("\"from\""));
         assert!(sql.contains("outcome = 'positive'"));
+        // tier IS pushed down — not a SQL keyword, so the plain clause works.
+        assert!(sql.contains("tier = 'core'"));
         assert!(sql.contains(" AND "));
     }
 
@@ -1240,6 +1295,59 @@ mod tests {
         let err = store.forget(&Filters::default()).await.unwrap_err();
         assert!(err.to_string().contains("empty filter"));
         assert_eq!(store.count().await.unwrap(), 1);
+    }
+
+    // ── evict_expired + core_facts tests ───────────────────────────────────
+
+    #[tokio::test]
+    async fn evict_expired_drops_only_rows_older_than_cutoff() {
+        let (store, _dir) = fresh_store().await;
+        let now = Utc::now();
+
+        // Old: created 10 days ago, never updated → decay clock = created_at.
+        let mut old = make_fact("stale", FactType::Learned);
+        old.created_at = (now - Duration::days(10)).trunc_subsecs(6);
+        let old_id = old.id;
+
+        // Fresh: created just now → decay clock = created_at ≈ now.
+        let fresh = make_fact("recent", FactType::Learned);
+        let fresh_id = fresh.id;
+
+        // Touched: created 10 days ago BUT updated 1 hour ago → decay clock
+        // = updated_at, which is recent → must survive (touch resets age).
+        let mut touched = make_fact("revived", FactType::Learned);
+        touched.created_at = (now - Duration::days(10)).trunc_subsecs(6);
+        touched.updated_at = Some((now - Duration::hours(1)).trunc_subsecs(6));
+        let touched_id = touched.id;
+
+        store.insert(&[old, fresh, touched]).await.unwrap();
+
+        // Cutoff one day ago: only `old` is older by COALESCE clock.
+        let removed = store.evict_expired(now - Duration::days(1)).await.unwrap();
+        assert_eq!(removed, 1);
+        assert!(store.get(old_id).await.unwrap().is_none());
+        assert!(store.get(fresh_id).await.unwrap().is_some());
+        assert!(
+            store.get(touched_id).await.unwrap().is_some(),
+            "row with recent updated_at must survive even though created_at is old"
+        );
+    }
+
+    #[tokio::test]
+    async fn core_facts_returns_only_core_tier() {
+        let (store, _dir) = fresh_store().await;
+
+        let mut core1 = make_fact("identity bit", FactType::Fact);
+        core1.tier = Tier::Core;
+        let mut core2 = make_fact("preference bit", FactType::Preference);
+        core2.tier = Tier::Core;
+        let semantic = make_fact("retrieval pool bit", FactType::Learned); // default Semantic
+
+        store.insert(&[core1, core2, semantic]).await.unwrap();
+
+        let core = store.core_facts().await.unwrap();
+        assert_eq!(core.len(), 2);
+        assert!(core.iter().all(|f| f.tier == Tier::Core));
     }
 
     // ── insert_with_dedup tests ────────────────────────────────────────────
