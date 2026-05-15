@@ -68,6 +68,7 @@ LanceDB table name: `facts`.
 | `tier` | Utf8 | no | `core` / `semantic`. Defaults to `semantic`. Older JSON without it reads as `semantic` |
 | `cwd` | Utf8 | yes | Working directory at capture time. Extraction hint and filter |
 | `created_at` | Timestamp(Microsecond, UTC) | no | When the fact was added to memory |
+| `updated_at` | Timestamp(Microsecond, UTC) | yes | Last-edit time; the decay/TTL clock (falls back to `created_at`) |
 | `occurred_at` | Timestamp(Microsecond, UTC) | yes | When the thing described happened. Falls back to `created_at` in queries |
 | `source_session` | Utf8 | yes | Session id the fact was extracted from. Escape hatch when the fact is later ambiguous |
 
