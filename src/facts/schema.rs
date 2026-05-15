@@ -3,14 +3,14 @@
 //! Defines:
 //! - [`TABLE_NAME`] — the LanceDB table name used by the store.
 //! - [`VECTOR_DIM`] — embedding dimension (1024, matches `Qwen3-Embedding-0.6B`).
-//! - [`build_schema`] — the 12-field Arrow schema matching `doc/tech-spec.md`.
+//! - [`build_schema`] — the 13-field Arrow schema matching `doc/tech-spec.md`.
 //! - [`facts_to_record_batch`] — encode `&[Fact]` as a single `RecordBatch`.
 //! - [`record_batch_to_facts`] — decode a `RecordBatch` back into `Vec<Fact>`.
 //!
 //! Changes to any field (rename, type change, nullability flip) must be made
 //! in lockstep here and in `types.rs`.
 
-use super::types::{Fact, FactType, Origin, Outcome};
+use super::types::{Fact, FactType, Origin, Outcome, Tier};
 use anyhow::{anyhow, Context, Result};
 use arrow_array::{
     builder::{FixedSizeListBuilder, Float32Builder, ListBuilder, StringBuilder},
@@ -49,6 +49,7 @@ pub fn build_schema() -> Arc<Schema> {
         Field::new("type", DataType::Utf8, false),
         Field::new("outcome", DataType::Utf8, true),
         Field::new("from", DataType::Utf8, false),
+        Field::new("tier", DataType::Utf8, false),
         Field::new("cwd", DataType::Utf8, true),
         Field::new(
             "created_at",
@@ -74,6 +75,7 @@ pub fn facts_to_record_batch(facts: &[Fact]) -> Result<RecordBatch> {
     let contents = StringArray::from_iter_values(facts.iter().map(|f| f.content.clone()));
     let types = StringArray::from_iter_values(facts.iter().map(|f| f.r#type.as_str()));
     let froms = StringArray::from_iter_values(facts.iter().map(|f| f.origin.as_str()));
+    let tiers = StringArray::from_iter_values(facts.iter().map(|f| f.tier.as_str()));
 
     let outcomes = StringArray::from_iter(facts.iter().map(|f| f.outcome.map(|o| o.as_str())));
     let cwds = StringArray::from_iter(facts.iter().map(|f| f.cwd.clone()));
@@ -106,6 +108,7 @@ pub fn facts_to_record_batch(facts: &[Fact]) -> Result<RecordBatch> {
             Arc::new(types),
             Arc::new(outcomes),
             Arc::new(froms),
+            Arc::new(tiers),
             Arc::new(cwds),
             Arc::new(created_at),
             Arc::new(occurred_at),
@@ -123,6 +126,7 @@ pub fn record_batch_to_facts(batch: &RecordBatch) -> Result<Vec<Fact>> {
     let contents = col_utf8(batch, "content")?;
     let types = col_utf8(batch, "type")?;
     let froms = col_utf8(batch, "from")?;
+    let tiers = col_utf8(batch, "tier")?;
     let outcomes = col_utf8_opt(batch, "outcome")?;
     let cwds = col_utf8_opt(batch, "cwd")?;
     let source_sessions = col_utf8_opt(batch, "source_session")?;
@@ -141,6 +145,9 @@ pub fn record_batch_to_facts(batch: &RecordBatch) -> Result<Vec<Fact>> {
         let from_str = froms.value(i);
         let origin = Origin::from_str(from_str)
             .with_context(|| format!("unknown from `{from_str}` at row {i}"))?;
+        let tier_str = tiers.value(i);
+        let tier = Tier::from_str(tier_str)
+            .with_context(|| format!("unknown tier `{tier_str}` at row {i}"))?;
         let outcome = match outcomes.get(i).copied().flatten() {
             Some(s) => Some(
                 Outcome::from_str(s)
@@ -156,6 +163,7 @@ pub fn record_batch_to_facts(batch: &RecordBatch) -> Result<Vec<Fact>> {
             contexts: contexts[i].clone(),
             tags: tags[i].clone(),
             r#type,
+            tier,
             outcome,
             origin,
             cwd: cwds.get(i).copied().flatten().map(str::to_string),
@@ -376,9 +384,9 @@ mod tests {
     }
 
     #[test]
-    fn schema_has_twelve_fields() {
+    fn schema_has_thirteen_fields() {
         let schema = build_schema();
-        assert_eq!(schema.fields().len(), 12);
+        assert_eq!(schema.fields().len(), 13);
     }
 
     #[test]
@@ -396,6 +404,7 @@ mod tests {
                 "type",
                 "outcome",
                 "from",
+                "tier",
                 "cwd",
                 "created_at",
                 "occurred_at",

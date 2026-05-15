@@ -44,6 +44,12 @@ pub struct Fact {
 
     pub r#type: FactType,
 
+    /// Storage tier. `core` facts are the small, durable identity/preference
+    /// set surfaced eagerly; `semantic` facts are the broader RAG-retrieved
+    /// pool. Older JSON without this field defaults to `semantic`.
+    #[serde(default)]
+    pub tier: Tier,
+
     /// Only meaningful for action-flavored types (`tried`, `fixed`,
     /// `decision`). Nullable — a `preference` fact has no outcome.
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -93,6 +99,7 @@ impl Fact {
             contexts: Vec::new(),
             tags: Vec::new(),
             r#type,
+            tier: Tier::default(),
             outcome: None,
             origin,
             cwd: None,
@@ -288,6 +295,57 @@ impl FromStr for Origin {
     }
 }
 
+// ── Tier ────────────────────────────────────────────────────────────────────
+
+/// Storage tier of a fact.
+///
+/// - `Core`: the small, durable identity/preference set surfaced eagerly
+///   (always-on context, not retrieval-gated).
+/// - `Semantic`: the broader pool retrieved by semantic search.
+///
+/// Default is `Semantic` — the safe choice for ingested facts that haven't
+/// been explicitly promoted to the core set.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Tier {
+    Core,
+    #[default]
+    Semantic,
+}
+
+impl Tier {
+    pub const ALL: &'static [Tier] = &[Tier::Core, Tier::Semantic];
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Tier::Core => "core",
+            Tier::Semantic => "semantic",
+        }
+    }
+}
+
+impl fmt::Display for Tier {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for Tier {
+    type Err = ParseEnumError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_ascii_lowercase().as_str() {
+            "core" => Ok(Tier::Core),
+            "semantic" => Ok(Tier::Semantic),
+            _ => Err(ParseEnumError {
+                field: "tier",
+                value: s.to_string(),
+                allowed: Tier::ALL.iter().map(|t| t.as_str()).collect(),
+            }),
+        }
+    }
+}
+
 // ── Parse errors ────────────────────────────────────────────────────────────
 
 #[derive(Debug, thiserror::Error)]
@@ -342,11 +400,17 @@ mod tests {
     }
 
     #[test]
+    fn tier_default_is_semantic() {
+        assert_eq!(Tier::default(), Tier::Semantic);
+    }
+
+    #[test]
     fn fact_new_sets_sensible_defaults() {
         let f = Fact::new("user likes jazz", FactType::Preference, Origin::User);
         assert_eq!(f.content, "user likes jazz");
         assert_eq!(f.r#type, FactType::Preference);
         assert_eq!(f.origin, Origin::User);
+        assert_eq!(f.tier, Tier::Semantic);
         assert!(f.vector.is_none());
         assert!(f.contexts.is_empty());
         assert!(f.tags.is_empty());

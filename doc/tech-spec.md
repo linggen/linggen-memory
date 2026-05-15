@@ -51,7 +51,7 @@ $LINGGEN_DATA_DIR/
 
 Multi-user isolation is path-level, not in-row: Linggen sets `LINGGEN_DATA_DIR` per user context before invoking `ling-mem`. The binary is single-user per invocation and has no `user_id` concept.
 
-## Fact schema (12 fields)
+## Fact schema (13 fields)
 
 LanceDB table name: `facts`.
 
@@ -65,6 +65,7 @@ LanceDB table name: `facts`.
 | `type` | Utf8 | no | One of seven canonical values (see below). Utf8 in storage; CLI validates against enum |
 | `outcome` | Utf8 | yes | `positive` / `negative` / `neutral`. Only meaningful for action-flavored types |
 | `from` | Utf8 | no | `user` / `agent` / `derived`. Defaults to `derived` |
+| `tier` | Utf8 | no | `core` / `semantic`. Defaults to `semantic`. Older JSON without it reads as `semantic` |
 | `cwd` | Utf8 | yes | Working directory at capture time. Extraction hint and filter |
 | `created_at` | Timestamp(Microsecond, UTC) | no | When the fact was added to memory |
 | `occurred_at` | Timestamp(Microsecond, UTC) | yes | When the thing described happened. Falls back to `created_at` in queries |
@@ -92,11 +93,12 @@ No `activity` catch-all. Forcing specificity prevents drift we saw in v0's markd
 
 ## Embedding model
 
-- **v0.1 default:** `sentence-transformers/all-MiniLM-L6-v2`, 384-dim.
-- Local inference via Candle + HuggingFace Hub.
-- Model cached under `$LINGGEN_DATA_DIR/hf/hub/` (HuggingFace convention).
-- Configurable via `--embedding-model <hf-id>` flag or `LING_MEM_EMBEDDING_MODEL` env var.
-- Planned v0.2 default flip: `BAAI/bge-small-en-v1.5` (same 384-dim, drop-in quality upgrade).
+- **Default (v0.5+):** `Qwen/Qwen3-Embedding-0.6B`, 1024-dim, multilingual (100+ langs incl. Chinese).
+- Local inference via Candle (BF16 weights, ~1.2 GB downloaded on first use). macOS Metal / Linux CUDA / CPU auto-selected.
+- Input capped at 512 tokens (`MAX_SEQ_LEN` in `src/embed/mod.rs`) — sized for short atomic facts, not long documents.
+- Model cached under the HuggingFace Hub cache dir.
+- Queries prefixed `"query: "`, stored passages `"passage: "` per Qwen3's retrieval convention.
+- v0.4.x and earlier used `all-MiniLM-L6-v2` (384-dim, English-only); see CHANGELOG for the migration.
 
 If the configured model output dimension doesn't match the table's `FixedSizeList` size, the store refuses to open and prints a migration hint.
 
