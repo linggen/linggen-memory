@@ -90,6 +90,13 @@ pub enum Command {
     /// Bulk-delete by filter. Refuses empty filters.
     Forget(ForgetArgs),
 
+    /// Delete episodic rows older than a cutoff — the consolidation
+    /// pass's decay sweep. Always targets the episodic store (the `facts`
+    /// table is curated and never auto-evicted); the `--episodic` flag is
+    /// not needed. The engine owns the TTL policy and passes the resolved
+    /// absolute cutoff; this binary stays policy-free.
+    Evict(EvictArgs),
+
     // Session-scanning utilities (`collect` + `extract`) used to live here.
     // They moved to `skills/memory/scripts/` as bash helpers — the daemon is
     // a pure data service; reading session files isn't its concern.
@@ -307,6 +314,15 @@ pub struct ForgetArgs {
     pub yes: bool,
 }
 
+#[derive(Debug, Args)]
+pub struct EvictArgs {
+    /// RFC-3339 cutoff. Rows whose `COALESCE(updated_at, created_at)` is
+    /// older than this are deleted. The caller computes the absolute
+    /// instant (`now − TTL`); no `--ttl` / duration form by design.
+    #[arg(long)]
+    pub before: DateTime<Utc>,
+}
+
 // ── CLI ↔ domain-type glue ──────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -509,6 +525,17 @@ pub async fn run(cli: Cli) -> Result<()> {
         } => {
             return cmd_upgrade(&data_dir, &skill_dir, check, force, yes, port).await;
         }
+        // `evict` is episodic-only by definition: it never touches the
+        // curated `facts` table and the HTTP daemon doesn't expose the
+        // episodic store, so route it straight to the direct episodic
+        // store rather than through the daemon-client dispatch below.
+        Command::Evict(ref args) => {
+            let before = args.before;
+            let store = open_store(&data_dir, true)
+                .await
+                .with_context(|| format!("opening episodic store at {}", data_dir.display()))?;
+            return cmd_evict(&store, before, format).await;
+        }
         _ => {}
     }
 
@@ -541,6 +568,7 @@ pub async fn run(cli: Cli) -> Result<()> {
                 | Command::Restart { .. }
                 | Command::Status
                 | Command::Init
+                | Command::Evict(_)
                 | Command::Upgrade { .. } => unreachable!("handled above"),
             };
         }
@@ -564,6 +592,7 @@ pub async fn run(cli: Cli) -> Result<()> {
         | Command::Restart { .. }
         | Command::Status
         | Command::Init
+        | Command::Evict(_)
         | Command::Upgrade { .. } => unreachable!("handled above"),
     }
 }
@@ -828,6 +857,21 @@ async fn cmd_forget(store: &FactsStore, args: ForgetArgs, format: OutputFormat) 
         OutputFormat::Json => writeln_ndjson(&serde_json::json!({ "removed": removed })),
         OutputFormat::Text => {
             println!("forgot {removed} fact(s)");
+            Ok(())
+        }
+    }
+}
+
+async fn cmd_evict(
+    store: &FactsStore,
+    before: DateTime<Utc>,
+    format: OutputFormat,
+) -> Result<()> {
+    let evicted = store.evict_expired(before).await?;
+    match format {
+        OutputFormat::Json => writeln_ndjson(&serde_json::json!({ "evicted": evicted })),
+        OutputFormat::Text => {
+            println!("evicted {evicted} episodic fact(s)");
             Ok(())
         }
     }

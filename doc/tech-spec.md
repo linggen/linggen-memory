@@ -108,13 +108,14 @@ If the configured model output dimension doesn't match the table's `FixedSizeLis
 
 | Subcommand | Purpose | Flags |
 |:--|:--|:--|
-| `add` | Insert one or many facts (positional content OR NDJSON on stdin) | `--type`, `--context`, `--tag` (repeatable), `--from`, `--outcome`, `--cwd`, `--occurred-at`, `--source-session`, `--stdin` |
+| `add` | Insert one or many facts (positional content OR NDJSON on stdin) | `--type`, `--tier` (`core`/`semantic`, default `semantic`), `--context`, `--tag` (repeatable), `--from`, `--outcome`, `--cwd`, `--occurred-at`, `--source-session`, `--stdin`, `--episodic` |
 | `get <id>` | Fetch one fact | — |
-| `search <query>` | Semantic + filter search | `--context` (repeatable), `--type`, `--from`, `--outcome`, `--since`, `--limit` |
-| `list` | Non-semantic browse | same filters as `search`, plus `--sort`, `--page`, `--page-size` |
+| `search <query>` | Semantic + filter search | `--context` (repeatable), `--type`, `--tier`, `--from`, `--outcome`, `--since`, `--limit`, `--episodic` |
+| `list` | Non-semantic browse | same filters as `search` (incl. `--tier`, `--episodic`), plus `--sort`, `--page`, `--page-size` |
 | `update <id>` | Modify fields | `--content`, `--add-context`, `--remove-context`, `--add-tag`, `--remove-tag`, `--type`, `--outcome` |
 | `delete <id>` | Hard delete | `--yes` to skip confirmation |
 | `forget` | Bulk delete by filter | `--context`, `--type`, `--older-than`; requires `--yes` |
+| `evict` | Delete episodic rows older than a cutoff | `--before <rfc3339>` |
 
 In-scope but not listed above (daemon lifecycle): `serve`, `start`, `stop`,
 `restart`, `status`. These run the axum HTTP server that hosts both the
