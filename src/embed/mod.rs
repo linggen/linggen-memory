@@ -25,6 +25,8 @@
 //! The daemon (`ling-mem serve`) constructs one [`Embedder`] at startup and
 //! shares it across requests — model load (~1–2 s) happens once.
 
+use std::sync::Arc;
+
 use anyhow::{Context, Result};
 use candle_core::{DType, Device};
 use fastembed::Qwen3TextEmbedding;
@@ -36,18 +38,73 @@ const MAX_SEQ_LEN: usize = 512;
 const QUERY_PREFIX: &str = "query: ";
 const PASSAGE_PREFIX: &str = "passage: ";
 
+/// Hard cap on the byte length of any single text handed to the encoder.
+/// fastembed already truncates to [`MAX_SEQ_LEN`] *tokens*, but that cap
+/// is applied *after* the full string is tokenized — a multi-MB blob
+/// (a giant `Memory_add` content, a runaway query) still forces a huge
+/// tokenizer allocation before truncation. 16 KiB sits comfortably above
+/// a 512-token window in any language (incl. multi-byte CJK) while making
+/// the worst-case per-call cost deterministic. Over-long input is
+/// truncated, not rejected: the full content is still stored verbatim;
+/// only the retrieval vector loses the tail (already lossy past 512 tok).
+const MAX_EMBED_INPUT_BYTES: usize = 16 * 1024;
+
+/// Max texts encoded in one candle forward pass. Larger batches are
+/// processed in chunks so peak attention-tensor memory stays bounded
+/// regardless of caller batch size (`ling-mem add --stdin`, reindex).
+const MAX_EMBED_BATCH: usize = 32;
+
 pub struct Embedder {
     inner: Qwen3TextEmbedding,
+    /// Serializes candle forward passes. The daemon shares one [`Embedder`]
+    /// across a multi-thread Tokio runtime; without this, N concurrent
+    /// `/api/memory/*` calls ran N simultaneous forward passes on the same
+    /// Metal device, and candle's per-shape Metal buffer pool grew without
+    /// bound for the daemon's whole life (the 109 GB OOM). One inference
+    /// at a time keeps resident memory flat.
+    gate: tokio::sync::Mutex<()>,
 }
 
 impl Embedder {
     /// Construct with the default model (Qwen3-Embedding-0.6B) on the best
     /// available device (Metal on macOS, CUDA where compiled in, else CPU).
+    ///
+    /// Weights load as F16 (not F32): the checkpoint ships BF16, F16 halves
+    /// the resident model footprint (~2.4 GB → ~1.2 GB), and the L2-
+    /// normalized cosine outputs differ from F32 by ~1e-3 — far inside the
+    /// 0.03 dedup-threshold margin, so no reindex is needed.
     pub fn new() -> Result<Self> {
         let device = best_device()?;
-        let inner = Qwen3TextEmbedding::from_hf(MODEL_REPO, &device, DType::F32, MAX_SEQ_LEN)
+        tracing::info!(
+            "embedder: model={MODEL_REPO} device={device:?} dtype=F16 max_seq_len={MAX_SEQ_LEN}"
+        );
+        let inner = Qwen3TextEmbedding::from_hf(MODEL_REPO, &device, DType::F16, MAX_SEQ_LEN)
             .context("initializing Qwen3 text embedder")?;
-        Ok(Self { inner })
+        Ok(Self {
+            inner,
+            gate: tokio::sync::Mutex::new(()),
+        })
+    }
+
+    /// Embed one stored passage, serialized and run on the blocking pool.
+    /// HTTP handlers must use this (never the sync [`Self::embed_one`])
+    /// so concurrent requests cannot stack forward passes.
+    pub async fn embed_passage(self: Arc<Self>, text: String) -> Result<Vec<f32>> {
+        let _guard = self.gate.lock().await;
+        let me = Arc::clone(&self);
+        tokio::task::spawn_blocking(move || me.embed_one(&text))
+            .await
+            .context("embed worker join failed")?
+    }
+
+    /// Embed one search query, serialized and run on the blocking pool.
+    /// HTTP handlers must use this (never the sync [`Self::embed_query`]).
+    pub async fn embed_query_serialized(self: Arc<Self>, text: String) -> Result<Vec<f32>> {
+        let _guard = self.gate.lock().await;
+        let me = Arc::clone(&self);
+        tokio::task::spawn_blocking(move || me.embed_query(&text))
+            .await
+            .context("embed worker join failed")?
     }
 
     /// Embed a passage (stored memory content) into a 1024-dim unit vector.
@@ -77,12 +134,34 @@ impl Embedder {
         if texts.is_empty() {
             return Ok(Vec::new());
         }
-        let prefixed: Vec<String> = texts.iter().map(|t| format!("{prefix}{t}")).collect();
-        let refs: Vec<&str> = prefixed.iter().map(|s| s.as_str()).collect();
-        let vectors = self
-            .inner
-            .embed(&refs)
-            .context("running Qwen3 embedding model")?;
+
+        let total_bytes: usize = texts.iter().map(String::len).sum();
+        let truncated = texts.iter().any(|t| t.len() > MAX_EMBED_INPUT_BYTES);
+        tracing::info!(
+            "embed: batch={} total_bytes={} max_text_bytes={} truncated={} prefix={:?}",
+            texts.len(),
+            total_bytes,
+            texts.iter().map(String::len).max().unwrap_or(0),
+            truncated,
+            prefix.trim()
+        );
+
+        let prefixed: Vec<String> = texts
+            .iter()
+            .map(|t| format!("{prefix}{}", clamp_bytes(t, MAX_EMBED_INPUT_BYTES)))
+            .collect();
+
+        // Chunk so peak attention-tensor memory is bounded by MAX_EMBED_BATCH
+        // even when a caller passes an arbitrarily large batch.
+        let mut vectors: Vec<Vec<f32>> = Vec::with_capacity(prefixed.len());
+        for chunk in prefixed.chunks(MAX_EMBED_BATCH) {
+            let refs: Vec<&str> = chunk.iter().map(String::as_str).collect();
+            let part = self
+                .inner
+                .embed(&refs)
+                .context("running Qwen3 embedding model")?;
+            vectors.extend(part);
+        }
 
         for (i, v) in vectors.iter().enumerate() {
             if v.len() != VECTOR_DIM as usize {
@@ -190,6 +269,20 @@ mod tests {
             (max_related + min_restate) / 2.0
         );
     }
+}
+
+/// Truncate `s` to at most `max` bytes, snapping back to the nearest
+/// UTF-8 char boundary so we never split a multi-byte codepoint (slicing
+/// mid-codepoint would panic). Returns a borrow when no cut is needed.
+fn clamp_bytes(s: &str, max: usize) -> &str {
+    if s.len() <= max {
+        return s;
+    }
+    let mut end = max;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
 }
 
 /// Pick the best available compute device for candle: Metal on macOS,

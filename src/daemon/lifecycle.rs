@@ -93,6 +93,26 @@ pub async fn start(data_dir: &Path, skill_dir: &Path, port: u16) -> Result<Lifec
         return Ok(LifecycleOutcome::AlreadyRunning(info));
     }
 
+    // Capture the detached daemon's stdout/stderr to a log file instead of
+    // /dev/null. Without it, a daemon-side fault (the 109 GB OOM) leaves no
+    // trace and the triggering request is unrecoverable. Size-rotated:
+    // one previous generation kept as serve.log.1.
+    let log_path = skill_dir.join("serve.log");
+    if std::fs::metadata(&log_path)
+        .map(|m| m.len() > 5 * 1024 * 1024)
+        .unwrap_or(false)
+    {
+        let _ = std::fs::rename(&log_path, skill_dir.join("serve.log.1"));
+    }
+    let log_file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+        .with_context(|| format!("opening daemon log {}", log_path.display()))?;
+    let log_err = log_file
+        .try_clone()
+        .context("cloning daemon log handle for stderr")?;
+
     let exe = std::env::current_exe().context("resolving current executable path")?;
     let mut cmd = std::process::Command::new(exe);
     cmd.arg("serve")
@@ -100,8 +120,8 @@ pub async fn start(data_dir: &Path, skill_dir: &Path, port: u16) -> Result<Lifec
         .arg(port.to_string())
         .env("LINGGEN_DATA_DIR", data_dir)
         .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
+        .stdout(Stdio::from(log_file))
+        .stderr(Stdio::from(log_err));
 
     let mut child = cmd.spawn().context("spawning `ling-mem serve`")?;
 

@@ -316,10 +316,13 @@ async fn add(
     fact.occurred_at = req.occurred_at;
     fact.source_session = req.source_session;
 
-    // Embed the content so the row is immediately searchable.
+    // Embed the content so the row is immediately searchable. Serialized +
+    // off the async workers so concurrent adds can't stack forward passes.
     let vector = state
         .embedder
-        .embed_one(&fact.content)
+        .clone()
+        .embed_passage(fact.content.clone())
+        .await
         .map_err(ApiError::internal)?;
     fact.vector = Some(vector);
 
@@ -377,7 +380,9 @@ async fn search(
 
     let vector = state
         .embedder
-        .embed_query(&req.query)
+        .clone()
+        .embed_query_serialized(req.query.clone())
+        .await
         .map_err(ApiError::internal)?;
     let results = state
         .store

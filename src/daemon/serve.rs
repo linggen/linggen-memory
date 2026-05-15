@@ -23,6 +23,18 @@ use tokio::net::TcpListener;
 /// `skill_dir` is the per-skill data root at `<data_dir>/memory/linggen-memory/`
 /// where the pidfile lives. `port` is the requested bind port on `127.0.0.1`.
 pub async fn run(data_dir: &Path, skill_dir: &Path, port: u16) -> Result<()> {
+    // The daemon is the only path that emits logs (the CLI stays quiet by
+    // design). `start` redirects this process's stderr into serve.log; the
+    // subscriber is what makes `tracing::*` actually write there. `try_init`
+    // so a test harness that already set a global subscriber doesn't panic.
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .with_writer(std::io::stderr)
+        .try_init();
+
     // Refuse to start if another daemon is already live — overlapping
     // writers would corrupt the LanceDB store.
     if let Some(existing) = pidfile::read(skill_dir)? {
