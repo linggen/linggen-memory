@@ -1,14 +1,18 @@
 //! [`FactsStore`] — LanceDB wrapper around the `facts` table.
 //!
 //! The store is opened once per `ling-mem` invocation (CLI is one-shot in
-//! v0.1). It owns a LanceDB [`Connection`] and a [`Table`] handle for the
-//! `facts` table; the table is auto-created on first open if missing.
+//! v0.1). It owns a LanceDB [`Connection`] and a [`Table`] handle for one
+//! table; the table is auto-created on first open if missing. `open` binds
+//! the `facts` table, `open_episodic` the `episodic` table (same connection,
+//! same schema, per-table ANN-index isolation).
 //!
 //! See `doc/tech-spec.md` for the full CLI contract. This module implements
 //! just the storage primitives: `open`, `insert`, `get`. Search, list, and
 //! mutation ops land in subsequent commits.
 
-use super::schema::{build_schema, facts_to_record_batch, record_batch_to_facts, TABLE_NAME};
+use super::schema::{
+    build_schema, facts_to_record_batch, record_batch_to_facts, EPISODIC_TABLE_NAME, TABLE_NAME,
+};
 use super::types::{Fact, FactType, Origin, Outcome};
 use anyhow::{anyhow, Context, Result};
 use arrow_array::{RecordBatch, RecordBatchIterator, RecordBatchReader};
@@ -21,6 +25,12 @@ use lancedb::{
 };
 use std::path::Path;
 use uuid::Uuid;
+
+/// Reserved tag marking an episodic row the consolidator has already
+/// processed. Not user-facing — set/queried only by the consolidation
+/// pass (logic lands in a later phase); defined here so producer and
+/// consumer share one literal.
+pub const CONSOLIDATED_TAG: &str = "sys:consolidated";
 
 /// Filter criteria shared by [`FactsStore::search`] and [`FactsStore::list`].
 ///
@@ -218,10 +228,11 @@ fn escape_sql(s: &str) -> String {
 }
 
 /// Cosine-similarity threshold above which a candidate is merged into the
-/// nearest existing fact instead of being inserted as a new row. Embeddings
-/// from the default MiniLM encoder are L2-normalized, so dot product is
-/// cosine similarity; values at/above 0.88 have empirically been
-/// restatements of the same idea in different wording.
+/// nearest existing fact instead of being inserted as a new row. Qwen3-
+/// Embedding-0.6B outputs are L2-normalized unit vectors, so dot product
+/// is cosine similarity. NOTE: 0.88 was tuned empirically against the
+/// v0.4 MiniLM encoder; Qwen3's score distribution differs (relevant
+/// hits cluster ~0.4–0.7), so this constant is due a re-validation pass.
 pub const DEDUP_SIMILARITY_THRESHOLD: f32 = 0.88;
 
 /// Outcome of [`FactsStore::insert_with_dedup`]. Either the candidate was
@@ -306,13 +317,30 @@ pub struct FactsStore {
 }
 
 impl FactsStore {
-    /// Open (or auto-create) the facts store rooted at `data_dir`.
+    /// Open (or auto-create) the curated facts store rooted at `data_dir`.
     ///
     /// The actual LanceDB directory is `data_dir/memory/facts.lancedb/` —
     /// appending `memory/facts.lancedb/` to the Linggen-per-user data dir.
     /// If the dir doesn't exist, both the directories and an empty `facts`
     /// table are created.
     pub async fn open(data_dir: &Path) -> Result<Self> {
+        Self::open_named(data_dir, TABLE_NAME).await
+    }
+
+    /// Open (or auto-create) the episodic store rooted at `data_dir`.
+    ///
+    /// Lives in the same `data_dir/memory/facts.lancedb/` connection as
+    /// [`Self::open`] but is a separate LanceDB table reusing the identical
+    /// Fact schema. Separate tables give per-table ANN-index isolation, so
+    /// staged episodic rows never pollute the curated facts index.
+    pub async fn open_episodic(data_dir: &Path) -> Result<Self> {
+        Self::open_named(data_dir, EPISODIC_TABLE_NAME).await
+    }
+
+    /// Shared open-or-create body for [`Self::open`] / [`Self::open_episodic`].
+    /// Connects to the single `data_dir/memory/facts.lancedb/` directory and
+    /// opens-or-creates `table_name` against [`build_schema`].
+    async fn open_named(data_dir: &Path, table_name: &str) -> Result<Self> {
         let lancedb_dir = data_dir.join("memory").join("facts.lancedb");
         tokio::fs::create_dir_all(&lancedb_dir)
             .await
@@ -333,12 +361,12 @@ impl FactsStore {
             .await
             .context("listing LanceDB tables")?;
 
-        let table = if names.iter().any(|n| n == TABLE_NAME) {
+        let table = if names.iter().any(|n| n == table_name) {
             let t = conn
-                .open_table(TABLE_NAME)
+                .open_table(table_name)
                 .execute()
                 .await
-                .with_context(|| format!("opening `{TABLE_NAME}` table"))?;
+                .with_context(|| format!("opening `{table_name}` table"))?;
             check_schema_dim(&t, &lancedb_dir).await?;
             t
         } else {
@@ -349,10 +377,10 @@ impl FactsStore {
                 std::iter::empty::<arrow::error::Result<RecordBatch>>(),
                 schema,
             ));
-            conn.create_table(TABLE_NAME, empty)
+            conn.create_table(table_name, empty)
                 .execute()
                 .await
-                .with_context(|| format!("creating `{TABLE_NAME}` table"))?
+                .with_context(|| format!("creating `{table_name}` table"))?
         };
 
         Ok(Self { _conn: conn, table })
@@ -488,7 +516,7 @@ impl FactsStore {
     /// drops rows below the threshold.
     ///
     /// Score range is `[-1.0, 1.0]` (cosine of unit-normalized embeddings,
-    /// effectively `[0.0, 1.0]` in practice for MiniLM-L6-v2 outputs). A
+    /// effectively `[0.0, 1.0]` in practice for Qwen3-Embedding-0.6B outputs). A
     /// `min_score` of `Some(0.5)` keeps moderately-relevant hits and drops
     /// noise; `None` disables filtering. Computed post-fetch from the
     /// stored vectors — same arithmetic as the dedup path.
@@ -725,6 +753,45 @@ mod tests {
         }
         // Re-opening finds the table and sees the existing row.
         let store = FactsStore::open(dir.path()).await.unwrap();
+        assert_eq!(store.count().await.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn episodic_table_is_separate_from_facts() {
+        let dir = TempDir::new().unwrap();
+        // Same lancedb dir, two tables in one connection.
+        let facts = FactsStore::open(dir.path()).await.unwrap();
+        let episodic = FactsStore::open_episodic(dir.path()).await.unwrap();
+
+        let fact = make_fact("curated fact", FactType::Fact);
+        let fact_id = fact.id;
+        facts.insert(&[fact]).await.unwrap();
+        episodic
+            .insert(&[make_fact("staged experience", FactType::Learned)])
+            .await
+            .unwrap();
+
+        // Each table holds exactly its own row.
+        assert_eq!(facts.count().await.unwrap(), 1);
+        assert_eq!(episodic.count().await.unwrap(), 1);
+
+        // True isolation: the facts row is invisible to the episodic store
+        // even though they share one LanceDB connection.
+        assert!(episodic.get(fact_id).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn open_episodic_is_idempotent() {
+        let dir = TempDir::new().unwrap();
+        {
+            let store = FactsStore::open_episodic(dir.path()).await.unwrap();
+            store
+                .insert(&[make_fact("staged", FactType::Learned)])
+                .await
+                .unwrap();
+        }
+        // Re-opening finds the episodic table and sees the existing row.
+        let store = FactsStore::open_episodic(dir.path()).await.unwrap();
         assert_eq!(store.count().await.unwrap(), 1);
     }
 

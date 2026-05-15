@@ -25,6 +25,11 @@ use uuid::Uuid;
 /// Name of the LanceDB table holding memory facts.
 pub const TABLE_NAME: &str = "facts";
 
+/// Name of the LanceDB table holding staged episodic experience. Same row
+/// schema as `facts` (reuses [`build_schema`]); a separate table so its
+/// ANN index stays isolated from the curated facts index.
+pub const EPISODIC_TABLE_NAME: &str = "episodic";
+
 /// Embedding vector dimensionality. Locked by the default model
 /// (`Qwen/Qwen3-Embedding-0.6B`, 1024-dim).
 pub const VECTOR_DIM: i32 = 1024;

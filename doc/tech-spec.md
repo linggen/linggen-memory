@@ -153,6 +153,10 @@ Fact serialization matches the Rust `Fact` struct with one rename: the Rust fiel
 
 The `facts` table is created lazily on first write if it doesn't exist. Arrow schema is built from the field list above with explicit null-vs-non-null flags. Table directory: `$LINGGEN_DATA_DIR/memory/facts.lancedb/`.
 
+### Episodic table
+
+A second table `episodic` lives in the same `facts.lancedb` connection, identical schema, holding staged experience awaiting consolidation. Separate table = per-table ANN index isolated from curated facts. The `sys:consolidated` tag marks rows the consolidator has processed. Eviction reuses the age-based `forget` path.
+
 ### Search
 
 Vector similarity via LanceDB's native nearest-neighbor, filtered in SQL against metadata columns. Filters:
