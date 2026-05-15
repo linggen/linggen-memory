@@ -40,6 +40,13 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub quiet: bool,
 
+    /// Target the episodic store (the staging table) instead of the
+    /// curated `facts` table. Episodic rows are the raw, undeduped pool the
+    /// consolidation pass later promotes or evicts. Bypasses the HTTP
+    /// daemon — episodic is a direct-store concern only.
+    #[arg(long, global = true)]
+    pub episodic: bool,
+
     #[command(subcommand)]
     pub cmd: Command,
 }
@@ -416,6 +423,17 @@ fn resolve_data_dir(cli_override: Option<PathBuf>) -> Result<PathBuf> {
     Ok(home.join(".linggen"))
 }
 
+/// Open the curated `facts` store or the `episodic` staging store,
+/// depending on `episodic`. The single direct-store open site for data
+/// ops — keeps the table-routing decision in one place.
+async fn open_store(data_dir: &std::path::Path, episodic: bool) -> Result<FactsStore> {
+    if episodic {
+        FactsStore::open_episodic(data_dir).await
+    } else {
+        FactsStore::open(data_dir).await
+    }
+}
+
 /// Run the CLI. Dispatches to the appropriate subcommand and returns its
 /// result. Errors propagate to `main` which serializes them to stderr.
 pub async fn run(cli: Cli) -> Result<()> {
@@ -501,26 +519,34 @@ pub async fn run(cli: Cli) -> Result<()> {
     // semantics in `engine::capability_tools::dispatch`). Direct
     // `FactsStore` mode below remains a fallback for when autostart fails
     // (e.g. port in use, binary missing).
-    if let Some(base_url) = client::try_running_or_start(&data_dir, &skill_dir).await {
-        return match cli.cmd {
-            Command::Add(args) => client::add(&base_url, args, format).await,
-            Command::Get { id } => client::get(&base_url, id, format).await,
-            Command::Search(args) => client::search(&base_url, args, format).await,
-            Command::List(args) => client::list(&base_url, args, format).await,
-            Command::Edit(args) => client::update(&base_url, args, format).await,
-            Command::Delete { id, yes } => client::delete(&base_url, id, yes, format).await,
-            Command::Forget(args) => client::forget(&base_url, args, format).await,
-            Command::Serve { .. }
-            | Command::Start { .. }
-            | Command::Stop
-            | Command::Restart { .. }
-            | Command::Status
-            | Command::Init
-            | Command::Upgrade { .. } => unreachable!("handled above"),
-        };
+    //
+    // `--episodic` always uses the direct store: the HTTP surface only
+    // exposes the curated `facts` table, so routing episodic ops through
+    // the daemon would silently hit the wrong table.
+    if !cli.episodic {
+        if let Some(base_url) = client::try_running_or_start(&data_dir, &skill_dir).await {
+            return match cli.cmd {
+                Command::Add(args) => client::add(&base_url, args, format).await,
+                Command::Get { id } => client::get(&base_url, id, format).await,
+                Command::Search(args) => client::search(&base_url, args, format).await,
+                Command::List(args) => client::list(&base_url, args, format).await,
+                Command::Edit(args) => client::update(&base_url, args, format).await,
+                Command::Delete { id, yes } => {
+                    client::delete(&base_url, id, yes, format).await
+                }
+                Command::Forget(args) => client::forget(&base_url, args, format).await,
+                Command::Serve { .. }
+                | Command::Start { .. }
+                | Command::Stop
+                | Command::Restart { .. }
+                | Command::Status
+                | Command::Init
+                | Command::Upgrade { .. } => unreachable!("handled above"),
+            };
+        }
     }
 
-    let store = FactsStore::open(&data_dir)
+    let store = open_store(&data_dir, cli.episodic)
         .await
         .with_context(|| format!("opening store at {}", data_dir.display()))?;
 
