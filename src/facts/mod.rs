@@ -18,4 +18,4 @@ pub use schema::{
 pub use store::{
     FactPatch, FactsStore, Filters, InsertOutcome, SortOrder, DEDUP_SIMILARITY_THRESHOLD,
 };
-pub use types::{Fact, FactType, Origin, Outcome, ParseEnumError};
+pub use types::{Fact, FactType, Origin, Outcome, ParseEnumError, Tier};

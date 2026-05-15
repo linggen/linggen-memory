@@ -13,7 +13,7 @@
 //! - **Add**: auto-embeds content for any inserted fact that doesn't already
 //!   carry a vector, so the row is immediately searchable.
 
-use crate::facts::{FactPatch, FactType, FactsStore, Filters, Origin, Outcome, SortOrder};
+use crate::facts::{FactPatch, FactType, FactsStore, Filters, Origin, Outcome, SortOrder, Tier};
 use anyhow::{anyhow, Context, Result};
 use chrono::{DateTime, Utc};
 use clap::{Args, Parser, Subcommand, ValueEnum};
@@ -157,6 +157,11 @@ pub struct AddArgs {
     #[arg(long, value_enum, default_value_t = CliFactType::Fact)]
     pub r#type: CliFactType,
 
+    /// Storage tier. `core` is the small always-loaded identity/preference
+    /// set; `semantic` is the broader RAG-retrieved pool.
+    #[arg(long, value_enum, default_value_t = CliTier::Semantic)]
+    pub tier: CliTier,
+
     #[arg(long = "context", value_name = "CONTEXT")]
     pub contexts: Vec<String>,
 
@@ -233,6 +238,9 @@ pub struct FilterArgs {
 
     #[arg(long = "type", value_enum, value_name = "TYPE")]
     pub types: Vec<CliFactType>,
+
+    #[arg(long, value_enum)]
+    pub tier: Option<CliTier>,
 
     #[arg(long, value_enum)]
     pub from: Option<CliOrigin>,
@@ -354,6 +362,21 @@ impl From<CliOutcome> for Outcome {
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum CliTier {
+    Core,
+    Semantic,
+}
+
+impl From<CliTier> for Tier {
+    fn from(v: CliTier) -> Tier {
+        match v {
+            CliTier::Core => Tier::Core,
+            CliTier::Semantic => Tier::Semantic,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum CliSort {
     Newest,
     Oldest,
@@ -377,7 +400,7 @@ impl FilterArgs {
             outcome: self.outcome.map(Into::into),
             since: self.since,
             until: self.until,
-            tier: None, // Phase 1b wires the real --tier flag here
+            tier: self.tier.map(Into::into),
         }
     }
 }
@@ -539,7 +562,16 @@ async fn cmd_add(store: &FactsStore, args: AddArgs, format: OutputFormat) -> Res
     // rows would be O(N) searches per call; callers who want dedup for bulk
     // imports should run `analyze-clean` afterwards.
     if args.stdin {
-        let mut facts = read_stdin_facts()?;
+        // A stdin row that carries its own `tier` keeps it; rows without one
+        // inherit the `--tier` flag (default `semantic`). `read_stdin_facts`
+        // reports which rows omitted the key so we only override those.
+        let (mut facts, tier_absent) = read_stdin_facts()?;
+        let default_tier: Tier = args.tier.into();
+        for (i, f) in facts.iter_mut().enumerate() {
+            if tier_absent[i] {
+                f.tier = default_tier;
+            }
+        }
         embed_missing(&mut facts)?;
         store.insert(&facts).await?;
         return emit_added(&facts, format);
@@ -553,6 +585,7 @@ async fn cmd_add(store: &FactsStore, args: AddArgs, format: OutputFormat) -> Res
     let mut fact = crate::facts::Fact::new(content, args.r#type.into(), args.from.into());
     fact.contexts = args.contexts;
     fact.tags = args.tags;
+    fact.tier = args.tier.into();
     fact.outcome = args.outcome.map(Into::into);
     fact.cwd = args.cwd;
     fact.occurred_at = args.occurred_at;
@@ -847,19 +880,28 @@ async fn cmd_upgrade(
 
 // ── I/O helpers ─────────────────────────────────────────────────────────────
 
-fn read_stdin_facts() -> Result<Vec<crate::facts::Fact>> {
+/// Parse NDJSON facts from stdin. Returns the facts plus a parallel
+/// `tier_absent` mask: `true` where the source JSON object had no `tier`
+/// key, so the caller can apply the `--tier` default only to those rows
+/// (a row that names its own tier wins over the flag).
+fn read_stdin_facts() -> Result<(Vec<crate::facts::Fact>, Vec<bool>)> {
     let mut out = Vec::new();
+    let mut tier_absent = Vec::new();
     let stdin = std::io::stdin();
     for (i, line) in stdin.lock().lines().enumerate() {
         let line = line.with_context(|| format!("reading stdin line {}", i + 1))?;
         if line.trim().is_empty() {
             continue;
         }
-        let fact: crate::facts::Fact = serde_json::from_str(&line)
+        let value: serde_json::Value = serde_json::from_str(&line)
+            .with_context(|| format!("parsing JSON on stdin line {}", i + 1))?;
+        let has_tier = value.get("tier").is_some();
+        let fact: crate::facts::Fact = serde_json::from_value(value)
             .with_context(|| format!("parsing JSON on stdin line {}", i + 1))?;
         out.push(fact);
+        tier_absent.push(!has_tier);
     }
-    Ok(out)
+    Ok((out, tier_absent))
 }
 
 fn emit_facts(facts: &[crate::facts::Fact], format: OutputFormat) -> Result<()> {
@@ -965,6 +1007,7 @@ mod tests {
         let fa = FilterArgs {
             contexts: vec!["code/linggen".into()],
             types: vec![CliFactType::Fixed, CliFactType::Tried],
+            tier: Some(CliTier::Core),
             from: Some(CliOrigin::User),
             outcome: Some(CliOutcome::Positive),
             since: None,
@@ -973,7 +1016,16 @@ mod tests {
         let filters = fa.into_filters();
         assert_eq!(filters.contexts, vec!["code/linggen".to_string()]);
         assert_eq!(filters.types.len(), 2);
+        assert_eq!(filters.tier, Some(Tier::Core));
         assert_eq!(filters.origin, Some(Origin::User));
         assert_eq!(filters.outcome, Some(Outcome::Positive));
+    }
+
+    #[test]
+    fn filter_args_default_tier_is_none() {
+        // Omitting `--tier` leaves the filter unconstrained — `into_filters`
+        // must not coerce a default tier (that would hide semantic rows).
+        let filters = FilterArgs::default().into_filters();
+        assert_eq!(filters.tier, None);
     }
 }
