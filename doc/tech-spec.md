@@ -59,7 +59,7 @@ LanceDB table name: `facts`.
 |:--|:--|:--:|:--|
 | `id` | Utf8 | no | UUID, fact identity |
 | `content` | Utf8 | no | Fact text, self-contained (includes any scoping conditions) |
-| `vector` | FixedSizeList<Float32, 384> | yes | Embedding of `content`. Nullable for brief windows between insert and embed; search filters ignore null-vector rows |
+| `vector` | FixedSizeList<Float32, 1024> | yes | Embedding of `content`. Nullable for brief windows between insert and embed; search filters ignore null-vector rows |
 | `contexts` | List<Utf8> | no (may be empty) | Scope tags, hierarchical path-like (`code/linggen`, `music/piano`). Primary filter dimension |
 | `tags` | List<Utf8> | no (may be empty) | Secondary metadata. Free-form labels with prefix convention (`intent:learn`, `topic:coding`, `stage:dev`) |
 | `type` | Utf8 | no | One of seven canonical values (see below). Utf8 in storage; CLI validates against enum |
@@ -71,7 +71,7 @@ LanceDB table name: `facts`.
 | `occurred_at` | Timestamp(Microsecond, UTC) | yes | When the thing described happened. Falls back to `created_at` in queries |
 | `source_session` | Utf8 | yes | Session id the fact was extracted from. Escape hatch when the fact is later ambiguous |
 
-**Embedding dimension: 384** (Arrow `FixedSizeList<Float32, 384>`), determined by the default embedding model (below).
+**Embedding dimension: 1024** (Arrow `FixedSizeList<Float32, 1024>`), determined by the default embedding model (below).
 
 **Not in v0.1** — add with migration when needed: `last_referenced`, `access_count`, `supersedes`, `confidence`, `pinned`, explicit `user_id`.
 
