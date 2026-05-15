@@ -3,7 +3,7 @@
 //! Defines:
 //! - [`TABLE_NAME`] — the LanceDB table name used by the store.
 //! - [`VECTOR_DIM`] — embedding dimension (1024, matches `Qwen3-Embedding-0.6B`).
-//! - [`build_schema`] — the 13-field Arrow schema matching `doc/tech-spec.md`.
+//! - [`build_schema`] — the 14-field Arrow schema matching `doc/tech-spec.md`.
 //! - [`facts_to_record_batch`] — encode `&[Fact]` as a single `RecordBatch`.
 //! - [`record_batch_to_facts`] — decode a `RecordBatch` back into `Vec<Fact>`.
 //!
@@ -62,6 +62,11 @@ pub fn build_schema() -> Arc<Schema> {
             false,
         ),
         Field::new(
+            "updated_at",
+            DataType::Timestamp(TimeUnit::Microsecond, Some(TZ_UTC.into())),
+            true,
+        ),
+        Field::new(
             "occurred_at",
             DataType::Timestamp(TimeUnit::Microsecond, Some(TZ_UTC.into())),
             true,
@@ -95,6 +100,13 @@ pub fn facts_to_record_batch(facts: &[Fact]) -> Result<RecordBatch> {
     )
     .with_timezone(TZ_UTC);
 
+    let updated_at = TimestampMicrosecondArray::from_iter(
+        facts
+            .iter()
+            .map(|f| f.updated_at.map(|t| t.timestamp_micros())),
+    )
+    .with_timezone(TZ_UTC);
+
     let occurred_at = TimestampMicrosecondArray::from_iter(
         facts
             .iter()
@@ -116,6 +128,7 @@ pub fn facts_to_record_batch(facts: &[Fact]) -> Result<RecordBatch> {
             Arc::new(tiers),
             Arc::new(cwds),
             Arc::new(created_at),
+            Arc::new(updated_at),
             Arc::new(occurred_at),
             Arc::new(source_sessions),
         ],
@@ -139,6 +152,7 @@ pub fn record_batch_to_facts(batch: &RecordBatch) -> Result<Vec<Fact>> {
     let tags = col_string_list(batch, "tags")?;
     let vectors = col_vector(batch, "vector")?;
     let created_at = col_timestamp(batch, "created_at")?;
+    let updated_at = col_timestamp_opt(batch, "updated_at")?;
     let occurred_at = col_timestamp_opt(batch, "occurred_at")?;
 
     let mut out = Vec::with_capacity(n);
@@ -173,6 +187,7 @@ pub fn record_batch_to_facts(batch: &RecordBatch) -> Result<Vec<Fact>> {
             origin,
             cwd: cwds.get(i).copied().flatten().map(str::to_string),
             created_at: created_at[i],
+            updated_at: updated_at.get(i).copied().flatten(),
             occurred_at: occurred_at.get(i).copied().flatten(),
             source_session: source_sessions
                 .get(i)
@@ -380,18 +395,20 @@ mod tests {
         f2.outcome = Some(Outcome::Positive);
         f2.vector = Some(vec![0.1; VECTOR_DIM as usize]);
         f2.cwd = Some("/home/u/workspace/linggen".into());
+        f2.updated_at = Some(f2.created_at + Duration::minutes(20));
         f2.occurred_at = Some(f2.created_at - Duration::hours(3));
         f2.source_session = Some("sess-abc".into());
 
+        // f3 leaves updated_at None — proves the null path round-trips too.
         let f3 = Fact::new("", FactType::Learned, Origin::Derived);
 
         vec![f1, f2, f3]
     }
 
     #[test]
-    fn schema_has_thirteen_fields() {
+    fn schema_has_fourteen_fields() {
         let schema = build_schema();
-        assert_eq!(schema.fields().len(), 13);
+        assert_eq!(schema.fields().len(), 14);
     }
 
     #[test]
@@ -412,6 +429,7 @@ mod tests {
                 "tier",
                 "cwd",
                 "created_at",
+                "updated_at",
                 "occurred_at",
                 "source_session",
             ]
@@ -459,6 +477,17 @@ mod tests {
         assert!(outcomes.is_null(0));
         assert!(!outcomes.is_null(1));
         assert!(outcomes.is_null(2));
+
+        // f2 carries updated_at; f1 and f3 leave it null.
+        let updated_at = batch
+            .column_by_name("updated_at")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<TimestampMicrosecondArray>()
+            .unwrap();
+        assert!(updated_at.is_null(0));
+        assert!(!updated_at.is_null(1));
+        assert!(updated_at.is_null(2));
 
         // f2 has a vector; f1 and f3 don't.
         let vectors = batch

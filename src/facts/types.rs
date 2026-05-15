@@ -70,6 +70,13 @@ pub struct Fact {
     /// When the fact entered memory.
     pub created_at: DateTime<Utc>,
 
+    /// When the fact's stored content was last mutated by an `update`.
+    /// Null until the first edit; bumped to `now` on every `update`.
+    /// Together with `created_at` it forms the decay/TTL clock:
+    /// `COALESCE(updated_at, created_at)` — touching a fact resets its age.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub updated_at: Option<DateTime<Utc>>,
+
     /// When the described thing happened. Falls back to `created_at` in
     /// queries when absent. Differs from `created_at` when extraction runs
     /// later than the events it captures (e.g. nightly extraction of day's
@@ -104,6 +111,7 @@ impl Fact {
             origin,
             cwd: None,
             created_at: Utc::now().trunc_subsecs(6),
+            updated_at: None,
             occurred_at: None,
             source_session: None,
         }
@@ -416,6 +424,7 @@ mod tests {
         assert!(f.tags.is_empty());
         assert!(f.outcome.is_none());
         assert!(f.cwd.is_none());
+        assert!(f.updated_at.is_none());
         assert!(f.occurred_at.is_none());
         assert!(f.source_session.is_none());
     }
@@ -452,6 +461,7 @@ mod tests {
         assert!(!json.contains("\"vector\""));
         assert!(!json.contains("\"outcome\""));
         assert!(!json.contains("\"cwd\""));
+        assert!(!json.contains("\"updated_at\""));
         assert!(!json.contains("\"occurred_at\""));
         assert!(!json.contains("\"source_session\""));
     }
