@@ -385,8 +385,8 @@ async fn search(
         .await
         .map_err(ApiError::internal)?;
     let results = state
-        .store
-        .search_scored(
+        .recall
+        .query(
             &vector,
             &req.filters.into_filters(),
             req.limit,

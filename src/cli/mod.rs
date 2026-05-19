@@ -13,12 +13,15 @@
 //! - **Add**: auto-embeds content for any inserted fact that doesn't already
 //!   carry a vector, so the row is immediately searchable.
 
-use crate::memory::{MemoryPatch, MemoryType, MemoryStore, Filters, Origin, Outcome, SortOrder, Tier};
+use crate::memory::{
+    Filters, MemoryPatch, MemoryStore, MemoryType, Origin, Outcome, Recall, SortOrder, Tier,
+};
 use anyhow::{anyhow, Context, Result};
 use chrono::{DateTime, Utc};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
+use std::sync::Arc;
 use uuid::Uuid;
 
 mod client;
@@ -581,6 +584,16 @@ pub async fn run(cli: Cli) -> Result<()> {
     match cli.cmd {
         Command::Add(args) => cmd_add(&store, args, format).await,
         Command::Get { id } => cmd_get(&store, id, format).await,
+        // Default search spans both tables (recall). `store` is the semantic
+        // handle here (`!cli.episodic`); reuse it and open episodic alongside.
+        Command::Search(args) if !cli.episodic => {
+            let episodic = MemoryStore::open_episodic(&data_dir)
+                .await
+                .with_context(|| format!("opening episodic store at {}", data_dir.display()))?;
+            let recall = Recall::new(Arc::new(store), Arc::new(episodic));
+            cmd_search_recall(&recall, args, format).await
+        }
+        // `--episodic`: single-table escape hatch (consolidator / debugging).
         Command::Search(args) => cmd_search(&store, args, format).await,
         Command::List(args) => cmd_list(&store, args, format).await,
         Command::Edit(args) => cmd_update(&store, args, format).await,
@@ -717,6 +730,23 @@ async fn cmd_search(store: &MemoryStore, args: SearchArgs, format: OutputFormat)
     let vec = embedder.embed_query(&args.query)?;
     let results = store
         .search_scored(
+            &vec,
+            &args.filters.into_filters(),
+            args.limit,
+            args.min_score,
+        )
+        .await?;
+    emit_scored_facts(&results, format)
+}
+
+/// Default search: dual-table recall (semantic + episodic). Mirrors
+/// [`cmd_search`] but routes through [`Recall`] instead of one store.
+async fn cmd_search_recall(recall: &Recall, args: SearchArgs, format: OutputFormat) -> Result<()> {
+    let embedder =
+        crate::embed::Embedder::new().context("initializing embedder for search query")?;
+    let vec = embedder.embed_query(&args.query)?;
+    let results = recall
+        .query(
             &vec,
             &args.filters.into_filters(),
             args.limit,

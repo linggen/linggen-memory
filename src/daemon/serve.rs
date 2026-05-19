@@ -6,7 +6,7 @@
 
 use crate::daemon::pidfile::{self, PidInfo};
 use crate::embed::Embedder;
-use crate::memory::MemoryStore;
+use crate::memory::{MemoryStore, Recall};
 use crate::http;
 use crate::http::state::AppState;
 use anyhow::{Context, Result};
@@ -79,12 +79,23 @@ pub async fn run(data_dir: &Path, skill_dir: &Path, port: u16) -> Result<()> {
     // Shared resources: MemoryStore + Embedder are expensive to initialize
     // (LanceDB connection, ONNX model load). Build once, share across
     // every request via Arc<AppState>.
-    let store = MemoryStore::open_semantic(data_dir)
-        .await
-        .with_context(|| format!("opening memory store under {}", data_dir.display()))?;
+    let semantic = Arc::new(
+        MemoryStore::open_semantic(data_dir)
+            .await
+            .with_context(|| format!("opening memory store under {}", data_dir.display()))?,
+    );
+    let episodic = Arc::new(
+        MemoryStore::open_episodic(data_dir)
+            .await
+            .with_context(|| format!("opening episodic store under {}", data_dir.display()))?,
+    );
+    // Recall shares the semantic handle with the write path so the table
+    // has one LanceDB connection across reads and writes.
+    let recall = Arc::new(Recall::new(Arc::clone(&semantic), episodic));
     let embedder = Embedder::new().context("initializing embedder")?;
     let state = Arc::new(AppState {
-        store: Arc::new(store),
+        store: semantic,
+        recall,
         embedder: Arc::new(embedder),
     });
 

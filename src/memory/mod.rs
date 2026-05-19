@@ -8,6 +8,7 @@
 //! that stores and retrieves them. CLI parsing, embedding, and extraction
 //! pipelines live in sibling modules.
 
+pub mod recall;
 pub mod schema;
 pub mod store;
 pub mod types;
@@ -18,4 +19,5 @@ pub use schema::{
 pub use store::{
     MemoryPatch, MemoryStore, Filters, InsertOutcome, SortOrder, DEDUP_SIMILARITY_THRESHOLD,
 };
+pub use recall::Recall;
 pub use types::{Memory, MemoryType, Origin, Outcome, ParseEnumError, Tier};

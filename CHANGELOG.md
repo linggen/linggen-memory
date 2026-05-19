@@ -1,8 +1,19 @@
 # Changelog
 
-## [Unreleased] — `facts` → `memory` rename
+## [Unreleased]
 
-### Changed
+### Added
+
+- **Recall now spans both tables.** `search` / `/api/memory/search` query
+  the curated `semantic` store *and* the staging `episodic` store together
+  via a new `crate::memory::Recall` type, then merge — closing the "told
+  you 5 min ago, not yet consolidated, forgotten" gap. No read-time
+  re-rank: the union is ordered by the cosine each row already carries
+  (same embedder → comparable). Cross-table and episodic-internal
+  near-duplicates (cosine ≥ dedup threshold) collapse, curated `semantic`
+  copy winning. `list`/browse and `--episodic` stay single-table.
+
+### Changed (`facts` → `memory` rename)
 
 - **Curated long-term table `facts` → `semantic`; staging table stays
   `episodic`.** One LanceDB directory holding both (Tulving's

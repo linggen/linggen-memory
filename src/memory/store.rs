@@ -23,7 +23,7 @@ use futures::TryStreamExt;
 use lancedb::{
     connect,
     query::{ExecutableQuery, QueryBase},
-    Connection, Table,
+    Connection, DistanceType, Table,
 };
 use std::path::Path;
 use uuid::Uuid;
@@ -224,7 +224,7 @@ async fn check_schema_dim(table: &lancedb::Table, lancedb_dir: &Path) -> Result<
     if actual_dim != expected {
         return Err(anyhow!(
             "ling-mem schema mismatch: existing data at `{}` was indexed with {actual_dim}-dim embeddings, but this build uses {expected}-dim Qwen3-Embedding-0.6B. \
-             The two are incompatible. To start fresh, remove the data dir:\n\n  rm -rf {}\n\nA non-destructive `ling-mem reindex` migration command is planned for a follow-up release.",
+             The two are incompatible and there is no forward migration — start fresh by removing the data dir:\n\n  rm -rf {}",
             lancedb_dir.display(),
             lancedb_dir.display()
         ));
@@ -273,7 +273,7 @@ pub enum InsertOutcome {
 
 /// Dot-product cosine similarity for two equal-length vectors. Guards
 /// against zero-length or mismatched-dim inputs by returning 0.0.
-fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+pub(crate) fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     if a.is_empty() || a.len() != b.len() {
         return 0.0;
     }
@@ -391,8 +391,9 @@ impl MemoryStore {
             t
         } else {
             let schema = build_schema();
-            // lancedb 0.27 needs a boxed RecordBatchReader (Scannable is
-            // implemented for that shape, not for bare iterators).
+            // lancedb 0.29's create_table takes data implementing
+            // Scannable, which covers a boxed RecordBatchReader but not
+            // bare iterators — so box it.
             let empty: Box<dyn RecordBatchReader + Send> = Box::new(RecordBatchIterator::new(
                 std::iter::empty::<arrow::error::Result<RecordBatch>>(),
                 schema,
@@ -555,10 +556,20 @@ impl MemoryStore {
             ));
         }
 
+        // Pin lancedb's metric to Cosine so its top-K selection and
+        // ordering match the `cosine_similarity` we recompute post-fetch
+        // (and the dedup threshold). lancedb defaults to L2; for the
+        // unit-normalized Qwen3 embeddings L2 and Cosine rank identically,
+        // so this is a no-op behaviorally — but it makes the absence of a
+        // post-fetch re-sort correct by construction rather than by the
+        // normalization coincidence. Safe here because no ANN index is
+        // trained (flat search), so there is no index metric to mismatch;
+        // revisit if an IVF/PQ index is added.
         let mut q = self
             .table
             .vector_search(query_vec.to_vec())
             .context("starting vector search")?
+            .distance_type(DistanceType::Cosine)
             .limit(limit);
 
         if let Some(sql) = filters.to_sql() {
@@ -702,14 +713,11 @@ impl MemoryStore {
             return Ok(removed);
         }
 
-        let predicate = predicate.expect("predicate exists when origin is None and filter non-empty");
-        let before = self.count().await?;
-        self.table
-            .delete(&predicate)
+        let predicate =
+            predicate.expect("predicate exists when origin is None and filter non-empty");
+        self.delete_where(&predicate)
             .await
-            .context("deleting rows by filter")?;
-        let after = self.count().await?;
-        Ok(before.saturating_sub(after))
+            .context("deleting memories by filter")
     }
 
     /// Evict rows whose decay clock has fallen before `cutoff`. Deletes
@@ -727,13 +735,9 @@ impl MemoryStore {
             "COALESCE(updated_at, created_at) < TIMESTAMP '{}'",
             cutoff.format("%Y-%m-%d %H:%M:%S%.6f")
         );
-        let before = self.count().await?;
-        self.table
-            .delete(&predicate)
+        self.delete_where(&predicate)
             .await
-            .context("evicting expired rows")?;
-        let after = self.count().await?;
-        Ok(before.saturating_sub(after))
+            .context("evicting expired memories")
     }
 
     /// All `tier='core'` facts — the always-load identity/preference set.
@@ -757,16 +761,39 @@ impl MemoryStore {
         Ok(facts)
     }
 
+    /// Count the rows matching `predicate`, delete them, and return that
+    /// pre-delete count as the number removed.
+    ///
+    /// lancedb 0.29's `Table::delete` yields only a `DeleteResult` (table
+    /// version, no deleted-row count), so an exact single-call number
+    /// isn't available. Counting the *predicate* — not the whole table —
+    /// before the delete replaces two full-table `count_rows(None)` scans
+    /// with one scoped scan and narrows the count→delete race window:
+    /// under the shared-`MemoryStore` daemon (`Arc<AppState>`), the old
+    /// `count()-before − count()-after` could be skewed by any concurrent
+    /// insert/delete on an unrelated row, whereas now only a concurrent
+    /// change to rows matching `predicate` can affect the reported count.
+    /// The delete itself is always complete regardless; only the returned
+    /// tally is best-effort.
+    async fn delete_where(&self, predicate: &str) -> Result<usize> {
+        let removed = self
+            .table
+            .count_rows(Some(predicate.to_string()))
+            .await
+            .context("counting rows matching delete predicate")?;
+        self.table
+            .delete(predicate)
+            .await
+            .context("executing delete")?;
+        Ok(removed)
+    }
+
     /// Delete the single row with the given id. Returns the number removed
     /// (0 or 1 in practice). Private — public API uses `delete` / `update`.
     async fn delete_one(&self, id: Uuid) -> Result<usize> {
-        let before = self.count().await?;
-        self.table
-            .delete(&format!("id = '{}'", id))
+        self.delete_where(&format!("id = '{id}'"))
             .await
-            .with_context(|| format!("deleting fact {id}"))?;
-        let after = self.count().await?;
-        Ok(before.saturating_sub(after))
+            .with_context(|| format!("deleting memory {id}"))
     }
 
     async fn collect_query<Q: ExecutableQuery>(&self, q: Q) -> Result<Vec<Memory>> {
@@ -1118,17 +1145,24 @@ mod tests {
     async fn search_returns_nearest_first() {
         let (store, _dir) = fresh_store().await;
 
-        // Three facts, each with a distinct unit-ish vector.
-        let a = with_vector(make_fact("a", MemoryType::Fact), 0.1);
-        let b = with_vector(make_fact("b", MemoryType::Fact), 0.5);
-        let c = with_vector(make_fact("c", MemoryType::Fact), 0.9);
+        // Three facts in distinct directions (unit basis vectors) — the
+        // production shape: unit-normalized, non-collinear embeddings.
+        // Collinear constant vectors would all tie at cosine 1.0 and the
+        // ordering assertion would be meaningless.
+        let mut a = make_fact("a", MemoryType::Fact);
+        a.vector = Some(unit_vec_at(0));
+        let mut b = make_fact("b", MemoryType::Fact);
+        b.vector = Some(unit_vec_at(1));
+        let mut c = make_fact("c", MemoryType::Fact);
+        c.vector = Some(unit_vec_at(2));
         store
             .insert(&[a.clone(), b.clone(), c.clone()])
             .await
             .unwrap();
 
-        // Query close to `a`'s vector.
-        let query = vec![0.11; VECTOR_DIM as usize];
+        // Query pointing along `a`'s direction → cosine 1.0 with `a`,
+        // 0.0 with `b`/`c` → `a` ranks first.
+        let query = unit_vec_at(0);
         let results = store.search(&query, &Filters::default(), 3).await.unwrap();
 
         assert_eq!(results.len(), 3);
@@ -1138,12 +1172,19 @@ mod tests {
     #[tokio::test]
     async fn search_respects_limit() {
         let (store, _dir) = fresh_store().await;
+        // Distinct unit directions — non-zero so cosine is defined for
+        // every row (a zero vector has no direction and would be dropped
+        // under the Cosine metric).
         let facts: Vec<Memory> = (0..10)
-            .map(|i| with_vector(make_fact(&format!("f{i}"), MemoryType::Fact), i as f32 * 0.1))
+            .map(|i| {
+                let mut f = make_fact(&format!("f{i}"), MemoryType::Fact);
+                f.vector = Some(unit_vec_at(i));
+                f
+            })
             .collect();
         store.insert(&facts).await.unwrap();
 
-        let query = vec![0.0; VECTOR_DIM as usize];
+        let query = unit_vec_at(0);
         let results = store.search(&query, &Filters::default(), 3).await.unwrap();
         assert_eq!(results.len(), 3);
     }
