@@ -13,20 +13,20 @@
 //! - NO read-time re-rank: the union is ordered by the cosine score each
 //!   row already carries. Same embedder for both tables → scores are
 //!   directly comparable; sorting the union is ordering, not re-scoring.
-//! - Cross-table + episodic-internal dedup: a hit that is a near-duplicate
-//!   (cosine ≥ [`DEDUP_SIMILARITY_THRESHOLD`]) of an already-accepted hit
-//!   is dropped. Semantic is processed first, so the curated copy always
-//!   wins over its un-promoted episodic twin (the consolidator promotes
-//!   with a fresh id, so id-equality cannot catch this — content vectors
-//!   can).
+//! - Cross-table + episodic-internal dedup: a hit whose content is
+//!   byte-identical to an already-accepted hit is dropped. Semantic is
+//!   processed first, so the curated copy wins over its un-promoted
+//!   episodic twin. Cosine is **not** a sameness test here — it can't
+//!   separate a restatement from a contradiction, and collapsing a
+//!   high-cosine pair would *hide* a contradiction that the Reconcile
+//!   contract needs surfaced for the user/LLM to resolve.
 
 use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
 
-use crate::memory::store::cosine_similarity;
-use crate::memory::{Filters, Memory, MemoryStore, DEDUP_SIMILARITY_THRESHOLD};
+use crate::memory::{Filters, Memory, MemoryStore};
 
 /// Dual-table read path. Holds shared handles to the `semantic` and
 /// `episodic` stores and owns the merge/dedup policy.
@@ -72,10 +72,11 @@ impl Recall {
                 .search_scored(query_vec, filters, limit, min_score),
         )?;
 
-        // Semantic first so the curated copy wins any near-dup tie; episodic
-        // appended. A candidate is kept only if it is not a near-duplicate of
-        // one already accepted — covers cross-table dups *and* episodic's
-        // raw, un-deduped internal dups.
+        // Semantic first so the curated copy wins an exact-content tie;
+        // episodic appended. A candidate is kept unless its content is
+        // byte-identical to one already accepted — covers cross-table and
+        // episodic-internal verbatim dups. A high-cosine *contradiction*
+        // (different content) is intentionally kept so recall surfaces it.
         let mut merged: Vec<(Memory, f32)> = Vec::with_capacity(semantic.len() + episodic.len());
         for cand in semantic.into_iter().chain(episodic) {
             if !merged.iter().any(|(kept, _)| is_near_dup(kept, &cand.0)) {
@@ -91,15 +92,12 @@ impl Recall {
     }
 }
 
-/// Near-duplicate test for the cross-table merge: cosine of the two content
-/// vectors ≥ [`DEDUP_SIMILARITY_THRESHOLD`]. Falls back to exact content
-/// equality when either row lacks a vector (search drops null-vector rows,
-/// so this is just a totality guard).
+/// Union dedup test: byte-identical content (trimmed). Cosine is
+/// deliberately not used — it cannot tell a restatement from a
+/// contradiction, and collapsing a high-cosine pair here would hide a
+/// contradiction recall must surface (Reconcile, memory-spec §2).
 fn is_near_dup(a: &Memory, b: &Memory) -> bool {
-    match (&a.vector, &b.vector) {
-        (Some(va), Some(vb)) => cosine_similarity(va, vb) >= DEDUP_SIMILARITY_THRESHOLD,
-        _ => a.content == b.content,
-    }
+    a.content.trim() == b.content.trim()
 }
 
 #[cfg(test)]
@@ -149,19 +147,39 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cross_table_dup_keeps_semantic() {
-        // Same vector index => cosine 1.0 ≥ threshold => near-dup.
+    async fn cross_table_exact_dup_keeps_semantic() {
+        // Byte-identical content across tables => collapses to one.
         let (r, _d) = recall_with(
-            vec![mem("curated phrasing", 3)],
-            vec![mem("raw phrasing", 3)],
+            vec![mem("user has a cat named Xiaoman", 3)],
+            vec![mem("user has a cat named Xiaoman", 3)],
         )
         .await;
         let got = r
             .query(&vec_at(3), &Filters::default(), 10, None)
             .await
             .unwrap();
-        assert_eq!(got.len(), 1, "near-dup across tables collapses to one");
-        assert_eq!(got[0].0.content, "curated phrasing", "semantic copy wins");
+        assert_eq!(got.len(), 1, "exact-content dup across tables collapses");
+        assert_eq!(
+            got[0].0.content, "user has a cat named Xiaoman",
+            "semantic copy wins"
+        );
+    }
+
+    #[tokio::test]
+    async fn contradiction_not_collapsed() {
+        // High cosine (same vector idx), DIFFERENT content = a contradiction.
+        // Must NOT collapse — recall has to surface both so Reconcile can
+        // resolve it. This is the whole point of dropping cosine-dedup.
+        let (r, _d) = recall_with(
+            vec![mem("the cat is male", 5)],
+            vec![mem("the cat is female", 5)],
+        )
+        .await;
+        let got = r
+            .query(&vec_at(5), &Filters::default(), 10, None)
+            .await
+            .unwrap();
+        assert_eq!(got.len(), 2, "a contradiction must surface both rows");
     }
 
     #[tokio::test]

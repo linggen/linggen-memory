@@ -236,34 +236,32 @@ fn escape_sql(s: &str) -> String {
     s.replace('\'', "''")
 }
 
-/// Cosine-similarity threshold above which a candidate is merged into the
-/// nearest existing fact instead of being inserted as a new row. Qwen3-
-/// Embedding-0.6B outputs are L2-normalized unit vectors, so dot product
-/// is cosine similarity.
+/// Empirical cosine-distribution reference from the Qwen3-Embedding-0.6B
+/// retune (`embed::tests::dedup_threshold_probe`, 2026-05-15): reworded
+/// restatements scored 0.78–0.97, related-but-distinct facts 0.53–0.65.
 ///
-/// Tuned empirically against the real Qwen3-Embedding-0.6B encoder
-/// (`embed::tests::dedup_threshold_probe`, 2026-05-15): reworded
-/// restatements of the same fact scored 0.78–0.97 (min 0.7825), while
-/// related-but-distinct facts on the same topic scored 0.53–0.65 (max
-/// 0.6464). 0.75 sits cleanly in that gap — above every distinct pair
-/// (≈0.10 margin) and below every genuine restatement (≈0.03 margin).
-/// It deliberately leans toward under-merging: a missed merge only
-/// leaves a near-duplicate, whereas a wrong merge loses a distinct fact.
+/// **No longer an automatic dedup/merge gate.** Cosine cannot separate a
+/// restatement from a single-token *contradiction* ("cat is male" vs
+/// "cat is female" both score ~0.9) — using it to merge silently
+/// corrupts a user fact. Mechanical dedup is now **exact-content** only
+/// (see [`MemoryStore::insert_with_dedup`]); fuzzy "same fact?" is LLM
+/// judgment (the Reconcile contract, `linggen/doc/memory-spec.md` §2).
+/// Retained as a relevance reference and for the tuning probe.
 pub const DEDUP_SIMILARITY_THRESHOLD: f32 = 0.75;
 
 /// Outcome of [`MemoryStore::insert_with_dedup`]. Either the candidate was
 /// inserted as a new row, or it collapsed into an existing one.
 #[derive(Debug, Clone)]
 pub enum InsertOutcome {
-    /// The candidate had no semantic near-neighbor and was inserted fresh.
+    /// No existing row had the same exact content; inserted fresh.
     Added(Memory),
-    /// The candidate's top search hit exceeded the similarity threshold;
-    /// the existing row was rewritten with the merged content/contexts/tags
-    /// and its id is preserved.
+    /// An existing row (same type) had byte-identical content; the
+    /// candidate's contexts/tags were unioned into it and its id kept.
     Merged {
         /// The post-merge fact (same id as the existing row).
         fact: Memory,
-        /// Cosine similarity between candidate and the merge target.
+        /// Always `1.0` — an exact-content match. Kept for telemetry/CLI
+        /// shape compat; cosine is no longer the merge criterion.
         similarity: f32,
         /// Id of the existing row that absorbed the candidate (same as
         /// `fact.id`; surfaced separately for clarity in telemetry).
@@ -431,47 +429,61 @@ impl MemoryStore {
         Ok(facts.len())
     }
 
-    /// Insert a single fact with near-duplicate protection.
+    /// Insert a single fact with **exact-content** dedup protection.
     ///
-    /// Runs a type-scoped nearest-neighbour search first. If the top hit's
-    /// cosine similarity to the candidate meets [`DEDUP_SIMILARITY_THRESHOLD`],
-    /// the candidate is merged into that row (see [`merge_fact`]) and the
-    /// existing id is preserved. Otherwise the candidate is inserted fresh.
+    /// If a row of the same `type` already has byte-identical content, the
+    /// candidate's contexts/tags are unioned into it (see [`merge_fact`])
+    /// and the existing id is preserved. Otherwise it is inserted fresh.
     ///
-    /// The candidate must already carry a populated [`Memory::vector`];
-    /// without an embedding we cannot score similarity, so the call falls
-    /// back to a plain insert and returns `InsertOutcome::Added`.
+    /// Cosine similarity is deliberately **not** the merge criterion: it
+    /// cannot tell a restatement from a single-token contradiction
+    /// ("cat is male" vs "cat is female" both score ~0.9), so a cosine
+    /// merge silently corrupts a user fact. Fuzzy "is this the same
+    /// fact?" is LLM judgment — the Reconcile contract
+    /// (`linggen/doc/memory-spec.md` §2), not this mechanical path.
+    ///
+    /// A vector-less candidate falls back to a plain insert (the no-vector
+    /// path is not searchable later anyway; bulk import uses `insert`).
     pub async fn insert_with_dedup(&self, fact: Memory) -> Result<InsertOutcome> {
-        let Some(vector) = fact.vector.clone() else {
+        if fact.vector.is_none() {
             self.insert(std::slice::from_ref(&fact)).await?;
             return Ok(InsertOutcome::Added(fact));
-        };
+        }
 
-        let filters = Filters {
-            types: vec![fact.r#type],
-            ..Filters::default()
-        };
-        let hits = self.search(&vector, &filters, 1).await?;
-
-        if let Some(top) = hits.into_iter().next() {
-            if let Some(top_vec) = top.vector.as_ref() {
-                let similarity = cosine_similarity(&vector, top_vec);
-                if similarity >= DEDUP_SIMILARITY_THRESHOLD {
-                    let previous_id = top.id;
-                    let merged = merge_fact(&top, &fact);
-                    self.delete(previous_id).await?;
-                    self.insert(std::slice::from_ref(&merged)).await?;
-                    return Ok(InsertOutcome::Merged {
-                        fact: merged,
-                        similarity,
-                        previous_id,
-                    });
-                }
-            }
+        if let Some(existing) = self.find_exact_content(&fact.content, fact.r#type).await? {
+            let previous_id = existing.id;
+            let merged = merge_fact(&existing, &fact);
+            self.delete(previous_id).await?;
+            self.insert(std::slice::from_ref(&merged)).await?;
+            return Ok(InsertOutcome::Merged {
+                fact: merged,
+                similarity: 1.0,
+                previous_id,
+            });
         }
 
         self.insert(std::slice::from_ref(&fact)).await?;
         Ok(InsertOutcome::Added(fact))
+    }
+
+    /// Find one existing row of the same `type` whose content is
+    /// byte-identical to `content`. Exact match only — see
+    /// [`Self::insert_with_dedup`] for why cosine is never a sameness
+    /// decision. `content` is a normal column (not a SQL keyword); `type`
+    /// equality mirrors [`Filters::to_sql`].
+    async fn find_exact_content(
+        &self,
+        content: &str,
+        ty: MemoryType,
+    ) -> Result<Option<Memory>> {
+        let filter = format!(
+            "content = '{}' AND type = '{}'",
+            escape_sql(content),
+            ty.as_str()
+        );
+        let q = self.table.query().only_if(filter).limit(1);
+        let mut hits = self.collect_query(q).await?;
+        Ok(hits.pop())
     }
 
     /// Fetch one fact by id. Returns `None` if the id is not present.
@@ -1428,7 +1440,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn dedup_merges_near_duplicate_and_keeps_existing_id() {
+    async fn dedup_merges_exact_content_and_keeps_existing_id() {
         let (store, _dir) = fresh_store().await;
 
         let mut existing = make_fact("original phrasing", MemoryType::Fact);
@@ -1438,9 +1450,8 @@ mod tests {
         let existing_id = existing.id;
         store.insert(&[existing.clone()]).await.unwrap();
 
-        // Candidate: identical vector → cosine 1.0 → above threshold.
-        // Longer content, new context, new tag.
-        let mut candidate = make_fact("original phrasing with more detail", MemoryType::Fact);
+        // Candidate: byte-identical content (same type), new context + tag.
+        let mut candidate = make_fact("original phrasing", MemoryType::Fact);
         candidate.vector = Some(unit_vec_at(0));
         candidate.contexts = vec!["code/linggen".into(), "team/core".into()];
         candidate.tags = vec!["topic:setup".into(), "intent:learn".into()];
@@ -1452,13 +1463,13 @@ mod tests {
                 similarity,
                 previous_id,
             } => (fact, similarity, previous_id),
-            InsertOutcome::Added(_) => panic!("identical vector should merge"),
+            InsertOutcome::Added(_) => panic!("exact-content match should merge"),
         };
 
         assert_eq!(previous_id, existing_id);
         assert_eq!(merged.id, existing_id);
-        assert!(similarity >= DEDUP_SIMILARITY_THRESHOLD);
-        assert_eq!(merged.content, "original phrasing with more detail");
+        assert_eq!(similarity, 1.0, "exact-content match reports similarity 1.0");
+        assert_eq!(merged.content, "original phrasing");
         assert_eq!(
             merged.contexts,
             vec!["code/linggen".to_string(), "team/core".to_string()]
@@ -1471,22 +1482,24 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn dedup_inserts_when_below_threshold() {
+    async fn dedup_does_not_merge_contradiction_despite_high_cosine() {
         let (store, _dir) = fresh_store().await;
 
-        let mut existing = make_fact("first", MemoryType::Fact);
+        let mut existing = make_fact("the cat is male", MemoryType::Fact);
         existing.vector = Some(unit_vec_at(0));
         store.insert(&[existing]).await.unwrap();
 
-        // Orthogonal vector → cosine 0.0 → far below threshold.
-        let mut candidate = make_fact("unrelated", MemoryType::Fact);
-        candidate.vector = Some(unit_vec_at(1));
+        // Same vector index (cosine 1.0) but CONTRADICTORY content. The old
+        // cosine gate would have silently merged these and corrupted the
+        // fact. Exact-content dedup must keep both rows.
+        let mut candidate = make_fact("the cat is female", MemoryType::Fact);
+        candidate.vector = Some(unit_vec_at(0));
 
         let outcome = store.insert_with_dedup(candidate.clone()).await.unwrap();
         match outcome {
             InsertOutcome::Added(got) => assert_eq!(got.id, candidate.id),
-            InsertOutcome::Merged { similarity, .. } => {
-                panic!("orthogonal vectors should not merge (got similarity {similarity})")
+            InsertOutcome::Merged { .. } => {
+                panic!("a contradiction must NOT merge, regardless of cosine")
             }
         }
         assert_eq!(store.count().await.unwrap(), 2);
@@ -1500,7 +1513,8 @@ mod tests {
         existing.vector = Some(unit_vec_at(0));
         store.insert(&[existing]).await.unwrap();
 
-        // Same vector, different type — must insert, not merge.
+        // Same content, different type — must insert, not merge
+        // (dedup is type-scoped).
         let mut candidate = make_fact("shared meaning", MemoryType::Preference);
         candidate.vector = Some(unit_vec_at(0));
 
@@ -1517,30 +1531,13 @@ mod tests {
         existing.vector = Some(unit_vec_at(0));
         store.insert(&[existing]).await.unwrap();
 
-        // Candidate has no vector at all → cannot score similarity → insert.
+        // No-vector candidate skips dedup entirely (not searchable later;
+        // bulk import uses plain insert) — inserted even though content
+        // matches an existing row.
         let candidate = make_fact("anything", MemoryType::Fact);
         let outcome = store.insert_with_dedup(candidate.clone()).await.unwrap();
         assert!(matches!(outcome, InsertOutcome::Added(_)));
         assert_eq!(store.count().await.unwrap(), 2);
     }
 
-    #[tokio::test]
-    async fn dedup_keeps_existing_content_when_candidate_is_shorter() {
-        let (store, _dir) = fresh_store().await;
-
-        let mut existing = make_fact("a much longer and more specific description", MemoryType::Fact);
-        existing.vector = Some(unit_vec_at(0));
-        store.insert(&[existing.clone()]).await.unwrap();
-
-        let mut candidate = make_fact("short", MemoryType::Fact);
-        candidate.vector = Some(unit_vec_at(0));
-
-        let outcome = store.insert_with_dedup(candidate).await.unwrap();
-        match outcome {
-            InsertOutcome::Merged { fact, .. } => {
-                assert_eq!(fact.content, existing.content);
-            }
-            InsertOutcome::Added(_) => panic!("identical vectors should merge"),
-        }
-    }
 }
