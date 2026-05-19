@@ -6,7 +6,7 @@
 
 use crate::daemon::pidfile::{self, PidInfo};
 use crate::embed::Embedder;
-use crate::facts::FactsStore;
+use crate::memory::MemoryStore;
 use crate::http;
 use crate::http::state::AppState;
 use anyhow::{Context, Result};
@@ -18,8 +18,8 @@ use tokio::net::TcpListener;
 
 /// Bind, write pidfile, serve, clean up.
 ///
-/// `data_dir` is the Linggen home (e.g. `~/.linggen/`); FactsStore opens
-/// its LanceDB tree underneath at `<data_dir>/memory/facts.lancedb/`.
+/// `data_dir` is the Linggen home (e.g. `~/.linggen/`); MemoryStore opens
+/// its LanceDB tree underneath at `<data_dir>/memory/memory.lancedb/`.
 /// `skill_dir` is the per-skill data root at `<data_dir>/memory/linggen-memory/`
 /// where the pidfile lives. `port` is the requested bind port on `127.0.0.1`.
 pub async fn run(data_dir: &Path, skill_dir: &Path, port: u16) -> Result<()> {
@@ -72,16 +72,16 @@ pub async fn run(data_dir: &Path, skill_dir: &Path, port: u16) -> Result<()> {
 
     // Anonymous usage telemetry (install/upgrade/heartbeat). See
     // src/telemetry/mod.rs for the field list and opt-out paths. Constructed
-    // before the FactsStore so the launch ping can race with LanceDB init.
+    // before the MemoryStore so the launch ping can race with LanceDB init.
     let telemetry = crate::telemetry::Telemetry::new("ling-mem", data_dir);
     telemetry.launch();
 
-    // Shared resources: FactsStore + Embedder are expensive to initialize
+    // Shared resources: MemoryStore + Embedder are expensive to initialize
     // (LanceDB connection, ONNX model load). Build once, share across
     // every request via Arc<AppState>.
-    let store = FactsStore::open_semantic(data_dir)
+    let store = MemoryStore::open_semantic(data_dir)
         .await
-        .with_context(|| format!("opening facts store under {}", data_dir.display()))?;
+        .with_context(|| format!("opening memory store under {}", data_dir.display()))?;
     let embedder = Embedder::new().context("initializing embedder")?;
     let state = Arc::new(AppState {
         store: Arc::new(store),

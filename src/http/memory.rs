@@ -3,14 +3,14 @@
 //! `{ok, data}` or `{ok:false, error, code}` via `envelope::ApiError`.
 //!
 //! Semantics mirror the CLI handlers in `crate::cli` — this module is
-//! the network-facing path to the same `FactsStore` operations. Once
+//! the network-facing path to the same `MemoryStore` operations. Once
 //! Phase 4 lands in Linggen, the CLI data-ops wrappers are removed and
 //! HTTP becomes the only dispatch path.
 
 use super::envelope::{ok, ApiError};
 use super::state::SharedState;
-use crate::facts::{
-    Fact, FactPatch, FactType, Filters, InsertOutcome, Origin, Outcome, SortOrder,
+use crate::memory::{
+    Memory, MemoryPatch, MemoryType, Filters, InsertOutcome, Origin, Outcome, SortOrder,
 };
 use axum::extract::State;
 use axum::response::Response;
@@ -95,7 +95,7 @@ where
 /// it bloats every response by ~13 KB / row (noisy for the model, for logs,
 /// and for the data UI). The CLI's NDJSON output keeps vectors — they
 /// matter for `add --stdin` round-trips.
-fn fact_public(fact: &Fact) -> Value {
+fn fact_public(fact: &Memory) -> Value {
     let mut v = serde_json::to_value(fact).unwrap_or_else(|_| Value::Null);
     if let Some(obj) = v.as_object_mut() {
         obj.remove("vector");
@@ -103,13 +103,13 @@ fn fact_public(fact: &Fact) -> Value {
     v
 }
 
-fn facts_public(facts: &[Fact]) -> Vec<Value> {
+fn facts_public(facts: &[Memory]) -> Vec<Value> {
     facts.iter().map(fact_public).collect()
 }
 
 /// Like [`fact_public`] but adds the `score` field so search responses
 /// expose the cosine similarity of each row against the query.
-fn scored_facts_public(scored: &[(Fact, f32)]) -> Vec<Value> {
+fn scored_facts_public(scored: &[(Memory, f32)]) -> Vec<Value> {
     scored
         .iter()
         .map(|(f, score)| {
@@ -144,8 +144,8 @@ pub struct AddRequest {
     #[serde(default)]
     pub tags: Vec<String>,
     #[serde(default, deserialize_with = "deserialize_optional_lenient")]
-    pub r#type: Option<FactType>,
-    /// Origin. Canonical name is `from` (matches the `Fact` field);
+    pub r#type: Option<MemoryType>,
+    /// Origin. Canonical name is `from` (matches the `Memory` field);
     /// accept `origin` as an alias for callers that avoid reserved words.
     #[serde(default, alias = "origin", deserialize_with = "deserialize_optional_lenient")]
     pub from: Option<Origin>,
@@ -173,10 +173,10 @@ pub struct GetRequest {
 pub struct FilterDTO {
     #[serde(default)]
     pub contexts: Vec<String>,
-    /// Narrow to one `FactType`. Linggen's tool schema is singular;
-    /// internally we convert to `Filters.types: Vec<FactType>`.
+    /// Narrow to one `MemoryType`. Linggen's tool schema is singular;
+    /// internally we convert to `Filters.types: Vec<MemoryType>`.
     #[serde(default, deserialize_with = "deserialize_optional_lenient")]
-    pub r#type: Option<FactType>,
+    pub r#type: Option<MemoryType>,
     #[serde(default, alias = "origin", deserialize_with = "deserialize_optional_lenient")]
     pub from: Option<Origin>,
     #[serde(default, deserialize_with = "deserialize_optional_lenient")]
@@ -270,7 +270,7 @@ pub struct UpdateRequest {
     pub contexts: Option<Vec<String>>,
     pub tags: Option<Vec<String>>,
     #[serde(default, deserialize_with = "deserialize_optional_lenient")]
-    pub r#type: Option<FactType>,
+    pub r#type: Option<MemoryType>,
     #[serde(default, alias = "origin", deserialize_with = "deserialize_optional_lenient")]
     pub from: Option<Origin>,
     #[serde(default, deserialize_with = "deserialize_optional_lenient")]
@@ -304,9 +304,9 @@ async fn add(
     }
 
     let skip_dedup = req.skip_dedup;
-    let mut fact = Fact::new(
+    let mut fact = Memory::new(
         req.content,
-        req.r#type.unwrap_or(FactType::Fact),
+        req.r#type.unwrap_or(MemoryType::Fact),
         req.from.unwrap_or_default(),
     );
     fact.contexts = req.contexts;
@@ -427,7 +427,7 @@ async fn update(
         (None, false) => None,
     };
 
-    let patch = FactPatch {
+    let patch = MemoryPatch {
         content: req.content,
         contexts: req.contexts,
         tags: req.tags,

@@ -1,4 +1,4 @@
-//! [`FactsStore`] — LanceDB wrapper around one memory table.
+//! [`MemoryStore`] — LanceDB wrapper around one memory table.
 //!
 //! The store is opened once per `ling-mem` invocation (CLI is one-shot in
 //! v0.1). It owns a LanceDB [`Connection`] and a [`Table`] handle for one
@@ -12,10 +12,10 @@
 //! list, and mutation ops land in subsequent commits.
 
 use super::schema::{
-    build_schema, facts_to_record_batch, record_batch_to_facts, EPISODIC_TABLE_NAME,
+    build_schema, memories_to_record_batch, record_batch_to_memories, EPISODIC_TABLE_NAME,
     SEMANTIC_TABLE_NAME,
 };
-use super::types::{Fact, FactType, Origin, Outcome, Tier};
+use super::types::{Memory, MemoryType, Origin, Outcome, Tier};
 use anyhow::{anyhow, Context, Result};
 use arrow_array::{RecordBatch, RecordBatchIterator, RecordBatchReader};
 use chrono::{DateTime, SubsecRound, Utc};
@@ -34,7 +34,7 @@ use uuid::Uuid;
 /// consumer share one literal.
 pub const CONSOLIDATED_TAG: &str = "sys:consolidated";
 
-/// Filter criteria shared by [`FactsStore::search`] and [`FactsStore::list`].
+/// Filter criteria shared by [`MemoryStore::search`] and [`MemoryStore::list`].
 ///
 /// All filter fields combine with AND. Within `contexts`, every entry must
 /// appear in the fact's `contexts` array (AND semantics). Within `types`,
@@ -42,7 +42,7 @@ pub const CONSOLIDATED_TAG: &str = "sys:consolidated";
 #[derive(Debug, Clone, Default)]
 pub struct Filters {
     pub contexts: Vec<String>,
-    pub types: Vec<FactType>,
+    pub types: Vec<MemoryType>,
     pub origin: Option<Origin>,
     pub outcome: Option<Outcome>,
     pub tier: Option<Tier>,
@@ -119,13 +119,13 @@ impl Filters {
 /// skips `from` because LanceDB / DataFusion mis-handles the SQL keyword
 /// even when double-quoted (returns 0 rows). Cheap O(N) over the limited
 /// row set we already pulled.
-fn apply_origin_filter(facts: &mut Vec<Fact>, origin: Option<Origin>) {
+fn apply_origin_filter(facts: &mut Vec<Memory>, origin: Option<Origin>) {
     if let Some(o) = origin {
         facts.retain(|f| f.origin == o);
     }
 }
 
-/// Sort order for [`FactsStore::list`]. Search is ordered by similarity and
+/// Sort order for [`MemoryStore::list`]. Search is ordered by similarity and
 /// doesn't use this.
 #[derive(Debug, Clone, Copy, Default)]
 pub enum SortOrder {
@@ -136,18 +136,18 @@ pub enum SortOrder {
     Oldest,
 }
 
-/// Per-field changes for [`FactsStore::update`].
+/// Per-field changes for [`MemoryStore::update`].
 ///
 /// Each field carries **three** states: `None` means "leave unchanged";
 /// `Some(value)` applies the value. For nullable schema fields (`outcome`,
 /// `cwd`, `occurred_at`, `source_session`, `vector`) the inner value is
 /// itself an `Option` — `Some(Some(x))` sets, `Some(None)` clears to null.
 #[derive(Debug, Clone, Default)]
-pub struct FactPatch {
+pub struct MemoryPatch {
     pub content: Option<String>,
     pub contexts: Option<Vec<String>>,
     pub tags: Option<Vec<String>>,
-    pub r#type: Option<FactType>,
+    pub r#type: Option<MemoryType>,
     pub origin: Option<Origin>,
     pub outcome: Option<Option<Outcome>>,
     pub cwd: Option<Option<String>>,
@@ -156,10 +156,10 @@ pub struct FactPatch {
     pub vector: Option<Option<Vec<f32>>>,
 }
 
-impl FactPatch {
+impl MemoryPatch {
     /// Apply this patch in place to a fact. Used internally by
-    /// [`FactsStore::update`]; exposed for tests.
-    pub fn apply(&self, f: &mut Fact) {
+    /// [`MemoryStore::update`]; exposed for tests.
+    pub fn apply(&self, f: &mut Memory) {
         if let Some(v) = &self.content {
             f.content = v.clone();
         }
@@ -206,16 +206,16 @@ async fn check_schema_dim(table: &lancedb::Table, lancedb_dir: &Path) -> Result<
     let schema = table
         .schema()
         .await
-        .context("reading existing facts table schema")?;
+        .context("reading existing memory table schema")?;
     let vector_field = schema
         .field_with_name("vector")
-        .context("existing facts table is missing the `vector` column")?;
+        .context("existing memory table is missing the `vector` column")?;
 
     let actual_dim = match vector_field.data_type() {
         DataType::FixedSizeList(_, dim) => *dim,
         other => {
             return Err(anyhow!(
-                "facts table `vector` column has unexpected type {other:?}; expected FixedSizeList<Float32>"
+                "memory table `vector` column has unexpected type {other:?}; expected FixedSizeList<Float32>"
             ));
         }
     };
@@ -251,18 +251,18 @@ fn escape_sql(s: &str) -> String {
 /// leaves a near-duplicate, whereas a wrong merge loses a distinct fact.
 pub const DEDUP_SIMILARITY_THRESHOLD: f32 = 0.75;
 
-/// Outcome of [`FactsStore::insert_with_dedup`]. Either the candidate was
+/// Outcome of [`MemoryStore::insert_with_dedup`]. Either the candidate was
 /// inserted as a new row, or it collapsed into an existing one.
 #[derive(Debug, Clone)]
 pub enum InsertOutcome {
     /// The candidate had no semantic near-neighbor and was inserted fresh.
-    Added(Fact),
+    Added(Memory),
     /// The candidate's top search hit exceeded the similarity threshold;
     /// the existing row was rewritten with the merged content/contexts/tags
     /// and its id is preserved.
     Merged {
         /// The post-merge fact (same id as the existing row).
-        fact: Fact,
+        fact: Memory,
         /// Cosine similarity between candidate and the merge target.
         similarity: f32,
         /// Id of the existing row that absorbed the candidate (same as
@@ -291,7 +291,7 @@ fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
 /// contexts and tags; prefers the longer content (more signal). Scalar
 /// optional fields on the candidate overwrite the existing value only
 /// when the candidate actually carries a value — a `None` never clears.
-fn merge_fact(existing: &Fact, candidate: &Fact) -> Fact {
+fn merge_fact(existing: &Memory, candidate: &Memory) -> Memory {
     let mut merged = existing.clone();
 
     if candidate.content.len() > existing.content.len() {
@@ -327,12 +327,12 @@ fn merge_fact(existing: &Fact, candidate: &Fact) -> Fact {
 }
 
 /// The LanceDB-backed memory store.
-pub struct FactsStore {
+pub struct MemoryStore {
     _conn: Connection,
     table: Table,
 }
 
-impl FactsStore {
+impl MemoryStore {
     /// Open (or auto-create) the curated long-term (semantic) store
     /// rooted at `data_dir`.
     ///
@@ -349,7 +349,7 @@ impl FactsStore {
     ///
     /// Lives in the same `data_dir/memory/memory.lancedb/` connection as
     /// [`Self::open_semantic`] but is a separate LanceDB table reusing the
-    /// identical Fact schema. Separate tables give per-table ANN-index
+    /// identical Memory schema. Separate tables give per-table ANN-index
     /// isolation, so staged episodic rows never pollute the curated
     /// semantic index.
     pub async fn open_episodic(data_dir: &Path) -> Result<Self> {
@@ -411,12 +411,12 @@ impl FactsStore {
     /// Treats the store as append-only — existing IDs are not detected or
     /// deduplicated here. Callers who need upsert semantics should use
     /// `update()` (next commit) or check with `get()` first.
-    pub async fn insert(&self, facts: &[Fact]) -> Result<usize> {
+    pub async fn insert(&self, facts: &[Memory]) -> Result<usize> {
         if facts.is_empty() {
             return Ok(0);
         }
 
-        let batch = facts_to_record_batch(facts)?;
+        let batch = memories_to_record_batch(facts)?;
         let schema = batch.schema();
         let batches: Box<dyn RecordBatchReader + Send> =
             Box::new(RecordBatchIterator::new(std::iter::once(Ok(batch)), schema));
@@ -425,7 +425,7 @@ impl FactsStore {
             .add(batches)
             .execute()
             .await
-            .context("adding batch to facts table")?;
+            .context("adding batch to memory table")?;
 
         Ok(facts.len())
     }
@@ -437,10 +437,10 @@ impl FactsStore {
     /// the candidate is merged into that row (see [`merge_fact`]) and the
     /// existing id is preserved. Otherwise the candidate is inserted fresh.
     ///
-    /// The candidate must already carry a populated [`Fact::vector`];
+    /// The candidate must already carry a populated [`Memory::vector`];
     /// without an embedding we cannot score similarity, so the call falls
     /// back to a plain insert and returns `InsertOutcome::Added`.
-    pub async fn insert_with_dedup(&self, fact: Fact) -> Result<InsertOutcome> {
+    pub async fn insert_with_dedup(&self, fact: Memory) -> Result<InsertOutcome> {
         let Some(vector) = fact.vector.clone() else {
             self.insert(std::slice::from_ref(&fact)).await?;
             return Ok(InsertOutcome::Added(fact));
@@ -474,7 +474,7 @@ impl FactsStore {
     }
 
     /// Fetch one fact by id. Returns `None` if the id is not present.
-    pub async fn get(&self, id: Uuid) -> Result<Option<Fact>> {
+    pub async fn get(&self, id: Uuid) -> Result<Option<Memory>> {
         let id_str = id.to_string();
         // LanceDB SQL filter — id is Utf8, so we compare against a literal.
         let filter = format!("id = '{id_str}'");
@@ -496,7 +496,7 @@ impl FactsStore {
             if batch.num_rows() == 0 {
                 continue;
             }
-            let facts = record_batch_to_facts(&batch)?;
+            let facts = record_batch_to_memories(&batch)?;
             if let Some(fact) = facts.into_iter().next() {
                 return Ok(Some(fact));
             }
@@ -504,12 +504,12 @@ impl FactsStore {
         Ok(None)
     }
 
-    /// Total row count in the facts table. Useful for tests and dashboards.
+    /// Total row count in the memory table. Useful for tests and dashboards.
     pub async fn count(&self) -> Result<usize> {
         self.table
             .count_rows(None)
             .await
-            .context("counting rows in facts table")
+            .context("counting rows in memory table")
     }
 
     /// Nearest-neighbor search over `vector`, constrained by `filters`.
@@ -526,7 +526,7 @@ impl FactsStore {
         query_vec: &[f32],
         filters: &Filters,
         limit: usize,
-    ) -> Result<Vec<Fact>> {
+    ) -> Result<Vec<Memory>> {
         let scored = self.search_scored(query_vec, filters, limit, None).await?;
         Ok(scored.into_iter().map(|(f, _)| f).collect())
     }
@@ -546,7 +546,7 @@ impl FactsStore {
         filters: &Filters,
         limit: usize,
         min_score: Option<f32>,
-    ) -> Result<Vec<(Fact, f32)>> {
+    ) -> Result<Vec<(Memory, f32)>> {
         if query_vec.len() != super::schema::VECTOR_DIM as usize {
             return Err(anyhow!(
                 "query vector has len {} but schema dim is {}",
@@ -568,7 +568,7 @@ impl FactsStore {
         let mut facts = self.collect_query(q).await?;
         apply_origin_filter(&mut facts, filters.origin);
 
-        let mut scored: Vec<(Fact, f32)> = facts
+        let mut scored: Vec<(Memory, f32)> = facts
             .into_iter()
             .map(|f| {
                 let score = f
@@ -601,7 +601,7 @@ impl FactsStore {
         order: SortOrder,
         limit: usize,
         offset: usize,
-    ) -> Result<Vec<Fact>> {
+    ) -> Result<Vec<Memory>> {
         let fetch = limit.saturating_add(offset);
         if fetch == 0 {
             return Ok(Vec::new());
@@ -642,14 +642,14 @@ impl FactsStore {
     /// v0.1 uses read-modify-write (delete + insert). LanceDB supports
     /// column-level updates for simple types, but our nested schema (lists,
     /// FixedSizeList vectors, timezone-tagged timestamps) is cleaner to
-    /// round-trip through [`Fact`] than to express as SQL column setters.
-    pub async fn update(&self, id: Uuid, patch: &FactPatch) -> Result<Option<Fact>> {
+    /// round-trip through [`Memory`] than to express as SQL column setters.
+    pub async fn update(&self, id: Uuid, patch: &MemoryPatch) -> Result<Option<Memory>> {
         let Some(mut existing) = self.get(id).await? else {
             return Ok(None);
         };
         patch.apply(&mut existing);
         // Touch the decay/TTL clock. Microsecond-truncated to match the
-        // `created_at` precision (see `Fact::new`) so the value round-trips
+        // `created_at` precision (see `Memory::new`) so the value round-trips
         // through LanceDB's `Timestamp(Microsecond)` column intact.
         existing.updated_at = Some(Utc::now().trunc_subsecs(6));
         self.delete_one(id).await?;
@@ -743,7 +743,7 @@ impl FactsStore {
     /// than retrieved. Filters by `tier = 'core'` in SQL (no LanceDB row
     /// limit — `list`'s over-fetch math can't express "unbounded"), then
     /// sorts newest-first in process to match `list`'s default order.
-    pub async fn core_facts(&self) -> Result<Vec<Fact>> {
+    pub async fn core_facts(&self) -> Result<Vec<Memory>> {
         let filters = Filters {
             tier: Some(Tier::Core),
             ..Filters::default()
@@ -769,9 +769,9 @@ impl FactsStore {
         Ok(before.saturating_sub(after))
     }
 
-    async fn collect_query<Q: ExecutableQuery>(&self, q: Q) -> Result<Vec<Fact>> {
+    async fn collect_query<Q: ExecutableQuery>(&self, q: Q) -> Result<Vec<Memory>> {
         let mut stream = q.execute().await.context("executing facts query")?;
-        let mut out: Vec<Fact> = Vec::new();
+        let mut out: Vec<Memory> = Vec::new();
         while let Some(batch) = stream
             .try_next()
             .await
@@ -780,7 +780,7 @@ impl FactsStore {
             if batch.num_rows() == 0 {
                 continue;
             }
-            out.extend(record_batch_to_facts(&batch)?);
+            out.extend(record_batch_to_memories(&batch)?);
         }
         Ok(out)
     }
@@ -791,17 +791,17 @@ impl FactsStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::facts::types::{FactType, Origin, Outcome};
+    use crate::memory::types::{MemoryType, Origin, Outcome};
     use tempfile::TempDir;
 
-    async fn fresh_store() -> (FactsStore, TempDir) {
+    async fn fresh_store() -> (MemoryStore, TempDir) {
         let dir = TempDir::new().unwrap();
-        let store = FactsStore::open_semantic(dir.path()).await.unwrap();
+        let store = MemoryStore::open_semantic(dir.path()).await.unwrap();
         (store, dir)
     }
 
-    fn make_fact(content: &str, t: FactType) -> Fact {
-        Fact::new(content, t, Origin::User)
+    fn make_fact(content: &str, t: MemoryType) -> Memory {
+        Memory::new(content, t, Origin::User)
     }
 
     #[tokio::test]
@@ -814,14 +814,14 @@ mod tests {
     async fn open_is_idempotent() {
         let dir = TempDir::new().unwrap();
         {
-            let store = FactsStore::open_semantic(dir.path()).await.unwrap();
+            let store = MemoryStore::open_semantic(dir.path()).await.unwrap();
             store
-                .insert(&[make_fact("first", FactType::Fact)])
+                .insert(&[make_fact("first", MemoryType::Fact)])
                 .await
                 .unwrap();
         }
         // Re-opening finds the table and sees the existing row.
-        let store = FactsStore::open_semantic(dir.path()).await.unwrap();
+        let store = MemoryStore::open_semantic(dir.path()).await.unwrap();
         assert_eq!(store.count().await.unwrap(), 1);
     }
 
@@ -829,14 +829,14 @@ mod tests {
     async fn episodic_table_is_separate_from_facts() {
         let dir = TempDir::new().unwrap();
         // Same lancedb dir, two tables in one connection.
-        let facts = FactsStore::open_semantic(dir.path()).await.unwrap();
-        let episodic = FactsStore::open_episodic(dir.path()).await.unwrap();
+        let facts = MemoryStore::open_semantic(dir.path()).await.unwrap();
+        let episodic = MemoryStore::open_episodic(dir.path()).await.unwrap();
 
-        let fact = make_fact("curated fact", FactType::Fact);
+        let fact = make_fact("curated fact", MemoryType::Fact);
         let fact_id = fact.id;
         facts.insert(&[fact]).await.unwrap();
         episodic
-            .insert(&[make_fact("staged experience", FactType::Learned)])
+            .insert(&[make_fact("staged experience", MemoryType::Learned)])
             .await
             .unwrap();
 
@@ -844,7 +844,7 @@ mod tests {
         assert_eq!(facts.count().await.unwrap(), 1);
         assert_eq!(episodic.count().await.unwrap(), 1);
 
-        // True isolation: the facts row is invisible to the episodic store
+        // True isolation: the semantic row is invisible to the episodic store
         // even though they share one LanceDB connection.
         assert!(episodic.get(fact_id).await.unwrap().is_none());
     }
@@ -853,14 +853,14 @@ mod tests {
     async fn open_episodic_is_idempotent() {
         let dir = TempDir::new().unwrap();
         {
-            let store = FactsStore::open_episodic(dir.path()).await.unwrap();
+            let store = MemoryStore::open_episodic(dir.path()).await.unwrap();
             store
-                .insert(&[make_fact("staged", FactType::Learned)])
+                .insert(&[make_fact("staged", MemoryType::Learned)])
                 .await
                 .unwrap();
         }
         // Re-opening finds the episodic table and sees the existing row.
-        let store = FactsStore::open_episodic(dir.path()).await.unwrap();
+        let store = MemoryStore::open_episodic(dir.path()).await.unwrap();
         assert_eq!(store.count().await.unwrap(), 1);
     }
 
@@ -868,8 +868,8 @@ mod tests {
     async fn insert_returns_row_count() {
         let (store, _dir) = fresh_store().await;
         let facts = vec![
-            make_fact("a", FactType::Fact),
-            make_fact("b", FactType::Preference),
+            make_fact("a", MemoryType::Fact),
+            make_fact("b", MemoryType::Preference),
         ];
         assert_eq!(store.insert(&facts).await.unwrap(), 2);
         assert_eq!(store.count().await.unwrap(), 2);
@@ -885,7 +885,7 @@ mod tests {
     #[tokio::test]
     async fn get_finds_inserted_fact() {
         let (store, _dir) = fresh_store().await;
-        let mut f = make_fact("find me", FactType::Learned);
+        let mut f = make_fact("find me", MemoryType::Learned);
         f.contexts = vec!["env/macos".into()];
         f.tags = vec!["topic:dates".into()];
         f.outcome = Some(Outcome::Positive);
@@ -900,7 +900,7 @@ mod tests {
     async fn get_returns_none_for_missing_id() {
         let (store, _dir) = fresh_store().await;
         store
-            .insert(&[make_fact("x", FactType::Fact)])
+            .insert(&[make_fact("x", MemoryType::Fact)])
             .await
             .unwrap();
         let missing = Uuid::new_v4();
@@ -910,8 +910,8 @@ mod tests {
     #[tokio::test]
     async fn insert_many_then_count() {
         let (store, _dir) = fresh_store().await;
-        let facts: Vec<Fact> = (0..50)
-            .map(|i| make_fact(&format!("f{i}"), FactType::Fact))
+        let facts: Vec<Memory> = (0..50)
+            .map(|i| make_fact(&format!("f{i}"), MemoryType::Fact))
             .collect();
         store.insert(&facts).await.unwrap();
         assert_eq!(store.count().await.unwrap(), 50);
@@ -922,7 +922,7 @@ mod tests {
     use super::super::schema::VECTOR_DIM;
     use chrono::Duration;
 
-    fn with_vector(mut f: Fact, value: f32) -> Fact {
+    fn with_vector(mut f: Memory, value: f32) -> Memory {
         f.vector = Some(vec![value; VECTOR_DIM as usize]);
         f
     }
@@ -936,7 +936,7 @@ mod tests {
     async fn filters_sql_builds_single_clauses() {
         let f = Filters {
             contexts: vec!["code/linggen".into()],
-            types: vec![FactType::Fixed],
+            types: vec![MemoryType::Fixed],
             origin: Some(Origin::User),
             outcome: Some(Outcome::Positive),
             tier: Some(Tier::Core),
@@ -960,11 +960,11 @@ mod tests {
     async fn list_with_empty_filters_returns_all_newest_first() {
         let (store, _dir) = fresh_store().await;
 
-        let mut old = make_fact("old", FactType::Fact);
+        let mut old = make_fact("old", MemoryType::Fact);
         old.occurred_at = Some(Utc::now() - Duration::days(3));
-        let mut mid = make_fact("mid", FactType::Fact);
+        let mut mid = make_fact("mid", MemoryType::Fact);
         mid.occurred_at = Some(Utc::now() - Duration::days(1));
-        let new = make_fact("new", FactType::Fact); // no occurred_at, uses created_at ≈ now
+        let new = make_fact("new", MemoryType::Fact); // no occurred_at, uses created_at ≈ now
 
         store.insert(&[old, mid, new]).await.unwrap();
 
@@ -989,15 +989,15 @@ mod tests {
     async fn list_offset_pages_through_results() {
         let (store, _dir) = fresh_store().await;
 
-        let mut a = make_fact("a", FactType::Fact);
+        let mut a = make_fact("a", MemoryType::Fact);
         a.occurred_at = Some(Utc::now() - Duration::days(5));
-        let mut b = make_fact("b", FactType::Fact);
+        let mut b = make_fact("b", MemoryType::Fact);
         b.occurred_at = Some(Utc::now() - Duration::days(4));
-        let mut c = make_fact("c", FactType::Fact);
+        let mut c = make_fact("c", MemoryType::Fact);
         c.occurred_at = Some(Utc::now() - Duration::days(3));
-        let mut d = make_fact("d", FactType::Fact);
+        let mut d = make_fact("d", MemoryType::Fact);
         d.occurred_at = Some(Utc::now() - Duration::days(2));
-        let mut e = make_fact("e", FactType::Fact);
+        let mut e = make_fact("e", MemoryType::Fact);
         e.occurred_at = Some(Utc::now() - Duration::days(1));
 
         store.insert(&[a, b, c, d, e]).await.unwrap();
@@ -1036,11 +1036,11 @@ mod tests {
     async fn list_filters_by_type_and_context() {
         let (store, _dir) = fresh_store().await;
 
-        let mut a = make_fact("a", FactType::Preference);
+        let mut a = make_fact("a", MemoryType::Preference);
         a.contexts = vec!["global".into()];
-        let mut b = make_fact("b", FactType::Fixed);
+        let mut b = make_fact("b", MemoryType::Fixed);
         b.contexts = vec!["code/linggen".into()];
-        let mut c = make_fact("c", FactType::Fixed);
+        let mut c = make_fact("c", MemoryType::Fixed);
         c.contexts = vec!["code/sanji".into()];
 
         store.insert(&[a, b, c]).await.unwrap();
@@ -1049,7 +1049,7 @@ mod tests {
             .list(
                 &Filters {
                     contexts: vec!["code/linggen".into()],
-                    types: vec![FactType::Fixed],
+                    types: vec![MemoryType::Fixed],
                     ..Default::default()
                 },
                 SortOrder::Newest,
@@ -1066,15 +1066,15 @@ mod tests {
     #[tokio::test]
     async fn list_types_are_or_combined() {
         let (store, _dir) = fresh_store().await;
-        let a = make_fact("pref", FactType::Preference);
-        let b = make_fact("fix", FactType::Fixed);
-        let c = make_fact("tried", FactType::Tried);
+        let a = make_fact("pref", MemoryType::Preference);
+        let b = make_fact("fix", MemoryType::Fixed);
+        let c = make_fact("tried", MemoryType::Tried);
         store.insert(&[a, b, c]).await.unwrap();
 
         let prefs_or_fixes = store
             .list(
                 &Filters {
-                    types: vec![FactType::Preference, FactType::Fixed],
+                    types: vec![MemoryType::Preference, MemoryType::Fixed],
                     ..Default::default()
                 },
                 SortOrder::Newest,
@@ -1091,9 +1091,9 @@ mod tests {
         let (store, _dir) = fresh_store().await;
         let now = Utc::now();
 
-        let mut old = make_fact("old", FactType::Fact);
+        let mut old = make_fact("old", MemoryType::Fact);
         old.occurred_at = Some(now - Duration::days(10));
-        let mut recent = make_fact("recent", FactType::Fact);
+        let mut recent = make_fact("recent", MemoryType::Fact);
         recent.occurred_at = Some(now - Duration::hours(2));
 
         store.insert(&[old, recent]).await.unwrap();
@@ -1119,9 +1119,9 @@ mod tests {
         let (store, _dir) = fresh_store().await;
 
         // Three facts, each with a distinct unit-ish vector.
-        let a = with_vector(make_fact("a", FactType::Fact), 0.1);
-        let b = with_vector(make_fact("b", FactType::Fact), 0.5);
-        let c = with_vector(make_fact("c", FactType::Fact), 0.9);
+        let a = with_vector(make_fact("a", MemoryType::Fact), 0.1);
+        let b = with_vector(make_fact("b", MemoryType::Fact), 0.5);
+        let c = with_vector(make_fact("c", MemoryType::Fact), 0.9);
         store
             .insert(&[a.clone(), b.clone(), c.clone()])
             .await
@@ -1138,8 +1138,8 @@ mod tests {
     #[tokio::test]
     async fn search_respects_limit() {
         let (store, _dir) = fresh_store().await;
-        let facts: Vec<Fact> = (0..10)
-            .map(|i| with_vector(make_fact(&format!("f{i}"), FactType::Fact), i as f32 * 0.1))
+        let facts: Vec<Memory> = (0..10)
+            .map(|i| with_vector(make_fact(&format!("f{i}"), MemoryType::Fact), i as f32 * 0.1))
             .collect();
         store.insert(&facts).await.unwrap();
 
@@ -1151,9 +1151,9 @@ mod tests {
     #[tokio::test]
     async fn search_with_context_filter() {
         let (store, _dir) = fresh_store().await;
-        let mut in_ctx = with_vector(make_fact("in-ctx", FactType::Fact), 0.3);
+        let mut in_ctx = with_vector(make_fact("in-ctx", MemoryType::Fact), 0.3);
         in_ctx.contexts = vec!["music/piano".into()];
-        let mut other = with_vector(make_fact("other", FactType::Fact), 0.3);
+        let mut other = with_vector(make_fact("other", MemoryType::Fact), 0.3);
         other.contexts = vec!["code/linggen".into()];
         store.insert(&[in_ctx, other]).await.unwrap();
 
@@ -1188,7 +1188,7 @@ mod tests {
     #[tokio::test]
     async fn delete_removes_row() {
         let (store, _dir) = fresh_store().await;
-        let f = make_fact("x", FactType::Fact);
+        let f = make_fact("x", MemoryType::Fact);
         let id = f.id;
         store.insert(&[f]).await.unwrap();
         assert_eq!(store.count().await.unwrap(), 1);
@@ -1203,12 +1203,12 @@ mod tests {
     #[tokio::test]
     async fn update_applies_patch() {
         let (store, _dir) = fresh_store().await;
-        let mut f = make_fact("original", FactType::Fact);
+        let mut f = make_fact("original", MemoryType::Fact);
         f.contexts = vec!["a".into()];
         let id = f.id;
         store.insert(&[f]).await.unwrap();
 
-        let patch = FactPatch {
+        let patch = MemoryPatch {
             content: Some("edited".into()),
             contexts: Some(vec!["b".into(), "c".into()]),
             outcome: Some(Some(Outcome::Positive)),
@@ -1229,13 +1229,13 @@ mod tests {
     #[tokio::test]
     async fn update_can_clear_optional_field() {
         let (store, _dir) = fresh_store().await;
-        let mut f = make_fact("x", FactType::Tried);
+        let mut f = make_fact("x", MemoryType::Tried);
         f.outcome = Some(Outcome::Negative);
         let id = f.id;
         store.insert(&[f]).await.unwrap();
 
         // Some(None) clears to null.
-        let patch = FactPatch {
+        let patch = MemoryPatch {
             outcome: Some(None),
             ..Default::default()
         };
@@ -1247,7 +1247,7 @@ mod tests {
     async fn update_missing_id_returns_none() {
         let (store, _dir) = fresh_store().await;
         let result = store
-            .update(Uuid::new_v4(), &FactPatch::default())
+            .update(Uuid::new_v4(), &MemoryPatch::default())
             .await
             .unwrap();
         assert!(result.is_none());
@@ -1256,13 +1256,13 @@ mod tests {
     #[tokio::test]
     async fn update_stamps_updated_at() {
         let (store, _dir) = fresh_store().await;
-        let f = make_fact("before", FactType::Fact);
+        let f = make_fact("before", MemoryType::Fact);
         let id = f.id;
         let created_at = f.created_at;
         assert!(f.updated_at.is_none());
         store.insert(&[f]).await.unwrap();
 
-        let patch = FactPatch {
+        let patch = MemoryPatch {
             content: Some("after".into()),
             ..Default::default()
         };
@@ -1278,11 +1278,11 @@ mod tests {
     #[tokio::test]
     async fn forget_bulk_deletes_matching() {
         let (store, _dir) = fresh_store().await;
-        let mut sanji1 = make_fact("s1", FactType::Fact);
+        let mut sanji1 = make_fact("s1", MemoryType::Fact);
         sanji1.contexts = vec!["code/sanji".into()];
-        let mut sanji2 = make_fact("s2", FactType::Fact);
+        let mut sanji2 = make_fact("s2", MemoryType::Fact);
         sanji2.contexts = vec!["code/sanji".into()];
-        let mut ling = make_fact("l1", FactType::Fact);
+        let mut ling = make_fact("l1", MemoryType::Fact);
         ling.contexts = vec!["code/linggen".into()];
         store.insert(&[sanji1, sanji2, ling]).await.unwrap();
 
@@ -1301,7 +1301,7 @@ mod tests {
     async fn forget_refuses_empty_filter() {
         let (store, _dir) = fresh_store().await;
         store
-            .insert(&[make_fact("x", FactType::Fact)])
+            .insert(&[make_fact("x", MemoryType::Fact)])
             .await
             .unwrap();
 
@@ -1318,17 +1318,17 @@ mod tests {
         let now = Utc::now();
 
         // Old: created 10 days ago, never updated → decay clock = created_at.
-        let mut old = make_fact("stale", FactType::Learned);
+        let mut old = make_fact("stale", MemoryType::Learned);
         old.created_at = (now - Duration::days(10)).trunc_subsecs(6);
         let old_id = old.id;
 
         // Fresh: created just now → decay clock = created_at ≈ now.
-        let fresh = make_fact("recent", FactType::Learned);
+        let fresh = make_fact("recent", MemoryType::Learned);
         let fresh_id = fresh.id;
 
         // Touched: created 10 days ago BUT updated 1 hour ago → decay clock
         // = updated_at, which is recent → must survive (touch resets age).
-        let mut touched = make_fact("revived", FactType::Learned);
+        let mut touched = make_fact("revived", MemoryType::Learned);
         touched.created_at = (now - Duration::days(10)).trunc_subsecs(6);
         touched.updated_at = Some((now - Duration::hours(1)).trunc_subsecs(6));
         let touched_id = touched.id;
@@ -1350,11 +1350,11 @@ mod tests {
     async fn core_facts_returns_only_core_tier() {
         let (store, _dir) = fresh_store().await;
 
-        let mut core1 = make_fact("identity bit", FactType::Fact);
+        let mut core1 = make_fact("identity bit", MemoryType::Fact);
         core1.tier = Tier::Core;
-        let mut core2 = make_fact("preference bit", FactType::Preference);
+        let mut core2 = make_fact("preference bit", MemoryType::Preference);
         core2.tier = Tier::Core;
-        let semantic = make_fact("retrieval pool bit", FactType::Learned); // default Semantic
+        let semantic = make_fact("retrieval pool bit", MemoryType::Learned); // default Semantic
 
         store.insert(&[core1, core2, semantic]).await.unwrap();
 
@@ -1377,7 +1377,7 @@ mod tests {
     #[tokio::test]
     async fn dedup_adds_when_store_is_empty() {
         let (store, _dir) = fresh_store().await;
-        let f = with_vector(make_fact("first", FactType::Fact), 1.0);
+        let f = with_vector(make_fact("first", MemoryType::Fact), 1.0);
         let outcome = store.insert_with_dedup(f.clone()).await.unwrap();
         match outcome {
             InsertOutcome::Added(got) => assert_eq!(got.id, f.id),
@@ -1390,7 +1390,7 @@ mod tests {
     async fn dedup_merges_near_duplicate_and_keeps_existing_id() {
         let (store, _dir) = fresh_store().await;
 
-        let mut existing = make_fact("original phrasing", FactType::Fact);
+        let mut existing = make_fact("original phrasing", MemoryType::Fact);
         existing.vector = Some(unit_vec_at(0));
         existing.contexts = vec!["code/linggen".into()];
         existing.tags = vec!["topic:setup".into()];
@@ -1399,7 +1399,7 @@ mod tests {
 
         // Candidate: identical vector → cosine 1.0 → above threshold.
         // Longer content, new context, new tag.
-        let mut candidate = make_fact("original phrasing with more detail", FactType::Fact);
+        let mut candidate = make_fact("original phrasing with more detail", MemoryType::Fact);
         candidate.vector = Some(unit_vec_at(0));
         candidate.contexts = vec!["code/linggen".into(), "team/core".into()];
         candidate.tags = vec!["topic:setup".into(), "intent:learn".into()];
@@ -1433,12 +1433,12 @@ mod tests {
     async fn dedup_inserts_when_below_threshold() {
         let (store, _dir) = fresh_store().await;
 
-        let mut existing = make_fact("first", FactType::Fact);
+        let mut existing = make_fact("first", MemoryType::Fact);
         existing.vector = Some(unit_vec_at(0));
         store.insert(&[existing]).await.unwrap();
 
         // Orthogonal vector → cosine 0.0 → far below threshold.
-        let mut candidate = make_fact("unrelated", FactType::Fact);
+        let mut candidate = make_fact("unrelated", MemoryType::Fact);
         candidate.vector = Some(unit_vec_at(1));
 
         let outcome = store.insert_with_dedup(candidate.clone()).await.unwrap();
@@ -1455,12 +1455,12 @@ mod tests {
     async fn dedup_does_not_merge_across_types() {
         let (store, _dir) = fresh_store().await;
 
-        let mut existing = make_fact("shared meaning", FactType::Fact);
+        let mut existing = make_fact("shared meaning", MemoryType::Fact);
         existing.vector = Some(unit_vec_at(0));
         store.insert(&[existing]).await.unwrap();
 
         // Same vector, different type — must insert, not merge.
-        let mut candidate = make_fact("shared meaning", FactType::Preference);
+        let mut candidate = make_fact("shared meaning", MemoryType::Preference);
         candidate.vector = Some(unit_vec_at(0));
 
         let outcome = store.insert_with_dedup(candidate).await.unwrap();
@@ -1472,12 +1472,12 @@ mod tests {
     async fn dedup_without_vector_falls_back_to_plain_insert() {
         let (store, _dir) = fresh_store().await;
 
-        let mut existing = make_fact("anything", FactType::Fact);
+        let mut existing = make_fact("anything", MemoryType::Fact);
         existing.vector = Some(unit_vec_at(0));
         store.insert(&[existing]).await.unwrap();
 
         // Candidate has no vector at all → cannot score similarity → insert.
-        let candidate = make_fact("anything", FactType::Fact);
+        let candidate = make_fact("anything", MemoryType::Fact);
         let outcome = store.insert_with_dedup(candidate.clone()).await.unwrap();
         assert!(matches!(outcome, InsertOutcome::Added(_)));
         assert_eq!(store.count().await.unwrap(), 2);
@@ -1487,11 +1487,11 @@ mod tests {
     async fn dedup_keeps_existing_content_when_candidate_is_shorter() {
         let (store, _dir) = fresh_store().await;
 
-        let mut existing = make_fact("a much longer and more specific description", FactType::Fact);
+        let mut existing = make_fact("a much longer and more specific description", MemoryType::Fact);
         existing.vector = Some(unit_vec_at(0));
         store.insert(&[existing.clone()]).await.unwrap();
 
-        let mut candidate = make_fact("short", FactType::Fact);
+        let mut candidate = make_fact("short", MemoryType::Fact);
         candidate.vector = Some(unit_vec_at(0));
 
         let outcome = store.insert_with_dedup(candidate).await.unwrap();

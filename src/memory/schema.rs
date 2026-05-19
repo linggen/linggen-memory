@@ -4,13 +4,13 @@
 //! - [`SEMANTIC_TABLE_NAME`] — the curated long-term (semantic) table.
 //! - [`VECTOR_DIM`] — embedding dimension (1024, matches `Qwen3-Embedding-0.6B`).
 //! - [`build_schema`] — the 14-field Arrow schema matching `doc/tech-spec.md`.
-//! - [`facts_to_record_batch`] — encode `&[Fact]` as a single `RecordBatch`.
-//! - [`record_batch_to_facts`] — decode a `RecordBatch` back into `Vec<Fact>`.
+//! - [`memories_to_record_batch`] — encode `&[Memory]` as a single `RecordBatch`.
+//! - [`record_batch_to_memories`] — decode a `RecordBatch` back into `Vec<Memory>`.
 //!
 //! Changes to any field (rename, type change, nullability flip) must be made
 //! in lockstep here and in `types.rs`.
 
-use super::types::{Fact, FactType, Origin, Outcome, Tier};
+use super::types::{Memory, MemoryType, Origin, Outcome, Tier};
 use anyhow::{anyhow, Context, Result};
 use arrow_array::{
     builder::{FixedSizeListBuilder, Float32Builder, ListBuilder, StringBuilder},
@@ -39,7 +39,7 @@ pub const VECTOR_DIM: i32 = 1024;
 
 const TZ_UTC: &str = "UTC";
 
-/// Build the Arrow schema for the `facts` table.
+/// Build the Arrow schema for a memory table.
 pub fn build_schema() -> Arc<Schema> {
     let utf8_item = Arc::new(Field::new("item", DataType::Utf8, true));
     let float_item = Arc::new(Field::new("item", DataType::Float32, true));
@@ -81,7 +81,7 @@ pub fn build_schema() -> Arc<Schema> {
 /// Encode a slice of facts as a single Arrow `RecordBatch` matching
 /// [`build_schema`]. Preserves row order; `None`-valued optional fields
 /// become nulls in the corresponding columns.
-pub fn facts_to_record_batch(facts: &[Fact]) -> Result<RecordBatch> {
+pub fn memories_to_record_batch(facts: &[Memory]) -> Result<RecordBatch> {
     let schema = build_schema();
 
     let ids = StringArray::from_iter_values(facts.iter().map(|f| f.id.to_string()));
@@ -141,7 +141,7 @@ pub fn facts_to_record_batch(facts: &[Fact]) -> Result<RecordBatch> {
 
 /// Decode a `RecordBatch` produced against [`build_schema`] back into facts.
 /// Returns an error if any required column is missing or has the wrong type.
-pub fn record_batch_to_facts(batch: &RecordBatch) -> Result<Vec<Fact>> {
+pub fn record_batch_to_memories(batch: &RecordBatch) -> Result<Vec<Memory>> {
     let n = batch.num_rows();
     let ids = col_utf8(batch, "id")?;
     let contents = col_utf8(batch, "content")?;
@@ -162,7 +162,7 @@ pub fn record_batch_to_facts(batch: &RecordBatch) -> Result<Vec<Fact>> {
     for i in 0..n {
         let id = Uuid::parse_str(ids.value(i)).context("id column has non-UUID value")?;
         let type_str = types.value(i);
-        let r#type = FactType::from_str(type_str)
+        let r#type = MemoryType::from_str(type_str)
             .with_context(|| format!("unknown type `{type_str}` at row {i}"))?;
         let from_str = froms.value(i);
         let origin = Origin::from_str(from_str)
@@ -178,7 +178,7 @@ pub fn record_batch_to_facts(batch: &RecordBatch) -> Result<Vec<Fact>> {
             None => None,
         };
 
-        out.push(Fact {
+        out.push(Memory {
             id,
             content: contents.value(i).to_string(),
             vector: vectors.get(i).cloned().flatten(),
@@ -218,7 +218,7 @@ where
     builder.finish()
 }
 
-fn build_vector_column(facts: &[Fact]) -> Result<FixedSizeListArray> {
+fn build_vector_column(facts: &[Memory]) -> Result<FixedSizeListArray> {
     let mut builder = FixedSizeListBuilder::new(Float32Builder::new(), VECTOR_DIM);
     for fact in facts {
         match &fact.vector {
@@ -379,18 +379,18 @@ mod tests {
     use super::*;
     use chrono::Duration;
 
-    fn sample_facts() -> Vec<Fact> {
-        let mut f1 = Fact::new(
+    fn sample_facts() -> Vec<Memory> {
+        let mut f1 = Memory::new(
             "user prefers concise replies",
-            FactType::Preference,
+            MemoryType::Preference,
             Origin::User,
         );
         f1.contexts = vec!["global".into()];
         f1.tags = vec!["intent:style".into()];
 
-        let mut f2 = Fact::new(
+        let mut f2 = Memory::new(
             "webrtc dc closes after 30s idle",
-            FactType::Fixed,
+            MemoryType::Fixed,
             Origin::Agent,
         );
         f2.contexts = vec!["code/linggen".into(), "webrtc".into()];
@@ -403,7 +403,7 @@ mod tests {
         f2.source_session = Some("sess-abc".into());
 
         // f3 leaves updated_at None — proves the null path round-trips too.
-        let f3 = Fact::new("", FactType::Learned, Origin::Derived);
+        let f3 = Memory::new("", MemoryType::Learned, Origin::Derived);
 
         vec![f1, f2, f3]
     }
@@ -442,33 +442,33 @@ mod tests {
     #[test]
     fn facts_roundtrip_through_record_batch() {
         let facts = sample_facts();
-        let batch = facts_to_record_batch(&facts).unwrap();
+        let batch = memories_to_record_batch(&facts).unwrap();
         assert_eq!(batch.num_rows(), facts.len());
 
-        let decoded = record_batch_to_facts(&batch).unwrap();
+        let decoded = record_batch_to_memories(&batch).unwrap();
         assert_eq!(decoded, facts);
     }
 
     #[test]
     fn empty_vec_roundtrips() {
-        let batch = facts_to_record_batch(&[]).unwrap();
+        let batch = memories_to_record_batch(&[]).unwrap();
         assert_eq!(batch.num_rows(), 0);
-        let decoded = record_batch_to_facts(&batch).unwrap();
+        let decoded = record_batch_to_memories(&batch).unwrap();
         assert!(decoded.is_empty());
     }
 
     #[test]
     fn wrong_vector_dim_is_rejected() {
-        let mut f = Fact::new("x", FactType::Fact, Origin::Derived);
+        let mut f = Memory::new("x", MemoryType::Fact, Origin::Derived);
         f.vector = Some(vec![0.0; 128]);
-        let err = facts_to_record_batch(&[f]).unwrap_err();
+        let err = memories_to_record_batch(&[f]).unwrap_err();
         assert!(err.to_string().contains(&format!("expects {VECTOR_DIM}")));
     }
 
     #[test]
     fn nulls_omit_optional_fields() {
         let facts = sample_facts();
-        let batch = facts_to_record_batch(&facts).unwrap();
+        let batch = memories_to_record_batch(&facts).unwrap();
 
         // f1 and f3 have no outcome; f2 does.
         let outcomes = batch
@@ -508,8 +508,8 @@ mod tests {
     fn list_columns_never_null() {
         // Even empty contexts / tags produce a present-but-empty list,
         // not a null. This keeps list-contains filters simple.
-        let f = Fact::new("x", FactType::Fact, Origin::Derived);
-        let batch = facts_to_record_batch(&[f]).unwrap();
+        let f = Memory::new("x", MemoryType::Fact, Origin::Derived);
+        let batch = memories_to_record_batch(&[f]).unwrap();
         let contexts = batch
             .column_by_name("contexts")
             .unwrap()
@@ -526,7 +526,7 @@ mod tests {
         // surfaces a clear error.
         let mut facts = sample_facts();
         facts.truncate(1);
-        let batch = facts_to_record_batch(&facts).unwrap();
+        let batch = memories_to_record_batch(&facts).unwrap();
 
         // Drop a column by re-projecting.
         let schema = batch.schema();
@@ -535,7 +535,7 @@ mod tests {
             .collect();
         let pruned = batch.project(&keep).unwrap();
 
-        let err = record_batch_to_facts(&pruned).unwrap_err();
+        let err = record_batch_to_memories(&pruned).unwrap_err();
         assert!(err.to_string().contains("tags"));
     }
 }

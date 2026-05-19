@@ -133,7 +133,7 @@ Field layout (top to bottom):
 | `content`   | `<textarea>` auto-grow                                | required |
 | `contexts`  | chip editor (type to add, `×` to remove, `Enter`/`,` commits) | |
 | `tags`      | chip editor                                           | prefix convention visible as placeholder text |
-| `type`      | `<select>` over 7 `FactType` values                   | |
+| `type`      | `<select>` over 7 `MemoryType` values                   | |
 | `from`      | `<select>` over 3 `Origin` values                     | |
 | `outcome`   | `<select>` — `—, positive, negative, neutral`         | `—` sends `clear_outcome: true` |
 | `cwd`       | `<input>` with a × to clear                           | clearing sends `clear_cwd: true` |
@@ -147,7 +147,7 @@ expose `occurred_at` or `clear_occurred_at`, so the edit form renders it
 as a read-only timestamp (mirroring `created_at`). New facts can set it
 via `add`. Full edit symmetry would require a ~10-line backend patch to
 add `occurred_at: Option<DateTime<Utc>>` and `clear_occurred_at: bool` to
-`UpdateRequest` and `FactPatch`; deferred until a user actually needs it.
+`UpdateRequest` and `MemoryPatch`; deferred until a user actually needs it.
 
 **Chose text input, not `datetime-local`.** Datetime-local surfaces values
 in the browser's local timezone and round-trips are error-prone against a
@@ -285,7 +285,7 @@ pub struct ListRequest {
 }
 ```
 
-Plumbed into `FactsStore::list` by widening the signature:
+Plumbed into `MemoryStore::list` by widening the signature:
 
 ```rust
 pub async fn list(
@@ -399,7 +399,7 @@ have been amended to match reality:
 
 ## Build order
 
-1. Backend delta: `offset` on `ListRequest` + `FactsStore::list` signature
+1. Backend delta: `offset` on `ListRequest` + `MemoryStore::list` signature
    + two-line slice in `list()`. One commit. Covers unit test for pagination.
 2. Static asset plumbing: `rust-embed` + router routes + a placeholder
    `static/index.html` returning `"Memory"`. One commit.

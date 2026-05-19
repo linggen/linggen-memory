@@ -28,7 +28,7 @@ use state::SharedState;
 
 /// Compose the full router for the daemon.
 ///
-/// `state` carries the shared FactsStore and Embedder — opened once at
+/// `state` carries the shared MemoryStore and Embedder — opened once at
 /// daemon startup and reused across all requests. `telemetry` is the
 /// anonymous-usage telemetry handle (no-op when opted out / feature
 /// disabled); it's wrapped around the Memory subrouter so every Memory.*

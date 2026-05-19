@@ -1,4 +1,4 @@
-//! `ling-mem` CLI — clap-parsed subcommands, dispatched to [`FactsStore`].
+//! `ling-mem` CLI — clap-parsed subcommands, dispatched to [`MemoryStore`].
 //!
 //! The contract is documented in `doc/tech-spec.md`:
 //! - **Default output**: NDJSON on stdout, one fact per line for list-like
@@ -13,7 +13,7 @@
 //! - **Add**: auto-embeds content for any inserted fact that doesn't already
 //!   carry a vector, so the row is immediately searchable.
 
-use crate::facts::{FactPatch, FactType, FactsStore, Filters, Origin, Outcome, SortOrder, Tier};
+use crate::memory::{MemoryPatch, MemoryType, MemoryStore, Filters, Origin, Outcome, SortOrder, Tier};
 use anyhow::{anyhow, Context, Result};
 use chrono::{DateTime, Utc};
 use clap::{Args, Parser, Subcommand, ValueEnum};
@@ -29,7 +29,7 @@ mod client;
 #[command(name = "ling-mem", version, about = "Semantic memory store")]
 pub struct Cli {
     /// Override the data directory. Falls back to `$LINGGEN_DATA_DIR`, then
-    /// `~/.linggen/`. LanceDB lives under `<data-dir>/memory/facts.lancedb/`.
+    /// `~/.linggen/`. LanceDB lives under `<data-dir>/memory/memory.lancedb/`.
     #[arg(long, global = true, env = "LINGGEN_DATA_DIR")]
     pub data_dir: Option<PathBuf>,
 
@@ -41,7 +41,7 @@ pub struct Cli {
     pub quiet: bool,
 
     /// Target the episodic store (the staging table) instead of the
-    /// curated `facts` table. Episodic rows are the raw, undeduped pool the
+    /// curated `semantic` table. Episodic rows are the raw, undeduped pool the
     /// consolidation pass later promotes or evicts. Bypasses the HTTP
     /// daemon — episodic is a direct-store concern only.
     #[arg(long, global = true)]
@@ -91,7 +91,7 @@ pub enum Command {
     Forget(ForgetArgs),
 
     /// Delete episodic rows older than a cutoff — the consolidation
-    /// pass's decay sweep. Always targets the episodic store (the `facts`
+    /// pass's decay sweep. Always targets the episodic store (the `semantic`
     /// table is curated and never auto-evicted); the `--episodic` flag is
     /// not needed. The engine owns the TTL policy and passes the resolved
     /// absolute cutoff; this binary stays policy-free.
@@ -168,8 +168,8 @@ pub struct AddArgs {
     /// The fact text. Omit when using `--stdin`.
     pub content: Option<String>,
 
-    #[arg(long, value_enum, default_value_t = CliFactType::Fact)]
-    pub r#type: CliFactType,
+    #[arg(long, value_enum, default_value_t = CliMemoryType::Fact)]
+    pub r#type: CliMemoryType,
 
     /// Storage tier. `core` is the small always-loaded identity/preference
     /// set; `semantic` is the broader RAG-retrieved pool.
@@ -251,7 +251,7 @@ pub struct FilterArgs {
     pub contexts: Vec<String>,
 
     #[arg(long = "type", value_enum, value_name = "TYPE")]
-    pub types: Vec<CliFactType>,
+    pub types: Vec<CliMemoryType>,
 
     #[arg(long, value_enum)]
     pub tier: Option<CliTier>,
@@ -285,7 +285,7 @@ pub struct UpdateArgs {
     pub tags: Option<Vec<String>>,
 
     #[arg(long, value_enum)]
-    pub r#type: Option<CliFactType>,
+    pub r#type: Option<CliMemoryType>,
 
     #[arg(long, value_enum)]
     pub from: Option<CliOrigin>,
@@ -326,7 +326,7 @@ pub struct EvictArgs {
 // ── CLI ↔ domain-type glue ──────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
-pub enum CliFactType {
+pub enum CliMemoryType {
     Fact,
     Preference,
     Decision,
@@ -336,16 +336,16 @@ pub enum CliFactType {
     Built,
 }
 
-impl From<CliFactType> for FactType {
-    fn from(v: CliFactType) -> FactType {
+impl From<CliMemoryType> for MemoryType {
+    fn from(v: CliMemoryType) -> MemoryType {
         match v {
-            CliFactType::Fact => FactType::Fact,
-            CliFactType::Preference => FactType::Preference,
-            CliFactType::Decision => FactType::Decision,
-            CliFactType::Tried => FactType::Tried,
-            CliFactType::Fixed => FactType::Fixed,
-            CliFactType::Learned => FactType::Learned,
-            CliFactType::Built => FactType::Built,
+            CliMemoryType::Fact => MemoryType::Fact,
+            CliMemoryType::Preference => MemoryType::Preference,
+            CliMemoryType::Decision => MemoryType::Decision,
+            CliMemoryType::Tried => MemoryType::Tried,
+            CliMemoryType::Fixed => MemoryType::Fixed,
+            CliMemoryType::Learned => MemoryType::Learned,
+            CliMemoryType::Built => MemoryType::Built,
         }
     }
 }
@@ -439,14 +439,14 @@ fn resolve_data_dir(cli_override: Option<PathBuf>) -> Result<PathBuf> {
     Ok(home.join(".linggen"))
 }
 
-/// Open the curated `facts` store or the `episodic` staging store,
+/// Open the curated `semantic` store or the `episodic` staging store,
 /// depending on `episodic`. The single direct-store open site for data
 /// ops — keeps the table-routing decision in one place.
-async fn open_store(data_dir: &std::path::Path, episodic: bool) -> Result<FactsStore> {
+async fn open_store(data_dir: &std::path::Path, episodic: bool) -> Result<MemoryStore> {
     if episodic {
-        FactsStore::open_episodic(data_dir).await
+        MemoryStore::open_episodic(data_dir).await
     } else {
-        FactsStore::open_semantic(data_dir).await
+        MemoryStore::open_semantic(data_dir).await
     }
 }
 
@@ -526,7 +526,7 @@ pub async fn run(cli: Cli) -> Result<()> {
             return cmd_upgrade(&data_dir, &skill_dir, check, force, yes, port).await;
         }
         // `evict` is episodic-only by definition: it never touches the
-        // curated `facts` table and the HTTP daemon doesn't expose the
+        // curated `semantic` table and the HTTP daemon doesn't expose the
         // episodic store, so route it straight to the direct episodic
         // store rather than through the daemon-client dispatch below.
         Command::Evict(ref args) => {
@@ -544,11 +544,11 @@ pub async fn run(cli: Cli) -> Result<()> {
     // shell client over HTTP and there's exactly one writer to the store.
     // If no daemon is running, autostart one (matches Linggen engine
     // semantics in `engine::capability_tools::dispatch`). Direct
-    // `FactsStore` mode below remains a fallback for when autostart fails
+    // `MemoryStore` mode below remains a fallback for when autostart fails
     // (e.g. port in use, binary missing).
     //
     // `--episodic` always uses the direct store: the HTTP surface only
-    // exposes the curated `facts` table, so routing episodic ops through
+    // exposes the curated `semantic` table, so routing episodic ops through
     // the daemon would silently hit the wrong table.
     if !cli.episodic {
         if let Some(base_url) = client::try_running_or_start(&data_dir, &skill_dir).await {
@@ -612,7 +612,7 @@ fn emit_lifecycle_with_update(
 
 // ── Subcommand handlers ─────────────────────────────────────────────────────
 
-async fn cmd_add(store: &FactsStore, args: AddArgs, format: OutputFormat) -> Result<()> {
+async fn cmd_add(store: &MemoryStore, args: AddArgs, format: OutputFormat) -> Result<()> {
     // Bulk stdin path: always plain insert. Dedup against hundreds of incoming
     // rows would be O(N) searches per call; callers who want dedup for bulk
     // imports should run `analyze-clean` afterwards.
@@ -637,7 +637,7 @@ async fn cmd_add(store: &FactsStore, args: AddArgs, format: OutputFormat) -> Res
         .clone()
         .ok_or_else(|| anyhow!("add: provide content or use --stdin"))?;
 
-    let mut fact = crate::facts::Fact::new(content, args.r#type.into(), args.from.into());
+    let mut fact = crate::memory::Memory::new(content, args.r#type.into(), args.from.into());
     fact.contexts = args.contexts;
     fact.tags = args.tags;
     fact.tier = args.tier.into();
@@ -659,7 +659,7 @@ async fn cmd_add(store: &FactsStore, args: AddArgs, format: OutputFormat) -> Res
     emit_outcome(&outcome, format)
 }
 
-fn emit_added(facts: &[crate::facts::Fact], format: OutputFormat) -> Result<()> {
+fn emit_added(facts: &[crate::memory::Memory], format: OutputFormat) -> Result<()> {
     match format {
         OutputFormat::Json => {
             for f in facts {
@@ -676,10 +676,10 @@ fn emit_added(facts: &[crate::facts::Fact], format: OutputFormat) -> Result<()> 
 }
 
 fn emit_outcome(
-    outcome: &crate::facts::InsertOutcome,
+    outcome: &crate::memory::InsertOutcome,
     format: OutputFormat,
 ) -> Result<()> {
-    use crate::facts::InsertOutcome;
+    use crate::memory::InsertOutcome;
     match (format, outcome) {
         (OutputFormat::Json, InsertOutcome::Added(f)) => writeln_ndjson(f),
         (OutputFormat::Json, InsertOutcome::Merged { fact, .. }) => writeln_ndjson(fact),
@@ -704,14 +704,14 @@ fn emit_outcome(
     }
 }
 
-async fn cmd_get(store: &FactsStore, id: Uuid, format: OutputFormat) -> Result<()> {
+async fn cmd_get(store: &MemoryStore, id: Uuid, format: OutputFormat) -> Result<()> {
     match store.get(id).await? {
         Some(f) => emit_fact(&f, format),
         None => Err(not_found("no fact with that id")),
     }
 }
 
-async fn cmd_search(store: &FactsStore, args: SearchArgs, format: OutputFormat) -> Result<()> {
+async fn cmd_search(store: &MemoryStore, args: SearchArgs, format: OutputFormat) -> Result<()> {
     let embedder =
         crate::embed::Embedder::new().context("initializing embedder for search query")?;
     let vec = embedder.embed_query(&args.query)?;
@@ -729,7 +729,7 @@ async fn cmd_search(store: &FactsStore, args: SearchArgs, format: OutputFormat) 
 /// Emit scored search hits, attaching the cosine similarity to each row.
 /// JSON output adds a `score` field; text output prefixes the score so
 /// users can eyeball relevance without parsing JSON.
-fn emit_scored_facts(scored: &[(crate::facts::Fact, f32)], format: OutputFormat) -> Result<()> {
+fn emit_scored_facts(scored: &[(crate::memory::Memory, f32)], format: OutputFormat) -> Result<()> {
     match format {
         OutputFormat::Json => {
             for (f, score) in scored {
@@ -762,7 +762,7 @@ fn emit_scored_facts(scored: &[(crate::facts::Fact, f32)], format: OutputFormat)
 /// carrying content. Zero cost when every fact already has a vector
 /// (e.g. stdin NDJSON from a prior embedding pipeline). Batches all
 /// missing-vector facts into a single model call.
-fn embed_missing(facts: &mut [crate::facts::Fact]) -> Result<()> {
+fn embed_missing(facts: &mut [crate::memory::Memory]) -> Result<()> {
     let idxs: Vec<usize> = facts
         .iter()
         .enumerate()
@@ -785,7 +785,7 @@ fn embed_missing(facts: &mut [crate::facts::Fact]) -> Result<()> {
     Ok(())
 }
 
-async fn cmd_list(store: &FactsStore, args: ListArgs, format: OutputFormat) -> Result<()> {
+async fn cmd_list(store: &MemoryStore, args: ListArgs, format: OutputFormat) -> Result<()> {
     let results = store
         .list(
             &args.filters.into_filters(),
@@ -797,7 +797,7 @@ async fn cmd_list(store: &FactsStore, args: ListArgs, format: OutputFormat) -> R
     emit_facts(&results, format)
 }
 
-async fn cmd_update(store: &FactsStore, args: UpdateArgs, format: OutputFormat) -> Result<()> {
+async fn cmd_update(store: &MemoryStore, args: UpdateArgs, format: OutputFormat) -> Result<()> {
     let outcome_patch = match (args.outcome, args.clear_outcome) {
         (Some(o), _) => Some(Some(o.into())),
         (None, true) => Some(None),
@@ -809,7 +809,7 @@ async fn cmd_update(store: &FactsStore, args: UpdateArgs, format: OutputFormat) 
         (None, false) => None,
     };
 
-    let patch = FactPatch {
+    let patch = MemoryPatch {
         content: args.content,
         contexts: args.contexts,
         tags: args.tags,
@@ -826,7 +826,7 @@ async fn cmd_update(store: &FactsStore, args: UpdateArgs, format: OutputFormat) 
     }
 }
 
-async fn cmd_delete(store: &FactsStore, id: Uuid, yes: bool, format: OutputFormat) -> Result<()> {
+async fn cmd_delete(store: &MemoryStore, id: Uuid, yes: bool, format: OutputFormat) -> Result<()> {
     if !yes {
         return Err(anyhow!(
             "refusing to delete without --yes (scripted calls must pass the flag)"
@@ -845,7 +845,7 @@ async fn cmd_delete(store: &FactsStore, id: Uuid, yes: bool, format: OutputForma
     }
 }
 
-async fn cmd_forget(store: &FactsStore, args: ForgetArgs, format: OutputFormat) -> Result<()> {
+async fn cmd_forget(store: &MemoryStore, args: ForgetArgs, format: OutputFormat) -> Result<()> {
     if !args.yes {
         return Err(anyhow!(
             "refusing to forget without --yes (bulk delete requires explicit confirmation)"
@@ -863,7 +863,7 @@ async fn cmd_forget(store: &FactsStore, args: ForgetArgs, format: OutputFormat) 
 }
 
 async fn cmd_evict(
-    store: &FactsStore,
+    store: &MemoryStore,
     before: DateTime<Utc>,
     format: OutputFormat,
 ) -> Result<()> {
@@ -950,11 +950,11 @@ async fn cmd_upgrade(
 
 // ── I/O helpers ─────────────────────────────────────────────────────────────
 
-/// Parse NDJSON facts from stdin. Returns the facts plus a parallel
+/// Parse NDJSON memories from stdin. Returns the memories plus a parallel
 /// `tier_absent` mask: `true` where the source JSON object had no `tier`
 /// key, so the caller can apply the `--tier` default only to those rows
 /// (a row that names its own tier wins over the flag).
-fn read_stdin_facts() -> Result<(Vec<crate::facts::Fact>, Vec<bool>)> {
+fn read_stdin_facts() -> Result<(Vec<crate::memory::Memory>, Vec<bool>)> {
     let mut out = Vec::new();
     let mut tier_absent = Vec::new();
     let stdin = std::io::stdin();
@@ -966,7 +966,7 @@ fn read_stdin_facts() -> Result<(Vec<crate::facts::Fact>, Vec<bool>)> {
         let value: serde_json::Value = serde_json::from_str(&line)
             .with_context(|| format!("parsing JSON on stdin line {}", i + 1))?;
         let has_tier = value.get("tier").is_some();
-        let fact: crate::facts::Fact = serde_json::from_value(value)
+        let fact: crate::memory::Memory = serde_json::from_value(value)
             .with_context(|| format!("parsing JSON on stdin line {}", i + 1))?;
         out.push(fact);
         tier_absent.push(!has_tier);
@@ -974,7 +974,7 @@ fn read_stdin_facts() -> Result<(Vec<crate::facts::Fact>, Vec<bool>)> {
     Ok((out, tier_absent))
 }
 
-fn emit_facts(facts: &[crate::facts::Fact], format: OutputFormat) -> Result<()> {
+fn emit_facts(facts: &[crate::memory::Memory], format: OutputFormat) -> Result<()> {
     match format {
         OutputFormat::Json => {
             for f in facts {
@@ -990,7 +990,7 @@ fn emit_facts(facts: &[crate::facts::Fact], format: OutputFormat) -> Result<()> 
     Ok(())
 }
 
-fn emit_fact(fact: &crate::facts::Fact, format: OutputFormat) -> Result<()> {
+fn emit_fact(fact: &crate::memory::Memory, format: OutputFormat) -> Result<()> {
     match format {
         OutputFormat::Json => writeln_ndjson(fact),
         OutputFormat::Text => {
@@ -1076,7 +1076,7 @@ mod tests {
     fn filter_args_into_filters_preserves_fields() {
         let fa = FilterArgs {
             contexts: vec!["code/linggen".into()],
-            types: vec![CliFactType::Fixed, CliFactType::Tried],
+            types: vec![CliMemoryType::Fixed, CliMemoryType::Tried],
             tier: Some(CliTier::Core),
             from: Some(CliOrigin::User),
             outcome: Some(CliOutcome::Positive),

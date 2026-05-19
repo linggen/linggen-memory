@@ -1,5 +1,28 @@
 # Changelog
 
+## [Unreleased] — `facts` → `memory` rename
+
+### Changed
+
+- **Curated long-term table `facts` → `semantic`; staging table stays
+  `episodic`.** One LanceDB directory holding both (Tulving's
+  episodic/semantic split).
+- **On-disk directory `~/.linggen/memory/facts.lancedb/` →
+  `~/.linggen/memory/memory.lancedb/`.**
+- **Rust API renamed throughout** — `FactsStore` → `MemoryStore`,
+  `crate::facts` module → `crate::memory` (file tree `src/facts/` →
+  `src/memory/`), struct `Fact` → `Memory`, `FactType` → `MemoryType`,
+  `FactPatch` → `MemoryPatch`, `CliFactType` → `CliMemoryType`. The `fact`
+  *category* (one of the seven `MemoryType` values) is unchanged — only
+  the over-broad "everything is a fact" naming was retired.
+
+### Breaking
+
+- Existing data at the old `facts.lancedb` path is not auto-migrated.
+  Remove `~/.linggen/memory/facts.lancedb/` and start fresh (consistent
+  with the no-forward-migration policy). NDJSON/JSON wire format is
+  unchanged (serde field/category names are stable).
+
 ## [0.5.1] - 2026-05-11 — dashboard relevance-score chip
 
 ### Added

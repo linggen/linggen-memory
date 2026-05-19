@@ -11,15 +11,15 @@
 //! [`try_running_daemon`].
 //!
 //! Fallback: when no daemon is reachable, [`super::run`] falls back to the
-//! direct `FactsStore` path. That keeps the offline / first-run experience
+//! direct `MemoryStore` path. That keeps the offline / first-run experience
 //! working without requiring the user to start the daemon manually.
 
 use crate::cli::{
-    AddArgs, CliFactType, CliOrigin, CliOutcome, FilterArgs, ForgetArgs, ListArgs, OutputFormat,
+    AddArgs, CliMemoryType, CliOrigin, CliOutcome, FilterArgs, ForgetArgs, ListArgs, OutputFormat,
     SearchArgs, UpdateArgs,
 };
 use crate::daemon::pidfile;
-use crate::facts::Fact;
+use crate::memory::Memory;
 use anyhow::{anyhow, Context, Result};
 use chrono::{DateTime, Utc};
 use serde_json::{json, Value};
@@ -65,7 +65,7 @@ pub(crate) async fn try_running_daemon(skill_dir: &Path) -> Option<String> {
 /// engine uses in `engine::capability_tools::dispatch`) and re-probe.
 ///
 /// On any failure we fall back to `None`, so the caller can use direct
-/// `FactsStore` mode. Failures we surface to stderr so the user can see
+/// `MemoryStore` mode. Failures we surface to stderr so the user can see
 /// *why* the daemon path was skipped — silent fallback would hide real
 /// problems (e.g. port in use, binary missing).
 pub(crate) async fn try_running_or_start(
@@ -160,7 +160,7 @@ async fn add_stdin(base: &str, format: OutputFormat) -> Result<()> {
         if line.trim().is_empty() {
             continue;
         }
-        // Stdin facts are full Fact JSON (round-trippable from previous
+        // Stdin facts are full Memory JSON (round-trippable from previous
         // emits). Strip `vector` and `id` / `created_at` — the daemon
         // re-embeds and assigns fresh row identity.
         let mut fact: Value = serde_json::from_str(&line)
@@ -222,7 +222,7 @@ pub(crate) async fn update(base: &str, args: UpdateArgs, format: OutputFormat) -
         body["tags"] = json!(tags);
     }
     if let Some(t) = args.r#type {
-        body["type"] = Value::String(cli_fact_type_str(t).to_string());
+        body["type"] = Value::String(cli_memory_type_str(t).to_string());
     }
     if let Some(o) = args.from {
         body["from"] = Value::String(cli_origin_str(o).to_string());
@@ -288,7 +288,7 @@ pub(crate) async fn forget(base: &str, args: ForgetArgs, format: OutputFormat) -
 #[allow(clippy::too_many_arguments)]
 fn build_add_body(
     content: String,
-    r#type: CliFactType,
+    r#type: CliMemoryType,
     contexts: Vec<String>,
     tags: Vec<String>,
     from: CliOrigin,
@@ -300,7 +300,7 @@ fn build_add_body(
 ) -> Value {
     let mut body = json!({
         "content": content,
-        "type": cli_fact_type_str(r#type),
+        "type": cli_memory_type_str(r#type),
         "from": cli_origin_str(from),
         "skip_dedup": skip_dedup,
     });
@@ -334,7 +334,7 @@ fn filter_body(filters: &FilterArgs) -> Value {
     // collapse to the first value (matches what direct mode does today;
     // server-side filters are inclusive on type).
     if let Some(t) = filters.types.first().copied() {
-        body["type"] = Value::String(cli_fact_type_str(t).to_string());
+        body["type"] = Value::String(cli_memory_type_str(t).to_string());
     }
     if let Some(o) = filters.from {
         body["from"] = Value::String(cli_origin_str(o).to_string());
@@ -387,7 +387,7 @@ fn emit_add_outcome(data: &Value, format: OutputFormat) -> Result<()> {
 }
 
 fn emit_fact_value(data: &Value, format: OutputFormat) -> Result<()> {
-    let fact: Fact = serde_json::from_value(data.clone())
+    let fact: Memory = serde_json::from_value(data.clone())
         .context("parsing fact from daemon response")?;
     super::emit_fact(&fact, format)
 }
@@ -396,22 +396,22 @@ fn emit_fact_array(data: &Value, format: OutputFormat) -> Result<()> {
     let arr = data
         .as_array()
         .ok_or_else(|| anyhow!("expected array, got {data}"))?;
-    let facts: Vec<Fact> = arr
+    let facts: Vec<Memory> = arr
         .iter()
-        .map(|v| serde_json::from_value::<Fact>(v.clone()))
+        .map(|v| serde_json::from_value::<Memory>(v.clone()))
         .collect::<Result<Vec<_>, _>>()
         .context("parsing facts from daemon response")?;
     super::emit_facts(&facts, format)
 }
 
 /// Emit a search response — each row carries a `score` field which we
-/// strip before deserializing the Fact, then attach back when printing.
+/// strip before deserializing the Memory, then attach back when printing.
 /// JSON output: re-add `score`. Text output: prefix with `0.NN`.
 fn emit_scored_fact_array(data: &Value, format: OutputFormat) -> Result<()> {
     let arr = data
         .as_array()
         .ok_or_else(|| anyhow!("expected array, got {data}"))?;
-    let mut scored: Vec<(Fact, f32)> = Vec::with_capacity(arr.len());
+    let mut scored: Vec<(Memory, f32)> = Vec::with_capacity(arr.len());
     for v in arr {
         let mut row = v.clone();
         let score = row
@@ -420,7 +420,7 @@ fn emit_scored_fact_array(data: &Value, format: OutputFormat) -> Result<()> {
             .and_then(|s| s.as_f64())
             .map(|f| f as f32)
             .unwrap_or(0.0);
-        let fact: Fact = serde_json::from_value(row)
+        let fact: Memory = serde_json::from_value(row)
             .context("parsing fact from daemon response")?;
         scored.push((fact, score));
     }
@@ -446,19 +446,19 @@ fn truncate(s: &str, max: usize) -> String {
 
 // ── Enum string mapping ─────────────────────────────────────────────────────
 //
-// Server-side DTOs accept lowercase variant names for FactType / Origin /
+// Server-side DTOs accept lowercase variant names for MemoryType / Origin /
 // Outcome (via serde's `rename_all = "lowercase"`). Mapping CLI enums to
 // strings here keeps the request bodies small and round-trippable.
 
-fn cli_fact_type_str(t: CliFactType) -> &'static str {
+fn cli_memory_type_str(t: CliMemoryType) -> &'static str {
     match t {
-        CliFactType::Fact => "fact",
-        CliFactType::Preference => "preference",
-        CliFactType::Decision => "decision",
-        CliFactType::Tried => "tried",
-        CliFactType::Fixed => "fixed",
-        CliFactType::Learned => "learned",
-        CliFactType::Built => "built",
+        CliMemoryType::Fact => "fact",
+        CliMemoryType::Preference => "preference",
+        CliMemoryType::Decision => "decision",
+        CliMemoryType::Tried => "tried",
+        CliMemoryType::Fixed => "fixed",
+        CliMemoryType::Learned => "learned",
+        CliMemoryType::Built => "built",
     }
 }
 

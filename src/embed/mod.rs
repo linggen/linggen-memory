@@ -1,7 +1,7 @@
 //! Text → 1024-dim embedding via `fastembed`'s Qwen3 backend (candle + Qwen3-Embedding-0.6B).
 //!
-//! The model matches the vector dimension locked into the `facts` schema
-//! ([`crate::facts::VECTOR_DIM`] = 1024).
+//! The model matches the vector dimension locked into the memory schema
+//! ([`crate::memory::VECTOR_DIM`] = 1024).
 //!
 //! ## Why Qwen3-Embedding-0.6B
 //!
@@ -31,7 +31,7 @@ use anyhow::{Context, Result};
 use candle_core::{DType, Device};
 use fastembed::Qwen3TextEmbedding;
 
-use crate::facts::VECTOR_DIM;
+use crate::memory::VECTOR_DIM;
 
 const MODEL_REPO: &str = "Qwen/Qwen3-Embedding-0.6B";
 const MAX_SEQ_LEN: usize = 512;

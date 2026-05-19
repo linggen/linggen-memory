@@ -1,7 +1,7 @@
-//! Core types for the facts store.
+//! Core types for the memory store.
 //!
-//! `Fact` is the in-memory representation of a row in LanceDB's `facts` table.
-//! The enums (`FactType`, `Outcome`, `Origin`) are validated at the CLI
+//! `Memory` is the in-memory representation of a row in a LanceDB memory table.
+//! The enums (`MemoryType`, `Outcome`, `Origin`) are validated at the CLI
 //! boundary and stored as plain Utf8 columns — Arrow does not have a true
 //! enum type, so keeping validation in Rust gives us typo-safety without
 //! migration cost.
@@ -15,12 +15,12 @@ use std::fmt;
 use std::str::FromStr;
 use uuid::Uuid;
 
-/// A single memory fact — one row in the `facts` LanceDB table.
+/// A single memory — one row in a LanceDB memory table.
 ///
 /// Fields mapping to nullable columns are `Option<T>`. `contexts` and `tags`
 /// may be empty but are never null.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct Fact {
+pub struct Memory {
     pub id: Uuid,
     pub content: String,
 
@@ -42,7 +42,7 @@ pub struct Fact {
     #[serde(default)]
     pub tags: Vec<String>,
 
-    pub r#type: FactType,
+    pub r#type: MemoryType,
 
     /// Storage tier. `core` facts are the small, durable identity/preference
     /// set surfaced eagerly; `semantic` facts are the broader RAG-retrieved
@@ -91,14 +91,14 @@ pub struct Fact {
     pub source_session: Option<String>,
 }
 
-impl Fact {
+impl Memory {
     /// Minimal constructor for a fresh fact. Generates a new id and stamps
     /// `created_at` to `now`, truncated to microsecond precision so the
     /// value round-trips through LanceDB (which stores `Timestamp(Microsecond)`).
     /// Without the truncation, Linux platforms where `Utc::now()` returns
     /// nanosecond precision would fail equality checks after store roundtrip.
     /// All optional fields default to `None` / empty.
-    pub fn new(content: impl Into<String>, r#type: FactType, origin: Origin) -> Self {
+    pub fn new(content: impl Into<String>, r#type: MemoryType, origin: Origin) -> Self {
         Self {
             id: Uuid::new_v4(),
             content: content.into(),
@@ -124,16 +124,16 @@ impl Fact {
     }
 }
 
-// ── FactType ────────────────────────────────────────────────────────────────
+// ── MemoryType ────────────────────────────────────────────────────────────────
 
-/// Canonical categories of memory facts. Seven values; `activity` is
+/// Canonical categories of a memory. Seven values; `activity` is
 /// intentionally excluded — it was the catch-all that caused drift in v1.
 ///
 /// The CLI validates user input against these values. Ingested facts with
 /// unrecognized types fall back to `Fact` with a stderr warning.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum FactType {
+pub enum MemoryType {
     /// Stable truth about the user / world (identity, hobbies, domain facts).
     Fact,
     /// How the user wants the agent to work — cross-project behavioral rules.
@@ -150,52 +150,52 @@ pub enum FactType {
     Built,
 }
 
-impl FactType {
-    pub const ALL: &'static [FactType] = &[
-        FactType::Fact,
-        FactType::Preference,
-        FactType::Decision,
-        FactType::Tried,
-        FactType::Fixed,
-        FactType::Learned,
-        FactType::Built,
+impl MemoryType {
+    pub const ALL: &'static [MemoryType] = &[
+        MemoryType::Fact,
+        MemoryType::Preference,
+        MemoryType::Decision,
+        MemoryType::Tried,
+        MemoryType::Fixed,
+        MemoryType::Learned,
+        MemoryType::Built,
     ];
 
     pub fn as_str(&self) -> &'static str {
         match self {
-            FactType::Fact => "fact",
-            FactType::Preference => "preference",
-            FactType::Decision => "decision",
-            FactType::Tried => "tried",
-            FactType::Fixed => "fixed",
-            FactType::Learned => "learned",
-            FactType::Built => "built",
+            MemoryType::Fact => "fact",
+            MemoryType::Preference => "preference",
+            MemoryType::Decision => "decision",
+            MemoryType::Tried => "tried",
+            MemoryType::Fixed => "fixed",
+            MemoryType::Learned => "learned",
+            MemoryType::Built => "built",
         }
     }
 }
 
-impl fmt::Display for FactType {
+impl fmt::Display for MemoryType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
     }
 }
 
-impl FromStr for FactType {
+impl FromStr for MemoryType {
     type Err = ParseEnumError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_ascii_lowercase().as_str() {
-            "fact" => Ok(FactType::Fact),
-            "preference" => Ok(FactType::Preference),
-            "decision" => Ok(FactType::Decision),
-            "tried" => Ok(FactType::Tried),
-            "fixed" => Ok(FactType::Fixed),
-            "learned" => Ok(FactType::Learned),
-            "built" => Ok(FactType::Built),
+            "fact" => Ok(MemoryType::Fact),
+            "preference" => Ok(MemoryType::Preference),
+            "decision" => Ok(MemoryType::Decision),
+            "tried" => Ok(MemoryType::Tried),
+            "fixed" => Ok(MemoryType::Fixed),
+            "learned" => Ok(MemoryType::Learned),
+            "built" => Ok(MemoryType::Built),
             _ => Err(ParseEnumError {
                 field: "type",
                 value: s.to_string(),
-                allowed: FactType::ALL.iter().map(|t| t.as_str()).collect(),
+                allowed: MemoryType::ALL.iter().map(|t| t.as_str()).collect(),
             }),
         }
     }
@@ -371,17 +371,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn fact_type_roundtrip() {
-        for t in FactType::ALL {
+    fn memory_type_roundtrip() {
+        for t in MemoryType::ALL {
             let s = t.as_str();
-            assert_eq!(FactType::from_str(s).unwrap(), *t);
-            assert_eq!(s.to_ascii_uppercase().parse::<FactType>().unwrap(), *t);
+            assert_eq!(MemoryType::from_str(s).unwrap(), *t);
+            assert_eq!(s.to_ascii_uppercase().parse::<MemoryType>().unwrap(), *t);
         }
     }
 
     #[test]
-    fn fact_type_rejects_unknown() {
-        let err = FactType::from_str("activity").unwrap_err();
+    fn memory_type_rejects_unknown() {
+        let err = MemoryType::from_str("activity").unwrap_err();
         assert_eq!(err.field, "type");
         assert_eq!(err.value, "activity");
         assert!(err.allowed.contains(&"fact"));
@@ -413,10 +413,10 @@ mod tests {
     }
 
     #[test]
-    fn fact_new_sets_sensible_defaults() {
-        let f = Fact::new("user likes jazz", FactType::Preference, Origin::User);
+    fn memory_new_sets_sensible_defaults() {
+        let f = Memory::new("user likes jazz", MemoryType::Preference, Origin::User);
         assert_eq!(f.content, "user likes jazz");
-        assert_eq!(f.r#type, FactType::Preference);
+        assert_eq!(f.r#type, MemoryType::Preference);
         assert_eq!(f.origin, Origin::User);
         assert_eq!(f.tier, Tier::Semantic);
         assert!(f.vector.is_none());
@@ -431,7 +431,7 @@ mod tests {
 
     #[test]
     fn effective_timestamp_falls_back_to_created_at() {
-        let f = Fact::new("c", FactType::Fact, Origin::Derived);
+        let f = Memory::new("c", MemoryType::Fact, Origin::Derived);
         assert_eq!(f.effective_timestamp(), f.created_at);
 
         let occurred = Utc::now() - chrono::Duration::hours(6);
@@ -442,7 +442,7 @@ mod tests {
 
     #[test]
     fn json_roundtrip_preserves_from_rename() {
-        let mut f = Fact::new("x", FactType::Fact, Origin::User);
+        let mut f = Memory::new("x", MemoryType::Fact, Origin::User);
         f.contexts = vec!["code/linggen".into()];
         f.tags = vec!["intent:learn".into()];
 
@@ -450,13 +450,13 @@ mod tests {
         assert!(json.contains("\"from\":\"user\""));
         assert!(!json.contains("\"origin\""));
 
-        let parsed: Fact = serde_json::from_str(&json).unwrap();
+        let parsed: Memory = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed, f);
     }
 
     #[test]
     fn json_omits_null_optionals() {
-        let f = Fact::new("x", FactType::Fact, Origin::Derived);
+        let f = Memory::new("x", MemoryType::Fact, Origin::Derived);
         let json = serde_json::to_string(&f).unwrap();
         assert!(!json.contains("\"vector\""));
         assert!(!json.contains("\"outcome\""));
