@@ -23,9 +23,11 @@ use futures::TryStreamExt;
 use lancedb::{
     connect,
     query::{ExecutableQuery, QueryBase},
+    table::NewColumnTransform,
     Connection, DistanceType, Table,
 };
 use std::path::Path;
+use std::sync::Arc;
 use uuid::Uuid;
 
 /// Filter criteria shared by [`MemoryStore::search`] and [`MemoryStore::list`].
@@ -142,11 +144,13 @@ pub struct MemoryPatch {
     pub contexts: Option<Vec<String>>,
     pub tags: Option<Vec<String>>,
     pub r#type: Option<MemoryType>,
+    pub tier: Option<Tier>,
     pub origin: Option<Origin>,
     pub outcome: Option<Option<Outcome>>,
     pub cwd: Option<Option<String>>,
     pub occurred_at: Option<Option<DateTime<Utc>>>,
     pub source_session: Option<Option<String>>,
+    pub host: Option<Option<String>>,
     pub vector: Option<Option<Vec<f32>>>,
 }
 
@@ -166,6 +170,9 @@ impl MemoryPatch {
         if let Some(v) = &self.r#type {
             f.r#type = *v;
         }
+        if let Some(v) = &self.tier {
+            f.tier = *v;
+        }
         if let Some(v) = &self.origin {
             f.origin = *v;
         }
@@ -181,10 +188,44 @@ impl MemoryPatch {
         if let Some(v) = &self.source_session {
             f.source_session = v.clone();
         }
+        if let Some(v) = &self.host {
+            f.host = v.clone();
+        }
         if let Some(v) = &self.vector {
             f.vector = v.clone();
         }
     }
+}
+
+/// Auto-add columns added after the initial schema (e.g. `host`, 2026-05-20)
+/// when an existing on-disk table predates them. Idempotent — skips when
+/// the column is already present. Uses LanceDB's `add_columns(AllNulls)`
+/// so existing rows get `host=NULL` rather than being wiped.
+///
+/// Limited to nullable additions; non-nullable / type-changing migrations
+/// still fall back to the wipe-and-restart policy (`memory_recall_redesign`,
+/// 2026-05-15). A single safe column add stays well under the complexity
+/// bar that rejected the broader migration scheme.
+async fn ensure_late_schema_additions(table: &lancedb::Table) -> Result<()> {
+    use arrow_schema::{Field, Schema as ArrowSchema};
+    let current = table
+        .schema()
+        .await
+        .context("reading existing memory table schema")?;
+    if current.field_with_name("host").is_ok() {
+        return Ok(());
+    }
+    let add_schema = Arc::new(ArrowSchema::new(vec![Field::new(
+        "host",
+        arrow_schema::DataType::Utf8,
+        true,
+    )]));
+    table
+        .add_columns(NewColumnTransform::AllNulls(add_schema), None)
+        .await
+        .context("adding `host` column to existing memory table")?;
+    tracing::info!("memory table: added `host` column (NULL for pre-existing rows)");
+    Ok(())
 }
 
 /// Verify the existing table's `vector` column dimension matches the dim
@@ -314,6 +355,9 @@ fn merge_fact(existing: &Memory, candidate: &Memory) -> Memory {
     if candidate.source_session.is_some() {
         merged.source_session = candidate.source_session.clone();
     }
+    if candidate.host.is_some() {
+        merged.host = candidate.host.clone();
+    }
 
     merged
 }
@@ -380,6 +424,7 @@ impl MemoryStore {
                 .await
                 .with_context(|| format!("opening `{table_name}` table"))?;
             check_schema_dim(&t, &lancedb_dir).await?;
+            ensure_late_schema_additions(&t).await?;
             t
         } else {
             let schema = build_schema();

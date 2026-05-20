@@ -75,6 +75,7 @@ pub fn build_schema() -> Arc<Schema> {
             true,
         ),
         Field::new("source_session", DataType::Utf8, true),
+        Field::new("host", DataType::Utf8, true),
     ]))
 }
 
@@ -93,6 +94,7 @@ pub fn memories_to_record_batch(facts: &[Memory]) -> Result<RecordBatch> {
     let outcomes = StringArray::from_iter(facts.iter().map(|f| f.outcome.map(|o| o.as_str())));
     let cwds = StringArray::from_iter(facts.iter().map(|f| f.cwd.clone()));
     let source_sessions = StringArray::from_iter(facts.iter().map(|f| f.source_session.clone()));
+    let hosts = StringArray::from_iter(facts.iter().map(|f| f.host.clone()));
 
     let vectors = build_vector_column(facts)?;
     let contexts = build_string_list_column(facts.iter().map(|f| &f.contexts));
@@ -134,6 +136,7 @@ pub fn memories_to_record_batch(facts: &[Memory]) -> Result<RecordBatch> {
             Arc::new(updated_at),
             Arc::new(occurred_at),
             Arc::new(source_sessions),
+            Arc::new(hosts),
         ],
     )
     .context("building facts RecordBatch")
@@ -151,6 +154,10 @@ pub fn record_batch_to_memories(batch: &RecordBatch) -> Result<Vec<Memory>> {
     let outcomes = col_utf8_opt(batch, "outcome")?;
     let cwds = col_utf8_opt(batch, "cwd")?;
     let source_sessions = col_utf8_opt(batch, "source_session")?;
+    // `host` was added after the initial schema. Older tables on disk
+    // may not carry the column yet — treat its absence as "all rows
+    // have host=null" rather than failing the whole batch decode.
+    let hosts = col_utf8_opt_missing_ok(batch, "host");
     let contexts = col_string_list(batch, "contexts")?;
     let tags = col_string_list(batch, "tags")?;
     let vectors = col_vector(batch, "vector")?;
@@ -197,6 +204,7 @@ pub fn record_batch_to_memories(batch: &RecordBatch) -> Result<Vec<Memory>> {
                 .copied()
                 .flatten()
                 .map(str::to_string),
+            host: hosts.get(i).cloned().flatten(),
         });
     }
     Ok(out)
@@ -256,6 +264,27 @@ fn col_utf8<'a>(batch: &'a RecordBatch, name: &str) -> Result<&'a StringArray> {
         .as_any()
         .downcast_ref::<StringArray>()
         .with_context(|| format!("column `{name}` is not Utf8"))
+}
+
+/// Like [`col_utf8_opt`] but returns all-None when the column is absent
+/// entirely — used for fields added after the initial schema (e.g.
+/// `host`) so legacy on-disk tables still decode cleanly.
+fn col_utf8_opt_missing_ok(batch: &RecordBatch, name: &str) -> Vec<Option<String>> {
+    let Some(col) = batch.column_by_name(name) else {
+        return vec![None; batch.num_rows()];
+    };
+    let Some(arr) = col.as_any().downcast_ref::<StringArray>() else {
+        return vec![None; batch.num_rows()];
+    };
+    (0..arr.len())
+        .map(|i| {
+            if arr.is_null(i) {
+                None
+            } else {
+                Some(arr.value(i).to_string())
+            }
+        })
+        .collect()
 }
 
 /// Utf8 column as a Vec mapping row → Option<&str>. Cheap: borrows from the
@@ -409,9 +438,9 @@ mod tests {
     }
 
     #[test]
-    fn schema_has_fourteen_fields() {
+    fn schema_has_fifteen_fields() {
         let schema = build_schema();
-        assert_eq!(schema.fields().len(), 14);
+        assert_eq!(schema.fields().len(), 15);
     }
 
     #[test]
@@ -435,6 +464,7 @@ mod tests {
                 "updated_at",
                 "occurred_at",
                 "source_session",
+                "host",
             ]
         );
     }

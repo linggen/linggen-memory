@@ -90,11 +90,14 @@ pub async fn run(data_dir: &Path, skill_dir: &Path, port: u16) -> Result<()> {
             .with_context(|| format!("opening episodic store under {}", data_dir.display()))?,
     );
     // Recall shares the semantic handle with the write path so the table
-    // has one LanceDB connection across reads and writes.
-    let recall = Arc::new(Recall::new(Arc::clone(&semantic), episodic));
+    // has one LanceDB connection across reads and writes. The episodic
+    // handle is reused for write routing in `http::memory::add` when the
+    // caller sets `episodic: true` — same single connection per table.
+    let recall = Arc::new(Recall::new(Arc::clone(&semantic), Arc::clone(&episodic)));
     let embedder = Embedder::new().context("initializing embedder")?;
     let state = Arc::new(AppState {
         store: semantic,
+        episodic,
         recall,
         embedder: Arc::new(embedder),
     });

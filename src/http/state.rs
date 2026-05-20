@@ -9,10 +9,14 @@ use crate::memory::{MemoryStore, Recall};
 use std::sync::Arc;
 
 pub struct AppState {
-    /// Curated `semantic` store — the single-table write/CRUD/browse path.
+    /// Curated `semantic` store — the default-table write/CRUD/browse path.
     pub store: Arc<MemoryStore>,
+    /// Staging `episodic` store — the encoder + dream worklist target.
+    /// Selected over `store` when an `add`/`delete` request sets
+    /// `episodic: true`.
+    pub episodic: Arc<MemoryStore>,
     /// Dual-table read path (`semantic` + `episodic`) for recall/search.
-    /// Shares `store`'s semantic handle.
+    /// Shares both handles above.
     pub recall: Arc<Recall>,
     pub embedder: Arc<Embedder>,
 }

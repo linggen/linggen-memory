@@ -89,6 +89,15 @@ pub struct Memory {
     /// original session can be re-read.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub source_session: Option<String>,
+
+    /// Writing host — which tool runtime committed this row. Values:
+    /// `linggen` (Linggen engine: live agent + encoder subagent + dream
+    /// mission), `claude-code`, `codex`, etc. Distinct from `origin`
+    /// (which says whether the *content* came from `user`/`agent`/
+    /// `derived`); this says **which host wrote the row**. Nullable —
+    /// rows written before the field was introduced read back as `None`.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub host: Option<String>,
 }
 
 impl Memory {
@@ -114,6 +123,7 @@ impl Memory {
             updated_at: None,
             occurred_at: None,
             source_session: None,
+            host: None,
         }
     }
 
@@ -427,6 +437,7 @@ mod tests {
         assert!(f.updated_at.is_none());
         assert!(f.occurred_at.is_none());
         assert!(f.source_session.is_none());
+        assert!(f.host.is_none());
     }
 
     #[test]

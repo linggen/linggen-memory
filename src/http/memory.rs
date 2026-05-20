@@ -10,8 +10,10 @@
 use super::envelope::{ok, ApiError};
 use super::state::SharedState;
 use crate::memory::{
-    Memory, MemoryPatch, MemoryType, Filters, InsertOutcome, Origin, Outcome, SortOrder,
+    Memory, MemoryPatch, MemoryStore, MemoryType, Filters, InsertOutcome, Origin, Outcome,
+    SortOrder, Tier,
 };
+use std::sync::Arc;
 use axum::extract::State;
 use axum::response::Response;
 use axum::routing::post;
@@ -155,6 +157,17 @@ pub struct AddRequest {
     #[serde(default, deserialize_with = "deserialize_optional_datetime")]
     pub occurred_at: Option<DateTime<Utc>>,
     pub source_session: Option<String>,
+    /// Writing host identifier (`linggen`, `claude-code`, `codex`, …).
+    /// Distinct from `from` (which captures whether the content came
+    /// from `user` / `agent` / `derived`); this records which tool
+    /// runtime committed the row. Optional — older callers omit it.
+    pub host: Option<String>,
+    /// Route the write to the **episodic** staging store instead of the
+    /// default curated semantic table. Used by the per-session encoder
+    /// subagent so episodic writes can flow through HTTP (no more direct
+    /// LanceDB-via-CLI roundtrip from inside the engine).
+    #[serde(default)]
+    pub episodic: bool,
     /// Bypass dedup: insert as a new row even if a near-duplicate exists.
     /// Accepts `skip_dedup` (canonical) or `force` (alias).
     #[serde(default, alias = "force")]
@@ -164,6 +177,11 @@ pub struct AddRequest {
 #[derive(Debug, Deserialize)]
 pub struct GetRequest {
     pub id: Uuid,
+    /// When set, looks the id up in the episodic store. Default (false)
+    /// looks up in semantic. If you don't know which table the row lives
+    /// in, set `episodic: true` after a 404 on the default.
+    #[serde(default)]
+    pub episodic: bool,
 }
 
 /// Filter block shared by `search`, `list`, and `forget`. All fields
@@ -177,6 +195,13 @@ pub struct FilterDTO {
     /// internally we convert to `Filters.types: Vec<MemoryType>`.
     #[serde(default, deserialize_with = "deserialize_optional_lenient")]
     pub r#type: Option<MemoryType>,
+    /// Narrow to one tier (`core` or `semantic`). Within the semantic
+    /// table both tiers coexist; this filter lets callers ask for "just
+    /// the always-on identity set" (`tier=core`) or "everything else"
+    /// (`tier=semantic`). Ignored for episodic queries — episodic rows
+    /// don't carry a meaningful tier.
+    #[serde(default, deserialize_with = "deserialize_optional_lenient")]
+    pub tier: Option<Tier>,
     #[serde(default, alias = "origin", deserialize_with = "deserialize_optional_lenient")]
     pub from: Option<Origin>,
     #[serde(default, deserialize_with = "deserialize_optional_lenient")]
@@ -203,7 +228,7 @@ impl FilterDTO {
             outcome: self.outcome,
             since: self.since,
             until: self.until,
-            tier: None, // Phase 1b wires the real tier filter here
+            tier: self.tier,
         }
     }
 }
@@ -254,6 +279,9 @@ pub struct ListRequest {
     /// Number of rows to skip in the sorted result. `0` = first page.
     #[serde(default)]
     pub offset: usize,
+    /// Target the episodic table instead of the default semantic table.
+    #[serde(default)]
+    pub episodic: bool,
 }
 
 fn default_list_limit() -> usize {
@@ -271,6 +299,8 @@ pub struct UpdateRequest {
     pub tags: Option<Vec<String>>,
     #[serde(default, deserialize_with = "deserialize_optional_lenient")]
     pub r#type: Option<MemoryType>,
+    #[serde(default, deserialize_with = "deserialize_optional_lenient")]
+    pub tier: Option<Tier>,
     #[serde(default, alias = "origin", deserialize_with = "deserialize_optional_lenient")]
     pub from: Option<Origin>,
     #[serde(default, deserialize_with = "deserialize_optional_lenient")]
@@ -280,20 +310,42 @@ pub struct UpdateRequest {
     pub cwd: Option<String>,
     #[serde(default)]
     pub clear_cwd: bool,
+    pub host: Option<String>,
+    #[serde(default)]
+    pub clear_host: bool,
+    /// Target the episodic table instead of the default semantic table.
+    #[serde(default)]
+    pub episodic: bool,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct DeleteRequest {
     pub id: Uuid,
+    /// Target the episodic table instead of the default semantic table.
+    #[serde(default)]
+    pub episodic: bool,
 }
 
 #[derive(Debug, Default, Deserialize)]
 pub struct ForgetRequest {
     #[serde(flatten)]
     pub filters: FilterDTO,
+    /// Target the episodic table instead of the default semantic table.
+    #[serde(default)]
+    pub episodic: bool,
 }
 
 // ── Handlers ────────────────────────────────────────────────────────────────
+
+/// Pick the semantic or episodic store based on the request's `episodic`
+/// flag. Centralized so every CRUD endpoint routes consistently.
+fn pick_store(state: &SharedState, episodic: bool) -> Arc<MemoryStore> {
+    if episodic {
+        Arc::clone(&state.episodic)
+    } else {
+        Arc::clone(&state.store)
+    }
+}
 
 async fn add(
     State(state): State<SharedState>,
@@ -304,6 +356,7 @@ async fn add(
     }
 
     let skip_dedup = req.skip_dedup;
+    let episodic = req.episodic;
     let mut fact = Memory::new(
         req.content,
         req.r#type.unwrap_or(MemoryType::Fact),
@@ -315,6 +368,7 @@ async fn add(
     fact.cwd = req.cwd;
     fact.occurred_at = req.occurred_at;
     fact.source_session = req.source_session;
+    fact.host = req.host;
 
     // Embed the content so the row is immediately searchable. Serialized +
     // off the async workers so concurrent adds can't stack forward passes.
@@ -326,15 +380,16 @@ async fn add(
         .map_err(ApiError::internal)?;
     fact.vector = Some(vector);
 
+    let store = pick_store(&state, episodic);
     if skip_dedup {
-        state.store.insert(std::slice::from_ref(&fact)).await?;
+        store.insert(std::slice::from_ref(&fact)).await?;
         return Ok(ok(json!({
             "action": "added",
             "fact": fact_public(&fact),
         })));
     }
 
-    let outcome = state.store.insert_with_dedup(fact).await?;
+    let outcome = store.insert_with_dedup(fact).await?;
     Ok(ok(outcome_public(&outcome)))
 }
 
@@ -364,7 +419,8 @@ async fn get(
     State(state): State<SharedState>,
     Json(req): Json<GetRequest>,
 ) -> Result<Response, ApiError> {
-    match state.store.get(req.id).await? {
+    let store = pick_store(&state, req.episodic);
+    match store.get(req.id).await? {
         Some(fact) => Ok(ok(fact_public(&fact))),
         None => Err(ApiError::not_found(format!("no fact with id {}", req.id))),
     }
@@ -400,8 +456,8 @@ async fn list(
     State(state): State<SharedState>,
     Json(req): Json<ListRequest>,
 ) -> Result<Response, ApiError> {
-    let results = state
-        .store
+    let store = pick_store(&state, req.episodic);
+    let results = store
         .list(
             &req.filters.into_filters(),
             req.sort.into(),
@@ -426,19 +482,27 @@ async fn update(
         (None, true) => Some(None),
         (None, false) => None,
     };
+    let host_patch = match (req.host, req.clear_host) {
+        (Some(v), _) => Some(Some(v)),
+        (None, true) => Some(None),
+        (None, false) => None,
+    };
 
     let patch = MemoryPatch {
         content: req.content,
         contexts: req.contexts,
         tags: req.tags,
         r#type: req.r#type,
+        tier: req.tier,
         origin: req.from,
         outcome: outcome_patch,
         cwd: cwd_patch,
+        host: host_patch,
         ..Default::default()
     };
 
-    match state.store.update(req.id, &patch).await? {
+    let store = pick_store(&state, req.episodic);
+    match store.update(req.id, &patch).await? {
         Some(fact) => Ok(ok(fact_public(&fact))),
         None => Err(ApiError::not_found(format!("no fact with id {}", req.id))),
     }
@@ -448,7 +512,8 @@ async fn delete(
     State(state): State<SharedState>,
     Json(req): Json<DeleteRequest>,
 ) -> Result<Response, ApiError> {
-    let removed = state.store.delete(req.id).await?;
+    let store = pick_store(&state, req.episodic);
+    let removed = store.delete(req.id).await?;
     Ok(ok(json!({"id": req.id, "removed": removed})))
 }
 
@@ -463,14 +528,16 @@ async fn forget(
         && filters.types.is_empty()
         && filters.origin.is_none()
         && filters.outcome.is_none()
+        && filters.tier.is_none()
         && filters.since.is_none()
         && filters.until.is_none()
     {
         return Err(ApiError::bad_request(
             "forget refuses an empty filter — supply at least one of \
-             contexts, type, from, outcome, since, until",
+             contexts, type, tier, from, outcome, since, until",
         ));
     }
-    let removed = state.store.forget(&filters).await?;
+    let store = pick_store(&state, req.episodic);
+    let removed = store.forget(&filters).await?;
     Ok(ok(json!({"removed": removed})))
 }
