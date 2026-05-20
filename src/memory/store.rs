@@ -28,12 +28,6 @@ use lancedb::{
 use std::path::Path;
 use uuid::Uuid;
 
-/// Reserved tag marking an episodic row the consolidator has already
-/// processed. Not user-facing — set/queried only by the consolidation
-/// pass (logic lands in a later phase); defined here so producer and
-/// consumer share one literal.
-pub const CONSOLIDATED_TAG: &str = "sys:consolidated";
-
 /// Filter criteria shared by [`MemoryStore::search`] and [`MemoryStore::list`].
 ///
 /// All filter fields combine with AND. Within `contexts`, every entry must
