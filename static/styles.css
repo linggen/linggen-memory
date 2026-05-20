@@ -164,6 +164,36 @@ input[type="text"]:disabled { opacity: 0.6; }
 }
 #filters-bar[hidden] { display: none; }
 
+/* Storage view tabs — core / long-term / episodic / all. Mutually
+   exclusive, segmented control inline in the query bar. The input
+   keeps flex: 1 (shrinks to make room); the tabs are intrinsic-width. */
+#view-tabs {
+  display: flex;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+#view-tabs button {
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  padding: 4px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+#view-tabs button:hover {
+  background: var(--panel);
+  color: var(--text);
+}
+#view-tabs button.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
+  font-weight: 600;
+}
+
 #filter-chips {
   display: flex;
   flex-wrap: wrap;
@@ -731,6 +761,23 @@ input[type="text"]:disabled { opacity: 0.6; }
   text-transform: none;
   color: var(--text);
 }
+
+/* Storage tier + inferred host — small dim chips next to the type
+   marker so a glance distinguishes core / long-term / episodic rows
+   and which host wrote them (when cwd lets us tell). */
+.row-storage, .row-host {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  padding: 1px 6px;
+  border-radius: 3px;
+  color: var(--text-dim);
+  text-transform: lowercase;
+  letter-spacing: 0.2px;
+}
+.row-storage.s-core      { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); }
+.row-storage.s-long-term { color: var(--t-learned); border-color: color-mix(in srgb, var(--t-learned) 40%, var(--border)); }
+.row-storage.s-episodic  { color: var(--t-tried);   border-color: color-mix(in srgb, var(--t-tried) 40%, var(--border)); }
+.row-host { font-style: italic; }
 
 .row-age { margin-left: auto; text-transform: none; }
 .row-score ~ .row-age { margin-left: 0; }

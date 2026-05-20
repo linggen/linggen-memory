@@ -27,10 +27,16 @@
         <input
           id="query"
           type="text"
-          placeholder="search memory or /type:preference /context:code/linggen /from:user /since:2026-01-01 …"
+          placeholder="search memory or /type:preference /context:code/linggen /from:user …"
           autocomplete="off"
           spellcheck="false"
         />
+        <div id="view-tabs" role="tablist" aria-label="Storage view">
+          <button type="button" role="tab" data-view="all"       class="active" title="Everything in the semantic table (core + long-term)">All</button>
+          <button type="button" role="tab" data-view="core"      title="Always-loaded universals about the person (tier=core)">Core</button>
+          <button type="button" role="tab" data-view="long-term" title="Cross-project goals / preferences / decisions / learnings (tier=semantic)">Long-term</button>
+          <button type="button" role="tab" data-view="episodic"  title="Staging table where the encoder writes; the dream worklist promotes-or-evicts past TTL">Episodic</button>
+        </div>
         <button id="add" type="button" disabled title="Add arrives in step 6">+ Add</button>
         <div id="bulk-wrap">
           <button id="bulk" type="button" aria-haspopup="menu" aria-expanded="false">⋯ Bulk ▾</button>

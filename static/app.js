@@ -141,6 +141,15 @@ const state = {
     since: null,
     until: null,
   },
+  // Storage view — mutually exclusive across the three places a row can
+  // live. Translates to `tier` / `episodic` on the wire (see filterPayload
+  // + isEpisodicMode below). Default `all` matches the historical no-tier
+  // semantic-table dump.
+  //   'all'       → semantic table, no tier filter
+  //   'core'      → semantic table, tier=core
+  //   'long-term' → semantic table, tier=semantic
+  //   'episodic'  → episodic table (tier irrelevant — rows don't carry one)
+  view: 'all',
   text: '',
   sort: 'newest',
 
@@ -253,11 +262,94 @@ function filterPayload() {
   if (f.outcome) body.outcome = f.outcome;
   if (f.since)   body.since = f.since;
   if (f.until)   body.until = f.until;
+  // Storage view: 'episodic' is a top-level flag on the request (switches
+  // table); 'core' / 'long-term' add a `tier` filter inside the semantic
+  // table. 'all' leaves both off.
+  if (state.view === 'episodic')  body.episodic = true;
+  if (state.view === 'core')      body.tier = 'core';
+  if (state.view === 'long-term') body.tier = 'semantic';
   return body;
+}
+
+function setView(name) {
+  if (state.view === name) return;
+  state.view = name;
+  renderViewBar();
+  reload();
+}
+
+function renderViewBar() {
+  const bar = document.getElementById('view-tabs');
+  if (!bar) return;
+  for (const btn of bar.querySelectorAll('button[data-view]')) {
+    const active = btn.dataset.view === state.view;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-selected', active ? 'true' : 'false');
+  }
 }
 
 function isSearchMode() {
   return state.text.trim().length > 0;
+}
+
+// Fetch rows for the current view. For semantic-only views (`core`,
+// `long-term`) and episodic-only, this is one round-trip. For `all`
+// the daemon's list/search endpoint is single-table by design (the
+// `episodic: true` flag flips which table is queried), so we fan out
+// two parallel requests and merge — concat + sort by created_at desc,
+// then trim to `limit`. Loses clean pagination beyond the first page
+// in `all` mode, which is fine for the typical store size; loadMore()
+// is suppressed there.
+// Tag rows with their storage origin (`_storage`: 'episodic' | 'semantic')
+// so the detail pane can show the right tier even after the All-view
+// merge loses the per-fetch context. The episodic table doesn't carry
+// a tier column, so we synthesize one from the table identity.
+function tagStorage(rows, episodic) {
+  const tag = episodic ? 'episodic' : 'semantic';
+  for (const r of (rows || [])) r._storage = tag;
+  return rows || [];
+}
+
+async function fetchRowsForView(endpoint, basePayload) {
+  if (state.view !== 'all') {
+    const rows = await api(endpoint, basePayload);
+    return tagStorage(rows, basePayload.episodic === true);
+  }
+  const [sem, ep] = await Promise.all([
+    api(endpoint, basePayload).then(r => tagStorage(r, false)),
+    api(endpoint, { ...basePayload, episodic: true }).then(r => tagStorage(r, true)),
+  ]);
+  const merged = [...sem, ...ep];
+  merged.sort((a, b) => {
+    const av = a.created_at || '';
+    const bv = b.created_at || '';
+    return state.sort === 'oldest' ? av.localeCompare(bv) : bv.localeCompare(av);
+  });
+  const limit = basePayload.limit || merged.length;
+  return merged.slice(0, limit);
+}
+
+// Storage label: "core" / "long-term" / "episodic". Derived from
+// `_storage` (which table the row came from) + `tier` (semantic-table
+// rows only). Episodic rows always read "episodic" regardless of tier.
+function storageLabel(row) {
+  if (!row) return '—';
+  if (row._storage === 'episodic') return 'episodic';
+  return row.tier === 'core' ? 'core' : 'long-term';
+}
+
+// Best-effort host inference from `cwd`. Linggen / CC / Codex / OpenClaw
+// each have a recognizable home-dir segment when the row was written
+// during a session inside that host's tree; rows written from a plain
+// workspace path can't be attributed and read "—". A future schema
+// addition (explicit `host` column) would replace this.
+function hostLabel(row) {
+  const cwd = (row && row.cwd) || '';
+  if (cwd.includes('/.claude/'))   return 'Claude Code';
+  if (cwd.includes('/.codex/'))    return 'Codex';
+  if (cwd.includes('/.openclaw/')) return 'OpenClaw';
+  if (cwd.includes('/.linggen/'))  return 'Linggen';
+  return '—';
 }
 
 async function reload() {
@@ -273,12 +365,12 @@ async function reload() {
   showLoading();
   try {
     const rows = isSearchMode()
-      ? await api('/api/memory/search', {
+      ? await fetchRowsForView('/api/memory/search', {
           query: state.text,
           ...filterPayload(),
           limit: SEARCH_LIMIT,
         })
-      : await api('/api/memory/list', {
+      : await fetchRowsForView('/api/memory/list', {
           ...filterPayload(),
           sort: state.sort,
           limit: LIST_LIMIT,
@@ -286,8 +378,12 @@ async function reload() {
         });
     state.loaded = rows;
     state.offset = rows.length;
-    // Search is capped at SEARCH_LIMIT and has no offset, so treat it as complete.
-    state.hasMore = !isSearchMode() && rows.length === LIST_LIMIT;
+    // Pagination via offset only works when the request hits a single
+    // table. Search is capped at SEARCH_LIMIT (no offset); `all` mode
+    // fans out two requests we can't offset together. Both → no more.
+    state.hasMore = !isSearchMode()
+                 && state.view !== 'all'
+                 && rows.length === LIST_LIMIT;
     renderList();
     updateCount();
   } catch (err) {
@@ -528,6 +624,25 @@ function renderRowHead(fact) {
     head.appendChild(score);
   }
 
+  // Storage + host badges — small dim chips next to the type/from
+  // markers so a glance distinguishes core / long-term / episodic
+  // rows, and which host wrote the row when cwd lets us tell.
+  const storage = storageLabel(fact);
+  const stor = document.createElement('span');
+  stor.className = `row-storage s-${storage}`;
+  stor.textContent = storage;
+  stor.title = `storage tier (${storage})`;
+  head.appendChild(stor);
+
+  const host = hostLabel(fact);
+  if (host !== '—') {
+    const h = document.createElement('span');
+    h.className = 'row-host';
+    h.textContent = host;
+    h.title = `inferred host (from cwd: ${fact.cwd || ''})`;
+    head.appendChild(h);
+  }
+
   const age = document.createElement('span');
   age.className = 'row-age';
   age.textContent = relAge(fact.occurred_at ?? fact.created_at);
@@ -682,6 +797,8 @@ function detailGrid() {
     rows.push(['Occurred', textOrDim(formatTimestamp(edited.occurred_at))]);
     rows.push(['divider']);
     const original = factForSelected();
+    rows.push(['Tier', textOrDim(storageLabel(original))]);
+    rows.push(['Host', textOrDim(hostLabel(original))]);
     rows.push(['Created', textOrDim(formatTimestamp(original?.created_at))]);
     rows.push(['Session', idCell(original?.source_session)]);
     rows.push(['id',      idCell(original?.id)]);
@@ -941,6 +1058,14 @@ async function saveDraft() {
   }
 }
 
+// True when the currently-shown table is the staging `episodic` store.
+// Add / update / delete / get all need `episodic: true` on the wire to
+// target the right table, otherwise they 404 (semantic-default lookup
+// can't see episodic rows).
+function isEpisodicMode() {
+  return state.view === 'episodic';
+}
+
 function buildAddPayload(e) {
   const body = { content: e.content };
   if (e.contexts.length > 0) body.contexts = e.contexts;
@@ -950,6 +1075,11 @@ function buildAddPayload(e) {
   if (e.outcome) body.outcome = e.outcome;
   if (e.cwd)     body.cwd = e.cwd;
   if (e.occurred_at) body.occurred_at = normalizeDate(e.occurred_at);
+  // Core writes carry `tier: 'core'`; everything else stays at the
+  // semantic-table default. Episodic writes ride the top-level flag.
+  if (state.view === 'core')      body.tier = 'core';
+  if (state.view === 'long-term') body.tier = 'semantic';
+  if (isEpisodicMode())           body.episodic = true;
   return body;
 }
 
@@ -1023,6 +1153,7 @@ function arraysEqual(a, b) {
 async function saveEditedFact() {
   const patch = diffForUpdate(state.draft.original, state.draft.edited);
   if (!patch) return;
+  if (isEpisodicMode()) patch.episodic = true;
   try {
     const updated = await api('/api/memory/update', patch);
     const idx = state.loaded.findIndex(f => f.id === updated.id);
@@ -1062,8 +1193,10 @@ async function deleteFact(id) {
   if (!fact) return;
   const preview = (fact.content ?? '').slice(0, 80);
   if (!window.confirm(`Delete this fact?\n\n"${preview}${preview.length === 80 ? '…' : ''}"\n\nThis cannot be undone.`)) return;
+  const req = { id };
+  if (isEpisodicMode()) req.episodic = true;
   try {
-    await api('/api/memory/delete', { id });
+    await api('/api/memory/delete', req);
     state.loaded = state.loaded.filter(f => f.id !== id);
     state.offset = Math.max(0, state.offset - 1);
     state.selectedId = null;
@@ -1347,8 +1480,10 @@ async function bulkDeleteSelected() {
 }
 
 async function deleteOne(id) {
+  const req = { id };
+  if (isEpisodicMode()) req.episodic = true;
   try {
-    await api('/api/memory/delete', { id });
+    await api('/api/memory/delete', req);
     return { ok: true, id };
   } catch (err) {
     return { ok: false, id, err: err.message ?? 'unknown' };
@@ -1731,8 +1866,16 @@ document.getElementById('clear-all').addEventListener('click', () => {
   reload();
 });
 
+// Storage-view buttons (Core / Long-term / Episodic / All).
+document.getElementById('view-tabs').addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-view]');
+  if (!btn) return;
+  setView(btn.dataset.view);
+});
+
 pollHealth();
 setInterval(pollHealth, HEALTH_POLL_MS);
 
 renderFiltersBar();
+renderViewBar();
 reload();
