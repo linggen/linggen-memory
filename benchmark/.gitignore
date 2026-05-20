@@ -1,0 +1,8 @@
+# Dataset (large, fetched on demand from Hugging Face).
+data/*.jsonl
+data/*.json
+!data/.gitkeep
+
+# Per-run output (regenerated per ling-mem release).
+results/*.json
+!results/.gitkeep
