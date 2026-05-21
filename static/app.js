@@ -321,8 +321,8 @@ async function fetchRowsForView(endpoint, basePayload) {
   ]);
   const merged = [...sem, ...ep];
   merged.sort((a, b) => {
-    const av = a.created_at || '';
-    const bv = b.created_at || '';
+    const av = a.occurred_at || a.created_at || '';
+    const bv = b.occurred_at || b.created_at || '';
     return state.sort === 'oldest' ? av.localeCompare(bv) : bv.localeCompare(av);
   });
   const limit = basePayload.limit || merged.length;
