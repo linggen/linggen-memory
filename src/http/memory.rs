@@ -176,11 +176,12 @@ pub struct AddRequest {
 #[derive(Debug, Deserialize)]
 pub struct GetRequest {
     pub id: String,
-    /// When set, looks the id up in the episodic store. Default (false)
-    /// looks up in semantic. If you don't know which table the row lives
-    /// in, set `episodic: true` after a 404 on the default.
+    /// `Some(true)` = episodic only, `Some(false)` = semantic only,
+    /// **`None` (default) = span both tables**. Returns the first match.
+    /// Callers used to need a 404-then-retry dance; the daemon now does
+    /// that internally.
     #[serde(default)]
-    pub episodic: bool,
+    pub episodic: Option<bool>,
 }
 
 /// Filter block shared by `search`, `list`, and `forget`. All fields
@@ -295,9 +296,11 @@ pub struct ListRequest {
     /// Number of rows to skip in the sorted result. `0` = first page.
     #[serde(default)]
     pub offset: usize,
-    /// Target the episodic table instead of the default semantic table.
+    /// `Some(true)` = episodic only, `Some(false)` = semantic only,
+    /// **`None` (default) = span both tables**. Merged + sorted +
+    /// limited as one result set.
     #[serde(default)]
-    pub episodic: bool,
+    pub episodic: Option<bool>,
 }
 
 fn default_list_limit() -> usize {
@@ -329,17 +332,21 @@ pub struct UpdateRequest {
     pub host: Option<String>,
     #[serde(default)]
     pub clear_host: bool,
-    /// Target the episodic table instead of the default semantic table.
+    /// `Some(true)` = episodic only, `Some(false)` = semantic only,
+    /// **`None` (default) = locate the id in whichever table holds it**
+    /// before applying the patch.
     #[serde(default)]
-    pub episodic: bool,
+    pub episodic: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct DeleteRequest {
     pub id: String,
-    /// Target the episodic table instead of the default semantic table.
+    /// `Some(true)` = episodic only, `Some(false)` = semantic only,
+    /// **`None` (default) = locate the id in whichever table holds it**
+    /// before deleting.
     #[serde(default)]
-    pub episodic: bool,
+    pub episodic: Option<bool>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -360,6 +367,22 @@ fn pick_store(state: &SharedState, episodic: bool) -> Arc<MemoryStore> {
         Arc::clone(&state.episodic)
     } else {
         Arc::clone(&state.store)
+    }
+}
+
+/// Resolve which store(s) a read/edit/delete should hit.
+///   - `Some(true)`  → episodic only
+///   - `Some(false)` → semantic only
+///   - `None`        → both (caller decides how to merge)
+///
+/// Returned in the order semantic-first so locate-first-hit semantics
+/// preserve the higher-tier preference when an id collision exists
+/// across tables.
+fn stores_for_read(state: &SharedState, episodic: Option<bool>) -> Vec<Arc<MemoryStore>> {
+    match episodic {
+        Some(true) => vec![Arc::clone(&state.episodic)],
+        Some(false) => vec![Arc::clone(&state.store)],
+        None => vec![Arc::clone(&state.store), Arc::clone(&state.episodic)],
     }
 }
 
@@ -411,8 +434,95 @@ async fn add(
         })));
     }
 
+    // Cross-tier dedup. The single-table `insert_with_dedup` below only
+    // catches duplicates inside the chosen store; without this step, a
+    // semantic copy and an episodic copy of byte-identical (content, type)
+    // would coexist. Tier rank: Core > Semantic > Episodic. The higher-
+    // tier row wins; on equal rank (e.g. both semantic) the in-table
+    // dedup handles it. See linggen `agents/ling-mem.md` tier-discipline.
+    let other = if episodic {
+        Arc::clone(&state.store)
+    } else {
+        Arc::clone(&state.episodic)
+    };
+    if let Some(existing) = other
+        .find_exact_content_public(&fact.content, fact.r#type)
+        .await?
+    {
+        let new_rank = tier_rank(fact.tier);
+        let existing_rank = tier_rank(existing.tier);
+        if existing_rank >= new_rank {
+            // Existing row is at the same or higher tier — keep it.
+            // Merge contexts/tags so the new write's metadata isn't lost,
+            // then return as if dedup'd.
+            let merged = merge_with_existing(&existing, &fact);
+            other.update_full_public(&existing.id, &merged).await?;
+            return Ok(ok(json!({
+                "action": "merged",
+                "similarity": 1.0,
+                "previous_id": existing.id,
+                "fact": fact_public(&merged),
+            })));
+        }
+        // New row is at a higher tier — promote: delete the lower-tier
+        // copy from the other table, then proceed with single-table insert.
+        let _ = other.delete(&existing.id).await?;
+    }
+
     let outcome = store.insert_with_dedup(fact).await?;
     Ok(ok(outcome_public(&outcome)))
+}
+
+/// Tier rank for the "higher wins on cross-tier dedup" rule.
+/// Higher number = higher tier. Core (2) > Semantic (1) > Episodic (0).
+fn tier_rank(tier: crate::memory::Tier) -> u8 {
+    use crate::memory::Tier::*;
+    match tier {
+        Core => 2,
+        Semantic => 1,
+        Episodic => 0,
+    }
+}
+
+/// Same merge logic as `store::merge_fact` but at the HTTP layer so we
+/// can compose it with a cross-store update. Unions contexts + tags into
+/// the existing row, takes the longer content, fills missing optional
+/// fields from the candidate.
+fn merge_with_existing(
+    existing: &crate::memory::Memory,
+    candidate: &crate::memory::Memory,
+) -> crate::memory::Memory {
+    let mut merged = existing.clone();
+    if candidate.content.len() > existing.content.len() {
+        merged.content = candidate.content.clone();
+        merged.vector = candidate.vector.clone();
+    }
+    for c in &candidate.contexts {
+        if !merged.contexts.contains(c) {
+            merged.contexts.push(c.clone());
+        }
+    }
+    for t in &candidate.tags {
+        if !merged.tags.contains(t) {
+            merged.tags.push(t.clone());
+        }
+    }
+    if candidate.outcome.is_some() {
+        merged.outcome = candidate.outcome;
+    }
+    if candidate.cwd.is_some() {
+        merged.cwd = candidate.cwd.clone();
+    }
+    if candidate.occurred_at.is_some() {
+        merged.occurred_at = candidate.occurred_at;
+    }
+    if candidate.source_session.is_some() {
+        merged.source_session = candidate.source_session.clone();
+    }
+    if candidate.host.is_some() {
+        merged.host = candidate.host.clone();
+    }
+    merged
 }
 
 /// Wrap an [`InsertOutcome`] as the JSON payload returned by the add
@@ -441,11 +551,12 @@ async fn get(
     State(state): State<SharedState>,
     Json(req): Json<GetRequest>,
 ) -> Result<Response, ApiError> {
-    let store = pick_store(&state, req.episodic);
-    match store.get(&req.id).await? {
-        Some(fact) => Ok(ok(fact_public(&fact))),
-        None => Err(ApiError::not_found(format!("no fact with id {}", req.id))),
+    for store in stores_for_read(&state, req.episodic) {
+        if let Some(fact) = store.get(&req.id).await? {
+            return Ok(ok(fact_public(&fact)));
+        }
     }
+    Err(ApiError::not_found(format!("no fact with id {}", req.id)))
 }
 
 async fn search(
@@ -490,16 +601,28 @@ async fn list(
     State(state): State<SharedState>,
     Json(req): Json<ListRequest>,
 ) -> Result<Response, ApiError> {
-    let store = pick_store(&state, req.episodic);
-    let results = store
-        .list(
-            &req.filters.into_filters(),
-            req.sort.into(),
-            req.limit,
-            req.offset,
-        )
-        .await?;
-    Ok(ok(facts_public(&results)))
+    let filters = req.filters.into_filters();
+    let sort = req.sort.into();
+    let mut combined = Vec::new();
+    // For each in-scope store, pull `limit + offset` rows so the post-
+    // merge sort+page still has enough material; bounded by the per-
+    // store list cap.
+    let take = req.limit.saturating_add(req.offset);
+    for store in stores_for_read(&state, req.episodic) {
+        let rows = store.list(&filters, sort, take, 0).await?;
+        combined.extend(rows);
+    }
+    sort_combined(&mut combined, sort);
+    let paged: Vec<_> = combined.into_iter().skip(req.offset).take(req.limit).collect();
+    Ok(ok(facts_public(&paged)))
+}
+
+fn sort_combined(rows: &mut [crate::memory::Memory], sort: crate::memory::SortOrder) {
+    use crate::memory::SortOrder::*;
+    rows.sort_by(|a, b| match sort {
+        Newest => b.effective_timestamp().cmp(&a.effective_timestamp()),
+        Oldest => a.effective_timestamp().cmp(&b.effective_timestamp()),
+    });
 }
 
 async fn update(
@@ -535,20 +658,24 @@ async fn update(
         ..Default::default()
     };
 
-    let store = pick_store(&state, req.episodic);
-    match store.update(&req.id, &patch).await? {
-        Some(fact) => Ok(ok(fact_public(&fact))),
-        None => Err(ApiError::not_found(format!("no fact with id {}", req.id))),
+    for store in stores_for_read(&state, req.episodic) {
+        if let Some(fact) = store.update(&req.id, &patch).await? {
+            return Ok(ok(fact_public(&fact)));
+        }
     }
+    Err(ApiError::not_found(format!("no fact with id {}", req.id)))
 }
 
 async fn delete(
     State(state): State<SharedState>,
     Json(req): Json<DeleteRequest>,
 ) -> Result<Response, ApiError> {
-    let store = pick_store(&state, req.episodic);
-    let removed = store.delete(&req.id).await?;
-    Ok(ok(json!({"id": req.id, "removed": removed})))
+    for store in stores_for_read(&state, req.episodic) {
+        if store.delete(&req.id).await? {
+            return Ok(ok(json!({"id": req.id, "removed": true})));
+        }
+    }
+    Ok(ok(json!({"id": req.id, "removed": false})))
 }
 
 async fn forget(

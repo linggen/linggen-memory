@@ -504,6 +504,26 @@ impl MemoryStore {
         Ok(InsertOutcome::Added(fact))
     }
 
+    /// Public wrapper for [`Self::find_exact_content`] so the HTTP
+    /// layer can run cross-store dedup against the sibling table
+    /// (semantic ↔ episodic) before calling `insert_with_dedup`.
+    pub async fn find_exact_content_public(
+        &self,
+        content: &str,
+        ty: MemoryType,
+    ) -> Result<Option<Memory>> {
+        self.find_exact_content(content, ty).await
+    }
+
+    /// Public wrapper for replacing a row by id — used by the cross-tier
+    /// dedup path to merge contexts/tags into the existing higher-tier
+    /// row when a lower-tier write hit the same (content, type).
+    pub async fn update_full_public(&self, id: &str, replacement: &Memory) -> Result<()> {
+        self.delete(id).await?;
+        self.insert(std::slice::from_ref(replacement)).await?;
+        Ok(())
+    }
+
     /// Find one existing row of the same `type` whose content is
     /// byte-identical to `content`. Exact match only — see
     /// [`Self::insert_with_dedup`] for why cosine is never a sameness
