@@ -346,6 +346,7 @@ async function fetchRowsForView(endpoint, basePayload) {
     api(endpoint, basePayload).then(r => tagStorage(r, false)),
     api(endpoint, { ...basePayload, episodic: true }).then(r => tagStorage(r, true)),
   ]);
+  const merged = [...sem, ...ep];
   merged.sort((a, b) => {
     const av = a.occurred_at || a.created_at || '';
     const bv = b.occurred_at || b.created_at || '';
