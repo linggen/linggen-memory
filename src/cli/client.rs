@@ -134,6 +134,7 @@ pub(crate) async fn add(base: &str, args: AddArgs, format: OutputFormat) -> Resu
         .content
         .ok_or_else(|| anyhow!("add: provide content or use --stdin"))?;
 
+    let host = args.host.or_else(super::detect_host);
     let body = build_add_body(
         content,
         args.r#type,
@@ -145,6 +146,7 @@ pub(crate) async fn add(base: &str, args: AddArgs, format: OutputFormat) -> Resu
         args.occurred_at,
         args.source_session,
         args.skip_dedup,
+        host,
     );
 
     let data = post(base, "/api/memory/add", &body).await?;
@@ -296,6 +298,7 @@ fn build_add_body(
     occurred_at: Option<DateTime<Utc>>,
     source_session: Option<String>,
     skip_dedup: bool,
+    host: Option<String>,
 ) -> Value {
     let mut body = json!({
         "content": content,
@@ -320,6 +323,9 @@ fn build_add_body(
     }
     if let Some(s) = source_session {
         body["source_session"] = Value::String(s);
+    }
+    if let Some(h) = host {
+        body["host"] = Value::String(h);
     }
     body
 }

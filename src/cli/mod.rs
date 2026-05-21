@@ -208,6 +208,14 @@ pub struct AddArgs {
     /// imports always skip dedup regardless of this flag.
     #[arg(long)]
     pub skip_dedup: bool,
+
+    /// Writing host identifier (`claude-code`, `codex`, `openclaw`,
+    /// `linggen`). When omitted, auto-detected from common host env vars
+    /// (`CLAUDECODE`, `CODEX_HOME`, `OPENCLAW_HOME`, `LINGGEN_AGENT_SESSION`);
+    /// `$LING_MEM_HOST` overrides detection. Stored on the row for
+    /// cross-host provenance in the dashboard.
+    #[arg(long, env = "LING_MEM_HOST")]
+    pub host: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -624,6 +632,28 @@ fn emit_lifecycle_with_update(
 
 // ── Subcommand handlers ─────────────────────────────────────────────────────
 
+/// Heuristic host detection from process env vars. Each host sets a
+/// distinctive variable when it launches a shell command, so a tool
+/// invoked via `Bash` (`ling-mem add ...`) can infer who is asking.
+/// Returns `None` when nothing matches — the row stays host=null
+/// rather than getting a misleading label.
+pub(crate) fn detect_host() -> Option<String> {
+    use std::env;
+    if env::var_os("CLAUDECODE").is_some() {
+        return Some("claude-code".into());
+    }
+    if env::var_os("CODEX_HOME").is_some() {
+        return Some("codex".into());
+    }
+    if env::var_os("OPENCLAW_HOME").is_some() {
+        return Some("openclaw".into());
+    }
+    if env::var_os("LINGGEN_AGENT_SESSION").is_some() {
+        return Some("linggen".into());
+    }
+    None
+}
+
 async fn cmd_add(store: &MemoryStore, args: AddArgs, format: OutputFormat) -> Result<()> {
     // Bulk stdin path: always plain insert. Dedup against hundreds of incoming
     // rows would be O(N) searches per call; callers who want dedup for bulk
@@ -657,6 +687,7 @@ async fn cmd_add(store: &MemoryStore, args: AddArgs, format: OutputFormat) -> Re
     fact.cwd = args.cwd;
     fact.occurred_at = args.occurred_at;
     fact.source_session = args.source_session;
+    fact.host = args.host.or_else(detect_host);
 
     let mut batch = [fact];
     embed_missing(&mut batch)?;
