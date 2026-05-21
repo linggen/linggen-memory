@@ -26,7 +26,6 @@ use serde_json::{json, Value};
 use std::io::Write;
 use std::path::Path;
 use std::time::Duration;
-use uuid::Uuid;
 
 /// Health-probe budget. Must be short — runs on every CLI invocation, so a
 /// hung daemon should not stall an offline command.
@@ -182,7 +181,7 @@ async fn add_stdin(base: &str, format: OutputFormat) -> Result<()> {
     Ok(())
 }
 
-pub(crate) async fn get(base: &str, id: Uuid, format: OutputFormat) -> Result<()> {
+pub(crate) async fn get(base: &str, id: &str, format: OutputFormat) -> Result<()> {
     let data = post(base, "/api/memory/get", &json!({ "id": id })).await?;
     emit_fact_value(&data, format)
 }
@@ -245,7 +244,7 @@ pub(crate) async fn update(base: &str, args: UpdateArgs, format: OutputFormat) -
 
 pub(crate) async fn delete(
     base: &str,
-    id: Uuid,
+    id: &str,
     yes: bool,
     format: OutputFormat,
 ) -> Result<()> {

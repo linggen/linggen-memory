@@ -22,7 +22,6 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
-use uuid::Uuid;
 
 mod client;
 
@@ -67,7 +66,7 @@ pub enum Command {
     Add(AddArgs),
 
     /// Fetch one fact by id.
-    Get { id: Uuid },
+    Get { id: String },
 
     /// Semantic search — vector query + metadata filters.
     Search(SearchArgs),
@@ -84,7 +83,7 @@ pub enum Command {
 
     /// Hard-delete a fact by id.
     Delete {
-        id: Uuid,
+        id: String,
         /// Skip confirmation (required for scripted use).
         #[arg(long)]
         yes: bool,
@@ -276,7 +275,7 @@ pub struct FilterArgs {
 
 #[derive(Debug, Args)]
 pub struct UpdateArgs {
-    pub id: Uuid,
+    pub id: String,
 
     #[arg(long)]
     pub content: Option<String>,
@@ -557,12 +556,12 @@ pub async fn run(cli: Cli) -> Result<()> {
         if let Some(base_url) = client::try_running_or_start(&data_dir, &skill_dir).await {
             return match cli.cmd {
                 Command::Add(args) => client::add(&base_url, args, format).await,
-                Command::Get { id } => client::get(&base_url, id, format).await,
+                Command::Get { id } => client::get(&base_url, &id, format).await,
                 Command::Search(args) => client::search(&base_url, args, format).await,
                 Command::List(args) => client::list(&base_url, args, format).await,
                 Command::Edit(args) => client::update(&base_url, args, format).await,
                 Command::Delete { id, yes } => {
-                    client::delete(&base_url, id, yes, format).await
+                    client::delete(&base_url, &id, yes, format).await
                 }
                 Command::Forget(args) => client::forget(&base_url, args, format).await,
                 Command::Serve { .. }
@@ -583,7 +582,7 @@ pub async fn run(cli: Cli) -> Result<()> {
 
     match cli.cmd {
         Command::Add(args) => cmd_add(&store, args, format).await,
-        Command::Get { id } => cmd_get(&store, id, format).await,
+        Command::Get { id } => cmd_get(&store, &id, format).await,
         // Default search spans both tables (recall). `store` is the semantic
         // handle here (`!cli.episodic`); reuse it and open episodic alongside.
         Command::Search(args) if !cli.episodic => {
@@ -597,7 +596,7 @@ pub async fn run(cli: Cli) -> Result<()> {
         Command::Search(args) => cmd_search(&store, args, format).await,
         Command::List(args) => cmd_list(&store, args, format).await,
         Command::Edit(args) => cmd_update(&store, args, format).await,
-        Command::Delete { id, yes } => cmd_delete(&store, id, yes, format).await,
+        Command::Delete { id, yes } => cmd_delete(&store, &id, yes, format).await,
         Command::Forget(args) => cmd_forget(&store, args, format).await,
         Command::Serve { .. }
         | Command::Start { .. }
@@ -717,7 +716,7 @@ fn emit_outcome(
     }
 }
 
-async fn cmd_get(store: &MemoryStore, id: Uuid, format: OutputFormat) -> Result<()> {
+async fn cmd_get(store: &MemoryStore, id: &str, format: OutputFormat) -> Result<()> {
     match store.get(id).await? {
         Some(f) => emit_fact(&f, format),
         None => Err(not_found("no fact with that id")),
@@ -850,13 +849,13 @@ async fn cmd_update(store: &MemoryStore, args: UpdateArgs, format: OutputFormat)
         ..Default::default()
     };
 
-    match store.update(args.id, &patch).await? {
+    match store.update(&args.id, &patch).await? {
         Some(f) => emit_fact(&f, format),
         None => Err(not_found("no fact with that id")),
     }
 }
 
-async fn cmd_delete(store: &MemoryStore, id: Uuid, yes: bool, format: OutputFormat) -> Result<()> {
+async fn cmd_delete(store: &MemoryStore, id: &str, yes: bool, format: OutputFormat) -> Result<()> {
     if !yes {
         return Err(anyhow!(
             "refusing to delete without --yes (scripted calls must pass the flag)"
@@ -865,7 +864,7 @@ async fn cmd_delete(store: &MemoryStore, id: Uuid, yes: bool, format: OutputForm
     let removed = store.delete(id).await?;
     match format {
         OutputFormat::Json => writeln_ndjson(&serde_json::json!({
-            "id": id.to_string(),
+            "id": id,
             "removed": removed,
         })),
         OutputFormat::Text => {

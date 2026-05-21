@@ -20,7 +20,6 @@ use arrow_schema::{DataType, Field, Schema, TimeUnit};
 use chrono::{DateTime, TimeZone, Utc};
 use std::str::FromStr;
 use std::sync::Arc;
-use uuid::Uuid;
 
 /// Name of the LanceDB table holding curated long-term memory (semantic
 /// memory, in brain terms). Both `tier=core` and `tier=semantic` rows
@@ -85,7 +84,7 @@ pub fn build_schema() -> Arc<Schema> {
 pub fn memories_to_record_batch(facts: &[Memory]) -> Result<RecordBatch> {
     let schema = build_schema();
 
-    let ids = StringArray::from_iter_values(facts.iter().map(|f| f.id.to_string()));
+    let ids = StringArray::from_iter_values(facts.iter().map(|f| f.id.as_str()));
     let contents = StringArray::from_iter_values(facts.iter().map(|f| f.content.clone()));
     let types = StringArray::from_iter_values(facts.iter().map(|f| f.r#type.as_str()));
     let froms = StringArray::from_iter_values(facts.iter().map(|f| f.origin.as_str()));
@@ -167,7 +166,7 @@ pub fn record_batch_to_memories(batch: &RecordBatch) -> Result<Vec<Memory>> {
 
     let mut out = Vec::with_capacity(n);
     for i in 0..n {
-        let id = Uuid::parse_str(ids.value(i)).context("id column has non-UUID value")?;
+        let id = ids.value(i).to_string();
         let type_str = types.value(i);
         let r#type = MemoryType::from_str(type_str)
             .with_context(|| format!("unknown type `{type_str}` at row {i}"))?;

@@ -10,10 +10,27 @@
 //! `schema.rs` and bump the store's format version.
 
 use chrono::{DateTime, SubsecRound, Utc};
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
-use uuid::Uuid;
+
+/// Base62 alphabet — digits, uppercase, lowercase. 62 symbols give ~5.95
+/// bits/char → 10 chars ≈ 59.5 bits of entropy, plenty for collision-safe
+/// memory ids at the scale this store holds.
+const BASE62_ALPHABET: &[u8] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+
+/// Generate a fresh 10-character base62 id for a [`Memory`] row.
+///
+/// Replaced UUIDv4 (the v0.1 default) — base62 is shorter, easier to copy
+/// from logs/UIs, and the schema column has always been Utf8 so any string
+/// id is forward-compatible with rows already on disk.
+pub fn short_id() -> String {
+    let mut rng = rand::rng();
+    (0..10)
+        .map(|_| BASE62_ALPHABET[rng.random_range(0..BASE62_ALPHABET.len())] as char)
+        .collect()
+}
 
 /// A single memory — one row in a LanceDB memory table.
 ///
@@ -21,7 +38,7 @@ use uuid::Uuid;
 /// may be empty but are never null.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Memory {
-    pub id: Uuid,
+    pub id: String,
     pub content: String,
 
     /// Embedding of `content`. May briefly be `None` between insert and embed
@@ -109,7 +126,7 @@ impl Memory {
     /// All optional fields default to `None` / empty.
     pub fn new(content: impl Into<String>, r#type: MemoryType, origin: Origin) -> Self {
         Self {
-            id: Uuid::new_v4(),
+            id: short_id(),
             content: content.into(),
             vector: None,
             contexts: Vec::new(),

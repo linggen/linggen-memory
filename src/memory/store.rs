@@ -28,7 +28,6 @@ use lancedb::{
 };
 use std::path::Path;
 use std::sync::Arc;
-use uuid::Uuid;
 
 /// Filter criteria shared by [`MemoryStore::search`] and [`MemoryStore::list`].
 ///
@@ -300,7 +299,7 @@ pub enum InsertOutcome {
         similarity: f32,
         /// Id of the existing row that absorbed the candidate (same as
         /// `fact.id`; surfaced separately for clarity in telemetry).
-        previous_id: Uuid,
+        previous_id: String,
     },
 }
 
@@ -490,9 +489,9 @@ impl MemoryStore {
         }
 
         if let Some(existing) = self.find_exact_content(&fact.content, fact.r#type).await? {
-            let previous_id = existing.id;
+            let previous_id = existing.id.clone();
             let merged = merge_fact(&existing, &fact);
-            self.delete(previous_id).await?;
+            self.delete(&previous_id).await?;
             self.insert(std::slice::from_ref(&merged)).await?;
             return Ok(InsertOutcome::Merged {
                 fact: merged,
@@ -526,10 +525,11 @@ impl MemoryStore {
     }
 
     /// Fetch one fact by id. Returns `None` if the id is not present.
-    pub async fn get(&self, id: Uuid) -> Result<Option<Memory>> {
-        let id_str = id.to_string();
+    pub async fn get(&self, id: &str) -> Result<Option<Memory>> {
         // LanceDB SQL filter — id is Utf8, so we compare against a literal.
-        let filter = format!("id = '{id_str}'");
+        // Escape single quotes for safety even though base62 ids never carry
+        // one (defensive — keeps the path robust if id format ever changes).
+        let filter = format!("id = '{}'", escape_sql(id));
 
         let mut stream = self
             .table
@@ -705,7 +705,7 @@ impl MemoryStore {
     /// column-level updates for simple types, but our nested schema (lists,
     /// FixedSizeList vectors, timezone-tagged timestamps) is cleaner to
     /// round-trip through [`Memory`] than to express as SQL column setters.
-    pub async fn update(&self, id: Uuid, patch: &MemoryPatch) -> Result<Option<Memory>> {
+    pub async fn update(&self, id: &str, patch: &MemoryPatch) -> Result<Option<Memory>> {
         let Some(mut existing) = self.get(id).await? else {
             return Ok(None);
         };
@@ -721,7 +721,7 @@ impl MemoryStore {
 
     /// Hard-delete a single fact by id. Returns `true` if a row was
     /// removed, `false` if the id wasn't present.
-    pub async fn delete(&self, id: Uuid) -> Result<bool> {
+    pub async fn delete(&self, id: &str) -> Result<bool> {
         let removed = self.delete_one(id).await?;
         Ok(removed > 0)
     }
@@ -759,7 +759,7 @@ impl MemoryStore {
             apply_origin_filter(&mut victims, filters.origin);
             let mut removed = 0;
             for v in victims {
-                removed += self.delete_one(v.id).await? as usize;
+                removed += self.delete_one(&v.id).await? as usize;
             }
             return Ok(removed);
         }
@@ -841,8 +841,8 @@ impl MemoryStore {
 
     /// Delete the single row with the given id. Returns the number removed
     /// (0 or 1 in practice). Private — public API uses `delete` / `update`.
-    async fn delete_one(&self, id: Uuid) -> Result<usize> {
-        self.delete_where(&format!("id = '{id}'"))
+    async fn delete_one(&self, id: &str) -> Result<usize> {
+        self.delete_where(&format!("id = '{}'", escape_sql(id)))
             .await
             .with_context(|| format!("deleting memory {id}"))
     }
@@ -911,7 +911,7 @@ mod tests {
         let episodic = MemoryStore::open_episodic(dir.path()).await.unwrap();
 
         let fact = make_fact("curated fact", MemoryType::Fact);
-        let fact_id = fact.id;
+        let fact_id = fact.id.clone();
         facts.insert(&[fact]).await.unwrap();
         episodic
             .insert(&[make_fact("staged experience", MemoryType::Learned)])
@@ -924,7 +924,7 @@ mod tests {
 
         // True isolation: the semantic row is invisible to the episodic store
         // even though they share one LanceDB connection.
-        assert!(episodic.get(fact_id).await.unwrap().is_none());
+        assert!(episodic.get(&fact_id).await.unwrap().is_none());
     }
 
     #[tokio::test]
@@ -967,10 +967,10 @@ mod tests {
         f.contexts = vec!["env/macos".into()];
         f.tags = vec!["topic:dates".into()];
         f.outcome = Some(Outcome::Positive);
-        let id = f.id;
+        let id = f.id.clone();
         store.insert(&[f.clone()]).await.unwrap();
 
-        let got = store.get(id).await.unwrap().expect("fact missing");
+        let got = store.get(&id).await.unwrap().expect("fact missing");
         assert_eq!(got, f);
     }
 
@@ -981,8 +981,8 @@ mod tests {
             .insert(&[make_fact("x", MemoryType::Fact)])
             .await
             .unwrap();
-        let missing = Uuid::new_v4();
-        assert!(store.get(missing).await.unwrap().is_none());
+        let missing = crate::memory::types::short_id();
+        assert!(store.get(&missing).await.unwrap().is_none());
     }
 
     #[tokio::test]
@@ -1281,15 +1281,15 @@ mod tests {
     async fn delete_removes_row() {
         let (store, _dir) = fresh_store().await;
         let f = make_fact("x", MemoryType::Fact);
-        let id = f.id;
+        let id = f.id.clone();
         store.insert(&[f]).await.unwrap();
         assert_eq!(store.count().await.unwrap(), 1);
 
-        assert!(store.delete(id).await.unwrap());
+        assert!(store.delete(&id).await.unwrap());
         assert_eq!(store.count().await.unwrap(), 0);
 
         // Second delete is a no-op but not an error.
-        assert!(!store.delete(id).await.unwrap());
+        assert!(!store.delete(&id).await.unwrap());
     }
 
     #[tokio::test]
@@ -1297,7 +1297,7 @@ mod tests {
         let (store, _dir) = fresh_store().await;
         let mut f = make_fact("original", MemoryType::Fact);
         f.contexts = vec!["a".into()];
-        let id = f.id;
+        let id = f.id.clone();
         store.insert(&[f]).await.unwrap();
 
         let patch = MemoryPatch {
@@ -1307,13 +1307,13 @@ mod tests {
             ..Default::default()
         };
 
-        let updated = store.update(id, &patch).await.unwrap().unwrap();
+        let updated = store.update(&id, &patch).await.unwrap().unwrap();
         assert_eq!(updated.content, "edited");
         assert_eq!(updated.contexts, vec!["b".to_string(), "c".into()]);
         assert_eq!(updated.outcome, Some(Outcome::Positive));
 
         // Persisted.
-        let got = store.get(id).await.unwrap().unwrap();
+        let got = store.get(&id).await.unwrap().unwrap();
         assert_eq!(got, updated);
         assert_eq!(store.count().await.unwrap(), 1);
     }
@@ -1323,7 +1323,7 @@ mod tests {
         let (store, _dir) = fresh_store().await;
         let mut f = make_fact("x", MemoryType::Tried);
         f.outcome = Some(Outcome::Negative);
-        let id = f.id;
+        let id = f.id.clone();
         store.insert(&[f]).await.unwrap();
 
         // Some(None) clears to null.
@@ -1331,7 +1331,7 @@ mod tests {
             outcome: Some(None),
             ..Default::default()
         };
-        let updated = store.update(id, &patch).await.unwrap().unwrap();
+        let updated = store.update(&id, &patch).await.unwrap().unwrap();
         assert_eq!(updated.outcome, None);
     }
 
@@ -1339,7 +1339,7 @@ mod tests {
     async fn update_missing_id_returns_none() {
         let (store, _dir) = fresh_store().await;
         let result = store
-            .update(Uuid::new_v4(), &MemoryPatch::default())
+            .update(&crate::memory::types::short_id(), &MemoryPatch::default())
             .await
             .unwrap();
         assert!(result.is_none());
@@ -1349,7 +1349,7 @@ mod tests {
     async fn update_stamps_updated_at() {
         let (store, _dir) = fresh_store().await;
         let f = make_fact("before", MemoryType::Fact);
-        let id = f.id;
+        let id = f.id.clone();
         let created_at = f.created_at;
         assert!(f.updated_at.is_none());
         store.insert(&[f]).await.unwrap();
@@ -1358,12 +1358,12 @@ mod tests {
             content: Some("after".into()),
             ..Default::default()
         };
-        let updated = store.update(id, &patch).await.unwrap().unwrap();
+        let updated = store.update(&id, &patch).await.unwrap().unwrap();
         let stamped = updated.updated_at.expect("update must stamp updated_at");
         assert!(stamped >= created_at);
 
         // Persisted through the store roundtrip, not just the return value.
-        let got = store.get(id).await.unwrap().unwrap();
+        let got = store.get(&id).await.unwrap().unwrap();
         assert_eq!(got.updated_at, Some(stamped));
     }
 
@@ -1412,28 +1412,28 @@ mod tests {
         // Old: created 10 days ago, never updated → decay clock = created_at.
         let mut old = make_fact("stale", MemoryType::Learned);
         old.created_at = (now - Duration::days(10)).trunc_subsecs(6);
-        let old_id = old.id;
+        let old_id = old.id.clone();
 
         // Fresh: created just now → decay clock = created_at ≈ now.
         let fresh = make_fact("recent", MemoryType::Learned);
-        let fresh_id = fresh.id;
+        let fresh_id = fresh.id.clone();
 
         // Touched: created 10 days ago BUT updated 1 hour ago → decay clock
         // = updated_at, which is recent → must survive (touch resets age).
         let mut touched = make_fact("revived", MemoryType::Learned);
         touched.created_at = (now - Duration::days(10)).trunc_subsecs(6);
         touched.updated_at = Some((now - Duration::hours(1)).trunc_subsecs(6));
-        let touched_id = touched.id;
+        let touched_id = touched.id.clone();
 
         store.insert(&[old, fresh, touched]).await.unwrap();
 
         // Cutoff one day ago: only `old` is older by COALESCE clock.
         let removed = store.evict_expired(now - Duration::days(1)).await.unwrap();
         assert_eq!(removed, 1);
-        assert!(store.get(old_id).await.unwrap().is_none());
-        assert!(store.get(fresh_id).await.unwrap().is_some());
+        assert!(store.get(&old_id).await.unwrap().is_none());
+        assert!(store.get(&fresh_id).await.unwrap().is_some());
         assert!(
-            store.get(touched_id).await.unwrap().is_some(),
+            store.get(&touched_id).await.unwrap().is_some(),
             "row with recent updated_at must survive even though created_at is old"
         );
     }
@@ -1486,7 +1486,7 @@ mod tests {
         existing.vector = Some(unit_vec_at(0));
         existing.contexts = vec!["code/linggen".into()];
         existing.tags = vec!["topic:setup".into()];
-        let existing_id = existing.id;
+        let existing_id = existing.id.clone();
         store.insert(&[existing.clone()]).await.unwrap();
 
         // Candidate: byte-identical content (same type), new context + tag.

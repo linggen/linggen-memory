@@ -22,7 +22,6 @@ use chrono::{DateTime, Utc};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer};
 use serde_json::{json, Value};
-use uuid::Uuid;
 
 /// Deserialize an `Option<T>` where empty strings, `null`, and missing
 /// keys all collapse to `None`. Wraps any string-or-enum field that LLMs
@@ -176,7 +175,7 @@ pub struct AddRequest {
 
 #[derive(Debug, Deserialize)]
 pub struct GetRequest {
-    pub id: Uuid,
+    pub id: String,
     /// When set, looks the id up in the episodic store. Default (false)
     /// looks up in semantic. If you don't know which table the row lives
     /// in, set `episodic: true` after a 404 on the default.
@@ -293,7 +292,7 @@ fn default_list_limit() -> usize {
 /// fields mean "leave unchanged." Set wins over clear if both are given.
 #[derive(Debug, Deserialize)]
 pub struct UpdateRequest {
-    pub id: Uuid,
+    pub id: String,
     pub content: Option<String>,
     pub contexts: Option<Vec<String>>,
     pub tags: Option<Vec<String>>,
@@ -320,7 +319,7 @@ pub struct UpdateRequest {
 
 #[derive(Debug, Deserialize)]
 pub struct DeleteRequest {
-    pub id: Uuid,
+    pub id: String,
     /// Target the episodic table instead of the default semantic table.
     #[serde(default)]
     pub episodic: bool,
@@ -420,7 +419,7 @@ async fn get(
     Json(req): Json<GetRequest>,
 ) -> Result<Response, ApiError> {
     let store = pick_store(&state, req.episodic);
-    match store.get(req.id).await? {
+    match store.get(&req.id).await? {
         Some(fact) => Ok(ok(fact_public(&fact))),
         None => Err(ApiError::not_found(format!("no fact with id {}", req.id))),
     }
@@ -502,7 +501,7 @@ async fn update(
     };
 
     let store = pick_store(&state, req.episodic);
-    match store.update(req.id, &patch).await? {
+    match store.update(&req.id, &patch).await? {
         Some(fact) => Ok(ok(fact_public(&fact))),
         None => Err(ApiError::not_found(format!("no fact with id {}", req.id))),
     }
@@ -513,7 +512,7 @@ async fn delete(
     Json(req): Json<DeleteRequest>,
 ) -> Result<Response, ApiError> {
     let store = pick_store(&state, req.episodic);
-    let removed = store.delete(req.id).await?;
+    let removed = store.delete(&req.id).await?;
     Ok(ok(json!({"id": req.id, "removed": removed})))
 }
 
