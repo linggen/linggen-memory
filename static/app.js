@@ -147,7 +147,7 @@ const state = {
   // semantic-table dump.
   //   'all'       → semantic table, no tier filter
   //   'core'      → semantic table, tier=core
-  //   'long-term' → semantic table, tier=semantic
+  //   'semantic' → semantic table, tier=semantic
   //   'episodic'  → episodic table (tier irrelevant — rows don't carry one)
   view: 'all',
   text: '',
@@ -263,11 +263,11 @@ function filterPayload() {
   if (f.since)   body.since = f.since;
   if (f.until)   body.until = f.until;
   // Storage view: 'episodic' is a top-level flag on the request (switches
-  // table); 'core' / 'long-term' add a `tier` filter inside the semantic
+  // table); 'core' / 'semantic' add a `tier` filter inside the semantic
   // table. 'all' leaves both off.
   if (state.view === 'episodic')  body.episodic = true;
   if (state.view === 'core')      body.tier = 'core';
-  if (state.view === 'long-term') body.tier = 'semantic';
+  if (state.view === 'semantic') body.tier = 'semantic';
   return body;
 }
 
@@ -293,7 +293,7 @@ function isSearchMode() {
 }
 
 // Fetch rows for the current view. For semantic-only views (`core`,
-// `long-term`) and episodic-only, this is one round-trip. For `all`
+// `semantic`) and episodic-only, this is one round-trip. For `all`
 // the daemon's list/search endpoint is single-table by design (the
 // `episodic: true` flag flips which table is queried), so we fan out
 // two parallel requests and merge — concat + sort by created_at desc,
@@ -320,22 +320,29 @@ async function fetchRowsForView(endpoint, basePayload) {
     api(endpoint, { ...basePayload, episodic: true }).then(r => tagStorage(r, true)),
   ]);
   const merged = [...sem, ...ep];
-  merged.sort((a, b) => {
-    const av = a.occurred_at || a.created_at || '';
-    const bv = b.occurred_at || b.created_at || '';
-    return state.sort === 'oldest' ? av.localeCompare(bv) : bv.localeCompare(av);
-  });
+  if (isSearchMode()) {
+    // Search results carry a `score` (cosine similarity). Highest score
+    // first — relevance trumps recency when the user is looking for
+    // something specific.
+    merged.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+  } else {
+    merged.sort((a, b) => {
+      const av = a.occurred_at || a.created_at || '';
+      const bv = b.occurred_at || b.created_at || '';
+      return state.sort === 'oldest' ? av.localeCompare(bv) : bv.localeCompare(av);
+    });
+  }
   const limit = basePayload.limit || merged.length;
   return merged.slice(0, limit);
 }
 
-// Storage label: "core" / "long-term" / "episodic". Derived from
+// Storage label: "core" / "semantic" / "episodic". Derived from
 // `_storage` (which table the row came from) + `tier` (semantic-table
 // rows only). Episodic rows always read "episodic" regardless of tier.
 function storageLabel(row) {
   if (!row) return '—';
   if (row._storage === 'episodic') return 'episodic';
-  return row.tier === 'core' ? 'core' : 'long-term';
+  return row.tier === 'core' ? 'core' : 'semantic';
 }
 
 // Best-effort host inference from `cwd`. Linggen / CC / Codex / OpenClaw
@@ -625,7 +632,7 @@ function renderRowHead(fact) {
   }
 
   // Storage + host badges — small dim chips next to the type/from
-  // markers so a glance distinguishes core / long-term / episodic
+  // markers so a glance distinguishes core / semantic / episodic
   // rows, and which host wrote the row when cwd lets us tell.
   const storage = storageLabel(fact);
   const stor = document.createElement('span');
@@ -1078,7 +1085,7 @@ function buildAddPayload(e) {
   // Core writes carry `tier: 'core'`; everything else stays at the
   // semantic-table default. Episodic writes ride the top-level flag.
   if (state.view === 'core')      body.tier = 'core';
-  if (state.view === 'long-term') body.tier = 'semantic';
+  if (state.view === 'semantic') body.tier = 'semantic';
   if (isEpisodicMode())           body.episodic = true;
   return body;
 }
@@ -1866,7 +1873,7 @@ document.getElementById('clear-all').addEventListener('click', () => {
   reload();
 });
 
-// Storage-view buttons (Core / Long-term / Episodic / All).
+// Storage-view buttons (Core / Semantic / Episodic / All).
 document.getElementById('view-tabs').addEventListener('click', (e) => {
   const btn = e.target.closest('button[data-view]');
   if (!btn) return;

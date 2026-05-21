@@ -164,7 +164,7 @@ input[type="text"]:disabled { opacity: 0.6; }
 }
 #filters-bar[hidden] { display: none; }
 
-/* Storage view tabs — core / long-term / episodic / all. Mutually
+/* Storage view tabs — core / semantic / episodic / all. Mutually
    exclusive, segmented control inline in the query bar. The input
    keeps flex: 1 (shrinks to make room); the tabs are intrinsic-width. */
 #view-tabs {
@@ -763,7 +763,7 @@ input[type="text"]:disabled { opacity: 0.6; }
 }
 
 /* Storage tier + inferred host — small dim chips next to the type
-   marker so a glance distinguishes core / long-term / episodic rows
+   marker so a glance distinguishes core / semantic / episodic rows
    and which host wrote them (when cwd lets us tell). */
 .row-storage, .row-host {
   background: var(--panel-2);
@@ -775,7 +775,7 @@ input[type="text"]:disabled { opacity: 0.6; }
   letter-spacing: 0.2px;
 }
 .row-storage.s-core      { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); }
-.row-storage.s-long-term { color: var(--t-learned); border-color: color-mix(in srgb, var(--t-learned) 40%, var(--border)); }
+.row-storage.s-semantic { color: var(--t-learned); border-color: color-mix(in srgb, var(--t-learned) 40%, var(--border)); }
 .row-storage.s-episodic  { color: var(--t-tried);   border-color: color-mix(in srgb, var(--t-tried) 40%, var(--border)); }
 .row-host { font-style: italic; }
 
