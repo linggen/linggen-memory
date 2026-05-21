@@ -332,29 +332,37 @@ impl FromStr for Origin {
 
 // ── Tier ────────────────────────────────────────────────────────────────────
 
-/// Storage tier of a fact.
+/// Storage tier of a fact. Mirrors the row's physical table; setting
+/// `tier` and routing to the matching table together keeps the field
+/// honest so callers can filter on it without consulting the table.
 ///
-/// - `Core`: the small, durable identity/preference set surfaced eagerly
-///   (always-on context, not retrieval-gated).
-/// - `Semantic`: the broader pool retrieved by semantic search.
+/// - `Core`: tier=core rows inside the **semantic** table — small,
+///   durable identity / preference set surfaced eagerly.
+/// - `Semantic`: tier=semantic rows inside the **semantic** table — the
+///   broader pool retrieved by semantic search.
+/// - `Episodic`: rows in the **episodic** staging table. The daemon
+///   clamps `tier` to this on every episodic insert; episodic writes
+///   never carry `Core` or `Semantic` as `tier`.
 ///
-/// Default is `Semantic` — the safe choice for ingested facts that haven't
-/// been explicitly promoted to the core set.
+/// Default is `Semantic` — the safe choice for ingested facts that
+/// haven't been explicitly promoted to core or routed to episodic.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Tier {
     Core,
     #[default]
     Semantic,
+    Episodic,
 }
 
 impl Tier {
-    pub const ALL: &'static [Tier] = &[Tier::Core, Tier::Semantic];
+    pub const ALL: &'static [Tier] = &[Tier::Core, Tier::Semantic, Tier::Episodic];
 
     pub fn as_str(&self) -> &'static str {
         match self {
             Tier::Core => "core",
             Tier::Semantic => "semantic",
+            Tier::Episodic => "episodic",
         }
     }
 }
@@ -372,6 +380,7 @@ impl FromStr for Tier {
         match s.to_ascii_lowercase().as_str() {
             "core" => Ok(Tier::Core),
             "semantic" => Ok(Tier::Semantic),
+            "episodic" => Ok(Tier::Episodic),
             _ => Err(ParseEnumError {
                 field: "tier",
                 value: s.to_string(),

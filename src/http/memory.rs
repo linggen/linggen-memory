@@ -244,6 +244,23 @@ pub struct SearchRequest {
     /// outputs land in `[0.0, 1.0]`. Omit to disable filtering.
     #[serde(default)]
     pub min_score: Option<f32>,
+    /// Which table(s) to query. Default is `both` (cross-table recall —
+    /// the consolidator subagent relies on this). `semantic` / `episodic`
+    /// constrain to a single table so a tab-scoped UI does not double-
+    /// fetch and merge the same rows twice. Note: this selects the
+    /// **table**, not the `tier` field; `tier=core` filtering inside the
+    /// semantic table is a separate parameter.
+    #[serde(default)]
+    pub table: SearchTable,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SearchTable {
+    #[default]
+    Both,
+    Semantic,
+    Episodic,
 }
 
 fn default_search_limit() -> usize {
@@ -368,6 +385,12 @@ async fn add(
     fact.occurred_at = req.occurred_at;
     fact.source_session = req.source_session;
     fact.host = req.host;
+    if episodic {
+        // The row's table marks it as episodic; keep `tier` in sync so
+        // callers filtering by tier alone don't see lies. Overrides any
+        // stale Core / Semantic carried in from a generic Memory::new().
+        fact.tier = crate::memory::Tier::Episodic;
+    }
 
     // Embed the content so the row is immediately searchable. Serialized +
     // off the async workers so concurrent adds can't stack forward passes.
@@ -439,15 +462,27 @@ async fn search(
         .embed_query_serialized(req.query.clone())
         .await
         .map_err(ApiError::internal)?;
-    let results = state
-        .recall
-        .query(
-            &vector,
-            &req.filters.into_filters(),
-            req.limit,
-            req.min_score,
-        )
-        .await?;
+    let filters = req.filters.into_filters();
+    let results = match req.table {
+        SearchTable::Both => {
+            state
+                .recall
+                .query(&vector, &filters, req.limit, req.min_score)
+                .await?
+        }
+        SearchTable::Semantic => {
+            state
+                .store
+                .search_scored(&vector, &filters, req.limit, req.min_score)
+                .await?
+        }
+        SearchTable::Episodic => {
+            state
+                .episodic
+                .search_scored(&vector, &filters, req.limit, req.min_score)
+                .await?
+        }
+    };
     Ok(ok(scored_facts_public(&results)))
 }
 

@@ -311,6 +311,33 @@ function tagStorage(rows, episodic) {
 }
 
 async function fetchRowsForView(endpoint, basePayload) {
+  const isSearch = endpoint.endsWith('/search');
+
+  // Search endpoint: tag-scoped per-table calls. /api/memory/search ignores
+  // the `episodic` flag (always cross-table by default); we use the new
+  // `table` parameter to fetch each table exclusively when the user has
+  // picked a tab, so episodic rows don't appear twice in the merge.
+  if (isSearch) {
+    if (state.view !== 'all') {
+      const isEp = state.view === 'episodic';
+      const rows = await api(endpoint, {
+        ...basePayload,
+        table: isEp ? 'episodic' : 'semantic',
+      });
+      return tagStorage(rows, isEp);
+    }
+    const [sem, ep] = await Promise.all([
+      api(endpoint, { ...basePayload, table: 'semantic' }).then(r => tagStorage(r, false)),
+      api(endpoint, { ...basePayload, table: 'episodic' }).then(r => tagStorage(r, true)),
+    ]);
+    const merged = [...sem, ...ep];
+    merged.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+    const limit = basePayload.limit || merged.length;
+    return merged.slice(0, limit);
+  }
+
+  // List endpoint: keeps the existing `episodic: bool` flag (server
+  // routes single-table per call). 'all' view still merges sem + ep.
   if (state.view !== 'all') {
     const rows = await api(endpoint, basePayload);
     return tagStorage(rows, basePayload.episodic === true);
@@ -319,19 +346,11 @@ async function fetchRowsForView(endpoint, basePayload) {
     api(endpoint, basePayload).then(r => tagStorage(r, false)),
     api(endpoint, { ...basePayload, episodic: true }).then(r => tagStorage(r, true)),
   ]);
-  const merged = [...sem, ...ep];
-  if (isSearchMode()) {
-    // Search results carry a `score` (cosine similarity). Highest score
-    // first — relevance trumps recency when the user is looking for
-    // something specific.
-    merged.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
-  } else {
-    merged.sort((a, b) => {
-      const av = a.occurred_at || a.created_at || '';
-      const bv = b.occurred_at || b.created_at || '';
-      return state.sort === 'oldest' ? av.localeCompare(bv) : bv.localeCompare(av);
-    });
-  }
+  merged.sort((a, b) => {
+    const av = a.occurred_at || a.created_at || '';
+    const bv = b.occurred_at || b.created_at || '';
+    return state.sort === 'oldest' ? av.localeCompare(bv) : bv.localeCompare(av);
+  });
   const limit = basePayload.limit || merged.length;
   return merged.slice(0, limit);
 }
