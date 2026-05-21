@@ -459,6 +459,30 @@ input[type="text"]:disabled { opacity: 0.6; }
   outline-offset: -1px;
 }
 
+#query-wrap {
+  position: relative;
+  flex: 1;
+}
+#query-wrap input {
+  width: 100%;
+  padding-right: 28px;
+}
+#query-clear {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 2px 6px;
+  font-size: 16px;
+  line-height: 1;
+}
+#query-clear:hover { color: var(--err); }
+#query-clear[hidden] { display: none; }
+
 .input-with-clear {
   display: flex;
   align-items: center;

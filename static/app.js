@@ -1860,6 +1860,24 @@ document.getElementById('query').addEventListener('keydown', (e) => {
   }
 });
 
+// Show the inline × clear button only when the input has content.
+{
+  const input = document.getElementById('query');
+  const clear = document.getElementById('query-clear');
+  const syncClear = () => { clear.hidden = input.value.length === 0; };
+  input.addEventListener('input', syncClear);
+  clear.addEventListener('click', () => {
+    input.value = '';
+    state.text = '';
+    clearFilters();
+    renderFiltersBar();
+    syncClear();
+    input.focus();
+    reload();
+  });
+  syncClear();
+}
+
 document.getElementById('sort').addEventListener('change', (e) => {
   state.sort = e.target.value;
   reload();

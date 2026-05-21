@@ -24,13 +24,16 @@
       <div id="help-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="help-title"></div>
 
       <section id="query-bar">
-        <input
-          id="query"
-          type="text"
-          placeholder="search memory or /type:preference /context:code/linggen /from:user …"
-          autocomplete="off"
-          spellcheck="false"
-        />
+        <div id="query-wrap">
+          <input
+            id="query"
+            type="text"
+            placeholder="search memory or /type:preference /context:code/linggen /from:user …"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <button id="query-clear" type="button" hidden aria-label="Clear search" title="Clear search">×</button>
+        </div>
         <div id="view-tabs" role="tablist" aria-label="Storage view">
           <button type="button" role="tab" data-view="all"       class="active" title="Everything in the semantic table (core + semantic)">All</button>
           <button type="button" role="tab" data-view="core"      title="Always-loaded universals about the person (tier=core)">Core</button>
