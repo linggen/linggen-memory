@@ -153,6 +153,15 @@ build_native_cargo() {
     BIN_PATH="$ROOT_DIR/target/release/ling-mem"
   fi
 
+  # Re-sign mac binaries adhoc. cargo emits linker-signed binaries whose
+  # signature macOS 26.x (Sequoia+) rejects with `SIGKILL Code Signature
+  # Invalid` on first launch from /usr/local/bin or any copy-target. A
+  # fresh adhoc signature via `codesign -s -` is enough — no Developer ID
+  # needed for ling-mem's local-install distribution model.
+  if [ "$PLATFORM_OS" = "mac" ]; then
+    codesign --force --sign - "$BIN_PATH"
+  fi
+
   # Verify the binary reports the expected version (skip on cross-compile —
   # binary may not be runnable on the build host).
   if [ "$need_target" = "false" ]; then
