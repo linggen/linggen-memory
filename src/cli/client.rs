@@ -353,6 +353,16 @@ fn filter_body(filters: &FilterArgs) -> Value {
     if let Some(t) = filters.until {
         body["until"] = Value::String(t.to_rfc3339());
     }
+    // Tier was missing here for the entire daemon path — direct-store mode
+    // forwarded it via `FilterArgs::into_filters()`, but with the daemon up
+    // (the common case) the filter was silently dropped. Effect: `--tier
+    // core` returned every row, and the engine's "Core facts" block was
+    // really "all rows up to limit". Fixing here, not at the daemon's
+    // FilterDTO, because the DTO already understood tier — only the CLI
+    // shipper omitted it.
+    if let Some(t) = filters.tier {
+        body["tier"] = Value::String(cli_tier_str(t).to_string());
+    }
     body
 }
 
@@ -480,5 +490,12 @@ fn cli_outcome_str(o: CliOutcome) -> &'static str {
         CliOutcome::Positive => "positive",
         CliOutcome::Negative => "negative",
         CliOutcome::Neutral => "neutral",
+    }
+}
+
+fn cli_tier_str(t: crate::cli::CliTier) -> &'static str {
+    match t {
+        crate::cli::CliTier::Core => "core",
+        crate::cli::CliTier::Semantic => "semantic",
     }
 }
