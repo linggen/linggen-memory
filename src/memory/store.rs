@@ -704,9 +704,14 @@ impl MemoryStore {
         let mut facts = self.collect_query(q).await?;
         apply_origin_filter(&mut facts, filters.origin);
 
+        // List = "what was added recently" — sort by created_at, not
+        // effective_timestamp. effective_timestamp falls back to
+        // occurred_at which the LLM/consolidator routinely stamps as
+        // "today midnight UTC" for any same-day fact, collapsing many
+        // newest rows to the same key and breaking newest-first order.
         facts.sort_by(|a, b| match order {
-            SortOrder::Newest => b.effective_timestamp().cmp(&a.effective_timestamp()),
-            SortOrder::Oldest => a.effective_timestamp().cmp(&b.effective_timestamp()),
+            SortOrder::Newest => b.created_at.cmp(&a.created_at),
+            SortOrder::Oldest => a.created_at.cmp(&b.created_at),
         });
 
         if offset >= facts.len() {
