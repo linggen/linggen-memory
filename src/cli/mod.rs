@@ -434,6 +434,7 @@ impl FilterArgs {
             since: self.since,
             until: self.until,
             tier: self.tier.map(Into::into),
+            source_session: None,
         }
     }
 }

@@ -130,6 +130,7 @@ pub fn router() -> Router<SharedState> {
         .route("/api/memory/get", post(get))
         .route("/api/memory/search", post(search))
         .route("/api/memory/list", post(list))
+        .route("/api/memory/count", post(count))
         .route("/api/memory/update", post(update))
         .route("/api/memory/delete", post(delete))
         .route("/api/memory/forget", post(forget))
@@ -226,6 +227,11 @@ pub struct FilterDTO {
         deserialize_with = "deserialize_optional_datetime"
     )]
     pub until: Option<DateTime<Utc>>,
+    /// Narrow to one `source_session` id. Powers dashboard deep-links
+    /// like `?session=<sid>` so the user can drill into rows the agent
+    /// wrote during one engine session.
+    #[serde(default)]
+    pub source_session: Option<String>,
 }
 
 impl FilterDTO {
@@ -238,6 +244,7 @@ impl FilterDTO {
             since: self.since,
             until: self.until,
             tier: self.tier,
+            source_session: self.source_session,
         }
     }
 }
@@ -314,6 +321,22 @@ pub struct ListRequest {
 
 fn default_list_limit() -> usize {
     50
+}
+
+/// Lightweight summary endpoint used by the memory dashboard. Returns
+/// the row count + the most recent row's `created_at` per filter set,
+/// so the on-open UI can render tier cards (Core / Semantic / Episodic)
+/// without paging through actual rows. `count` is metadata-only at the
+/// LanceDB layer; `latest_created_at` costs one row fetch.
+///
+/// Same scope rules as `list`: `episodic` `None` spans both stores,
+/// `Some(true)` episodic only, `Some(false)` semantic only.
+#[derive(Debug, Deserialize)]
+pub struct CountRequest {
+    #[serde(flatten)]
+    pub filters: FilterDTO,
+    #[serde(default)]
+    pub episodic: Option<bool>,
 }
 
 /// Update semantics mirror the CLI: explicit set-vs-clear via twin
@@ -670,6 +693,48 @@ fn sort_combined(rows: &mut [crate::memory::Memory], sort: crate::memory::SortOr
         Newest => b.effective_timestamp().cmp(&a.effective_timestamp()),
         Oldest => a.effective_timestamp().cmp(&b.effective_timestamp()),
     });
+}
+
+async fn count(
+    State(state): State<SharedState>,
+    Json(req): Json<CountRequest>,
+) -> Result<Response, ApiError> {
+    let filters = req.filters.into_filters();
+    let stores = stores_for_read(&state, req.episodic);
+
+    // Sum row counts across in-scope stores (metadata-only LanceDB call).
+    let mut total: usize = 0;
+    for store in &stores {
+        total = total.saturating_add(store.count_filtered(&filters).await?);
+    }
+
+    // Cheapest "latest" — one-row list, newest order, post-merge max.
+    // Skipped when count is 0 to avoid an empty fetch.
+    let latest = if total == 0 {
+        None
+    } else {
+        let mut newest: Option<crate::memory::Memory> = None;
+        for store in &stores {
+            let rows = store
+                .list(&filters, crate::memory::SortOrder::Newest, 1, 0)
+                .await?;
+            if let Some(row) = rows.into_iter().next() {
+                if newest
+                    .as_ref()
+                    .map(|cur| row.created_at > cur.created_at)
+                    .unwrap_or(true)
+                {
+                    newest = Some(row);
+                }
+            }
+        }
+        newest.map(|r| r.created_at)
+    };
+
+    Ok(ok(json!({
+        "count": total,
+        "latest_created_at": latest,
+    })))
 }
 
 async fn update(

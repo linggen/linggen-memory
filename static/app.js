@@ -140,6 +140,7 @@ const state = {
     outcome: null,
     since: null,
     until: null,
+    source_session: null,
   },
   // Storage view — mutually exclusive across the three places a row can
   // live. Translates to `tier` / `episodic` on the wire (see filterPayload
@@ -204,7 +205,8 @@ function hasAnyFilter() {
     f.from !== null ||
     f.outcome !== null ||
     f.since !== null ||
-    f.until !== null
+    f.until !== null ||
+    f.source_session !== null
   );
 }
 
@@ -228,6 +230,7 @@ function clearFilters() {
     outcome: null,
     since: null,
     until: null,
+    source_session: null,
   };
 }
 
@@ -262,6 +265,7 @@ function filterPayload() {
   if (f.outcome) body.outcome = f.outcome;
   if (f.since)   body.since = f.since;
   if (f.until)   body.until = f.until;
+  if (f.source_session) body.source_session = f.source_session;
   // Storage view: 'episodic' is a top-level flag on the request (switches
   // table); 'core' / 'semantic' add a `tier` filter inside the semantic
   // table. 'all' leaves both off.
@@ -464,6 +468,7 @@ function activeFilterChips() {
   if (f.outcome) chips.push(filterChip('outcome', f.outcome));
   if (f.since)   chips.push(filterChip('since', f.since));
   if (f.until)   chips.push(filterChip('until', f.until));
+  if (f.source_session) chips.push(filterChip('source_session', f.source_session));
   return chips;
 }
 
@@ -1917,6 +1922,23 @@ document.getElementById('view-tabs').addEventListener('click', (e) => {
   if (!btn) return;
   setView(btn.dataset.view);
 });
+
+// Seed filters from URL — drives deep-links from outside the dashboard
+// (e.g. the memory skill's "Open in ling-mem console ↗" buttons after
+// a hippocampus run). Accepted params:
+//   ?since=<ISO ts or YYYY-MM-DD>  → state.filters.since
+//   ?session=<source_session id>   → state.filters.source_session
+//   ?tier=core|semantic|episodic   → state.view
+// Anything else is ignored.
+{
+  const sp = new URLSearchParams(window.location.search);
+  const since = sp.get('since');
+  if (since) state.filters.since = since;
+  const session = sp.get('session');
+  if (session) state.filters.source_session = session;
+  const tier = sp.get('tier');
+  if (tier && ['core', 'semantic', 'episodic'].includes(tier)) state.view = tier;
+}
 
 pollHealth();
 setInterval(pollHealth, HEALTH_POLL_MS);

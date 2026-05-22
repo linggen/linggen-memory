@@ -43,6 +43,10 @@ pub struct Filters {
     pub tier: Option<Tier>,
     pub since: Option<DateTime<Utc>>,
     pub until: Option<DateTime<Utc>>,
+    /// Narrow to a single `source_session` id. Used by dashboard
+    /// deep-links (`?session=<sid>`) to show only rows the agent wrote
+    /// during one engine session.
+    pub source_session: Option<String>,
 }
 
 impl Filters {
@@ -100,6 +104,10 @@ impl Filters {
                 "COALESCE(occurred_at, created_at) < TIMESTAMP '{}'",
                 until.format("%Y-%m-%d %H:%M:%S%.6f")
             ));
+        }
+
+        if let Some(sid) = &self.source_session {
+            clauses.push(format!("source_session = '{}'", escape_sql(sid)));
         }
 
         if clauses.is_empty() {
@@ -584,6 +592,20 @@ impl MemoryStore {
             .context("counting rows in memory table")
     }
 
+    /// Row count constrained by `filters`. Pushes filter SQL into LanceDB
+    /// so the count is a metadata-only operation (no row materialization).
+    /// Empty filters → same as [`count`]. `origin` is ignored at the SQL
+    /// layer (see [`Filters::to_sql`] on the `from` keyword bug); pre-existing
+    /// callers that need an exact origin-scoped count still have to fall
+    /// back to `list` + post-filter.
+    pub async fn count_filtered(&self, filters: &Filters) -> Result<usize> {
+        let predicate = filters.to_sql();
+        self.table
+            .count_rows(predicate)
+            .await
+            .context("counting filtered rows in memory table")
+    }
+
     /// Nearest-neighbor search over `vector`, constrained by `filters`.
     ///
     /// Returns up to `limit` facts sorted by vector similarity (closest
@@ -1045,6 +1067,7 @@ mod tests {
             tier: Some(Tier::Core),
             since: None,
             until: None,
+            source_session: None,
         };
         let sql = f.to_sql().unwrap();
         assert!(sql.contains("array_has(contexts, 'code/linggen')"));
