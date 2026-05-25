@@ -1802,6 +1802,99 @@ function onHelpBackdropClick(e) {
   if (e.target === e.currentTarget) closeHelp();
 }
 
+// ── Settings modal ─────────────────────────────────────────────────
+// Reads + writes /api/config (currently just episodic_ttl_days). Read
+// path is also used by the dream pass on every host — keep the schema
+// minimal and forward-compatible.
+
+function isSettingsOpen() {
+  return !document.getElementById('settings-overlay').hidden;
+}
+
+function toggleSettings() {
+  if (isSettingsOpen()) closeSettings();
+  else openSettings();
+}
+
+async function openSettings() {
+  const overlay = document.getElementById('settings-overlay');
+  overlay.replaceChildren(await buildSettingsCard());
+  overlay.hidden = false;
+  overlay.addEventListener('click', onSettingsBackdropClick);
+  overlay.querySelector('input')?.focus();
+}
+
+function closeSettings() {
+  const overlay = document.getElementById('settings-overlay');
+  overlay.hidden = true;
+  overlay.removeEventListener('click', onSettingsBackdropClick);
+  overlay.replaceChildren();
+}
+
+function onSettingsBackdropClick(e) {
+  if (e.target === e.currentTarget) closeSettings();
+}
+
+async function buildSettingsCard() {
+  const card = document.createElement('div');
+  card.className = 'help-card settings-card';
+  card.setAttribute('role', 'document');
+  // Load current config (best-effort — fall back to defaults).
+  let cfg = { episodic_ttl_days: 7 };
+  try {
+    const resp = await fetch('/api/config');
+    const json = await resp.json();
+    cfg = { ...cfg, ...(json?.data ?? {}) };
+  } catch { /* defaults */ }
+  card.innerHTML = `
+    <header>
+      <h2 id="settings-title">Settings</h2>
+      <button type="button" class="help-close" aria-label="Close" title="Close (Esc)">×</button>
+    </header>
+    <div class="settings-row">
+      <label for="settings-ttl">Episodic TTL (days)</label>
+      <input id="settings-ttl" type="number" min="1" max="3650" step="1"
+             value="${cfg.episodic_ttl_days}" />
+      <p class="settings-hint">
+        How long an episodic row survives before the next dream pass is
+        allowed to promote-or-evict it. Default 7. Increase to let
+        episodic memory live longer before consolidation.
+      </p>
+    </div>
+    <div class="settings-actions">
+      <button type="button" class="settings-save">Save</button>
+      <button type="button" class="settings-cancel">Cancel</button>
+    </div>
+    <p class="settings-status" hidden></p>
+  `;
+  card.querySelector('.help-close').addEventListener('click', closeSettings);
+  card.querySelector('.settings-cancel').addEventListener('click', closeSettings);
+  card.querySelector('.settings-save').addEventListener('click', async () => {
+    const input = card.querySelector('#settings-ttl');
+    const status = card.querySelector('.settings-status');
+    const ttl = parseInt(input.value, 10);
+    if (!Number.isFinite(ttl) || ttl < 1 || ttl > 3650) {
+      status.textContent = 'Episodic TTL must be 1–3650 days.';
+      status.hidden = false;
+      return;
+    }
+    try {
+      await fetch('/api/config', {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ episodic_ttl_days: ttl }),
+      });
+      status.textContent = 'Saved.';
+      status.hidden = false;
+      setTimeout(closeSettings, 700);
+    } catch (err) {
+      status.textContent = `Save failed: ${err}`;
+      status.hidden = false;
+    }
+  });
+  return card;
+}
+
 function buildHelpCard() {
   const card = document.createElement('div');
   card.className = 'help-card';
@@ -1876,6 +1969,7 @@ document.addEventListener('click', (e) => {
 });
 
 document.getElementById('help-btn').addEventListener('click', toggleHelp);
+document.getElementById('settings-btn').addEventListener('click', toggleSettings);
 
 document.getElementById('query').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') {

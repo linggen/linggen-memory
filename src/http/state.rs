@@ -6,6 +6,7 @@
 
 use crate::embed::Embedder;
 use crate::memory::{MemoryStore, Recall};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 pub struct AppState {
@@ -19,6 +20,10 @@ pub struct AppState {
     /// Shares both handles above.
     pub recall: Arc<Recall>,
     pub embedder: Arc<Embedder>,
+    /// Data directory root (typically `~/.linggen/`). User-tunable knobs
+    /// (`.config.json` — episodic TTL etc.) live under
+    /// `<data_dir>/memory/.config.json`.
+    pub data_dir: PathBuf,
 }
 
 pub type SharedState = Arc<AppState>;

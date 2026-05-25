@@ -12,6 +12,7 @@
 //! bundled `index.html` and `GET /assets/*` fans out to the rest of
 //! `static/`. See `doc/ui-spec.md`.
 
+mod config;
 pub mod envelope;
 mod health;
 mod memory;
@@ -40,6 +41,7 @@ pub fn build_router(state: SharedState, telemetry: Telemetry) -> Router {
             telemetry,
             command_telemetry_layer,
         )))
+        .merge(config::router())
         .merge(ui::router())
         .with_state(state)
 }
