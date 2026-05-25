@@ -6,7 +6,7 @@
 
 Built as the default memory skill for [Linggen](https://github.com/linggen/linggen); works equally well invoked from Claude Code or any tool that can shell out.
 
-> 🚀 **Status: v0.3.2 — prebuilt binaries available** for macOS Apple Silicon and Linux (x86_64 + aarch64). Active development on `main`. The pre-refactor code-indexing tool is preserved at the `v0-legacy` git tag.
+> 🚀 **Status: v0.7.0 — prebuilt binaries available** for macOS Apple Silicon and Linux (x86_64 + aarch64). Active development on `main`. The pre-refactor code-indexing tool is preserved at the `v0-legacy` git tag.
 
 ---
 
@@ -18,8 +18,8 @@ Built as the default memory skill for [Linggen](https://github.com/linggen/lingg
 - **Forgetting is first-class.** `delete` by id, `forget` by filter — refuses empty filters as a guardrail.
 - **Self-updating.** `ling-mem upgrade --check` reports the latest release; `ling-mem start`, `restart`, and `status` all embed the same cached probe in their JSON so the agent can prompt the user when a new version ships without making extra network calls. `upgrade --yes` swaps the binary atomically and restarts the daemon. (`self-update` still works as an alias.)
 - **Three ways to use it:**
-  - As a **Linggen skill** — web app UI + `Memory_*` tool dispatch in the agent.
-  - As a **Claude Code skill** — SKILL.md body, model calls the CLI via Bash.
+  - As the **`shared-memory` skill on Linggen** — web app UI + `Memory_*` tool dispatch in the agent.
+  - As the **`shared-memory` skill on Claude Code / Codex / OpenClaw** — SKILL.md body, model calls the CLI via Bash, recall hook injects context every turn.
   - **Standalone** — any script or tool can shell out to `ling-mem`.
 
 See `doc/product-spec.md` for the full product story and `doc/tech-spec.md` for the implementation contract.
@@ -52,16 +52,21 @@ The daemon (`ling-mem start`) also serves a built-in Data Browser at `http://127
 
 ## Install
 
-The `ling-mem` binary ships as part of the **`ling-mem` skill** (in the [linggen/skills](https://github.com/linggen/skills) repo at `ling-mem/`). Installing the skill is the recommended path — it fetches the prebuilt binary, wires up the SKILL.md, and seeds the core memory files.
+The `ling-mem` binary ships as part of the **`shared-memory` skill** (in the [linggen/skills](https://github.com/linggen/skills) repo at `shared-memory/`). Installing the skill is the recommended path — it fetches the prebuilt binary, wires up the SKILL.md, and seeds the core memory files.
 
-Best experience: **Linggen agent**, which exposes typed `Memory_query` / `Memory_write` tools and a built-in dashboard. The skill also works with **any other agent** that can shell out (Claude Code, Codex, plain scripts) — they just call the `ling-mem` CLI directly.
+Best experience: **Linggen agent**, which exposes typed `Memory_query` / `Memory_write` tools and a built-in dashboard. The skill also works with **any other agent** that can shell out (Claude Code, Codex, OpenClaw, plain scripts) — they just call the `ling-mem` CLI directly.
 
 ```bash
+# One-liner installer (cross-host: drops the canonical bundle at
+# ~/.linggen/skills/shared-memory and per-host stubs under
+# ~/.claude/, ~/.codex/, ~/.openclaw/ if those dirs exist):
+curl -fsSL https://linggen.dev/install-shared-memory.sh | bash
+
+# Or from a checked-out clone:
 git clone https://github.com/linggen/skills
-cd skills/ling-mem
-./install.sh                  # auto-detects ~/.linggen and/or ~/.claude
-./install.sh --host=both      # force install to both
-LING_MEM_VERSION=v0.3.2 ./install.sh   # pin a specific version
+cd skills/shared-memory
+./install.sh                                # auto-detects every host runtime
+LING_MEM_VERSION=v0.7.0 ./install.sh        # pin a specific binary version
 ```
 
 Prebuilt binaries are available for macOS Apple Silicon and Linux (x86_64 + aarch64) on the [releases page](https://github.com/linggen/linggen-memory/releases).

@@ -1,5 +1,47 @@
 # Changelog
 
+## [0.7.0] - 2026-05-25 — shared-memory skill + user-tunable TTL
+
+The skill bundle was renamed `ling-mem` → `shared-memory` in the
+[linggen/skills](https://github.com/linggen/skills) repo; the binary,
+the CLI command, and the daemon stay named `ling-mem`. New install
+path (cross-host one-liner):
+
+```bash
+curl -fsSL https://linggen.dev/install-shared-memory.sh | bash
+```
+
+### Added
+
+- **`/api/config` endpoint** — `GET` / `PUT` `{episodic_ttl_days}`. Lets
+  the user tune the episodic-row lifetime per machine; every dream pass
+  on every host reads the same value through the daemon. Stored at
+  `~/.linggen/memory/.config.json` (hand-editable).
+- **Dashboard ⚙ Settings overlay** — gear icon in the top-right of
+  the data browser writes the config via `PUT /api/config`. No restart
+  required.
+- **`ling-mem list --older-than <duration>`** — sugar for `--until <now
+  − duration>`. Accepts `s|m|h|d|w` units (`30d`, `12h`, `1w`). The
+  dream pass's Phase 3 worklist now reads `ling-mem list --episodic
+  --older-than ${TTL_DAYS}d` instead of computing RFC-3339 cutoffs in
+  bash.
+- **`ling-mem edit --tier <core|semantic|episodic>`** — exposes the
+  `tier` field on the patch surface. Useful for repairing rows whose
+  tier drifted from their table identity (e.g. a pre-fix `add
+  --episodic` write stuck on `tier=semantic`).
+
+### Fixed
+
+- **`add --episodic` (CLI direct-store)** now stamps `tier=Episodic`,
+  matching the HTTP path's invariant. Previously the row went to the
+  episodic table but carried `tier=semantic` — visible as the wrong
+  badge on the dashboard's All tab.
+- **Dashboard 'All' tab no longer double-fetches.** After the
+  cross-table-reads daemon change (`39e100b`) the existing client-side
+  merge double-counted episodic rows. Replaced with a single
+  `/api/memory/list` call; row tier is derived from each row's `tier`
+  field.
+
 ## [Unreleased]
 
 ### Added
