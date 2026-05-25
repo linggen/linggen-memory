@@ -89,37 +89,51 @@ pub enum Command {
         yes: bool,
     },
 
-    /// Bulk-delete by filter. Refuses empty filters.
+    /// Bulk-delete by filter. Refuses empty filters. Accepts the same
+    /// filter args as `list`/`search`, including `--older-than 30d` and
+    /// the global `--episodic` flag, so `ling-mem --episodic forget
+    /// --older-than 30d --yes` covers the past-TTL decay sweep that
+    /// used to be a separate `evict` verb.
     Forget(ForgetArgs),
-
-    /// Delete episodic rows older than a cutoff — the consolidation
-    /// pass's decay sweep. Always targets the episodic store (the `semantic`
-    /// table is curated and never auto-evicted); the `--episodic` flag is
-    /// not needed. The engine owns the TTL policy and passes the resolved
-    /// absolute cutoff; this binary stays policy-free.
-    Evict(EvictArgs),
 
     // Session-scanning utilities (`collect` + `extract`) used to live here.
     // They moved to `skills/memory/scripts/` as bash helpers — the daemon is
     // a pure data service; reading session files isn't its concern.
 
-    /// Run the HTTP daemon in the foreground. Blocks until SIGTERM / SIGINT.
-    /// What `start` re-exec's, and what launchd/systemd should call.
+    /// Spawn the daemon. Forks to background by default and waits for
+    /// the port to bind; pass `--foreground` to block in the current
+    /// process (what `launchd` / `systemd` / docker want).
+    ///
+    /// Aliased as `serve` for back-compat with earlier scripts/launchd
+    /// configs — `serve` implies `--foreground`.
+    #[command(hide = true)]
+    Start {
+        #[arg(long, default_value_t = crate::daemon::DEFAULT_PORT)]
+        port: u16,
+        /// Block in the current process instead of forking. Use this
+        /// when something else (launchd, systemd, docker, the user's
+        /// terminal) is the supervising parent.
+        #[arg(long)]
+        foreground: bool,
+    },
+
+    /// Back-compat alias for `start --foreground`. Hidden from --help;
+    /// kept callable so existing launchd / systemd / supervisor configs
+    /// invoking `ling-mem serve` keep working unchanged.
+    #[command(hide = true)]
     Serve {
         #[arg(long, default_value_t = crate::daemon::DEFAULT_PORT)]
         port: u16,
     },
 
-    /// Spawn the daemon in the background and wait for it to bind.
-    Start {
-        #[arg(long, default_value_t = crate::daemon::DEFAULT_PORT)]
-        port: u16,
-    },
-
-    /// SIGTERM the running daemon and wait for it to exit.
+    /// SIGTERM the running daemon and wait for it to exit. Hidden —
+    /// the CLI manages daemon lifecycle transparently; explicit stop
+    /// is power-user / installer territory.
+    #[command(hide = true)]
     Stop,
 
-    /// Stop + start.
+    /// Stop + start. Hidden for the same reason as `stop`.
+    #[command(hide = true)]
     Restart {
         #[arg(long, default_value_t = crate::daemon::DEFAULT_PORT)]
         port: u16,
@@ -129,14 +143,6 @@ pub enum Command {
     /// the most recent (cached) upgrade probe so callers know whether a
     /// newer binary is available without making any network call.
     Status,
-
-    /// Seed the data directory: ensure `<data-dir>/memory/` exists and that
-    /// `identity.md` and `style.md` are present (touching empty files when
-    /// missing). Idempotent — never overwrites existing content. Mirrors
-    /// the `seed_core_memory` step that `install.sh` performs, so hosts
-    /// that bypass `install.sh` (OpenClaw via ClawHub, recovery after a
-    /// data-dir wipe) can call it directly.
-    Init,
 
     /// Check for or apply a `ling-mem` upgrade from GitHub releases.
     /// With `--check`, report the latest version without downloading.
@@ -253,14 +259,6 @@ pub struct ListArgs {
     /// through results larger than one batch.
     #[arg(long, default_value_t = 0)]
     pub offset: usize,
-
-    /// Sugar over `--until`: select rows older than this duration from
-    /// now. Accepts `<n><unit>` where unit is one of s/m/h/d/w
-    /// (seconds/minutes/hours/days/weeks). Examples: `30d`, `12h`,
-    /// `1w`. The dream worklist uses this to fetch past-TTL episodic
-    /// rows without computing dates client-side.
-    #[arg(long, value_name = "DURATION", value_parser = parse_duration_to_cutoff)]
-    pub older_than: Option<DateTime<Utc>>,
 }
 
 /// Parse a human duration ("30d", "12h") into a `DateTime<Utc>` cutoff —
@@ -320,6 +318,16 @@ pub struct FilterArgs {
     /// RFC-3339 upper bound on `COALESCE(occurred_at, created_at)`.
     #[arg(long)]
     pub until: Option<DateTime<Utc>>,
+
+    /// Sugar over `--until`: select rows older than this duration from
+    /// now. Accepts `<n><unit>` where unit is one of s/m/h/d/w
+    /// (seconds/minutes/hours/days/weeks). Examples: `30d`, `12h`,
+    /// `1w`. Available on `list`, `search`, and `forget` — the dream
+    /// worklist + past-TTL eviction both use it instead of computing
+    /// dates in shell. When both `--until` and `--older-than` are
+    /// passed, the stricter (older) cutoff wins.
+    #[arg(long, value_name = "DURATION", value_parser = parse_duration_to_cutoff)]
+    pub older_than: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Args)]
@@ -370,15 +378,6 @@ pub struct ForgetArgs {
     /// Confirm the bulk delete. Required — enforces a think-twice step.
     #[arg(long)]
     pub yes: bool,
-}
-
-#[derive(Debug, Args)]
-pub struct EvictArgs {
-    /// RFC-3339 cutoff. Rows whose `COALESCE(updated_at, created_at)` is
-    /// older than this are deleted. The caller computes the absolute
-    /// instant (`now − TTL`); no `--ttl` / duration form by design.
-    #[arg(long)]
-    pub before: DateTime<Utc>,
 }
 
 // ── CLI ↔ domain-type glue ──────────────────────────────────────────────────
@@ -481,13 +480,20 @@ impl From<CliSort> for SortOrder {
 
 impl FilterArgs {
     fn into_filters(self) -> Filters {
+        // `--older-than 30d` is sugar for `--until <now-30d>`. If both
+        // are passed, pick the stricter (older) cutoff so the result
+        // is the intersection of both predicates.
+        let until = match (self.until, self.older_than) {
+            (Some(a), Some(b)) => Some(if a < b { a } else { b }),
+            (a, b) => a.or(b),
+        };
         Filters {
             contexts: self.contexts,
             types: self.types.into_iter().map(Into::into).collect(),
             origin: self.from.map(Into::into),
             outcome: self.outcome.map(Into::into),
             since: self.since,
-            until: self.until,
+            until,
             tier: self.tier.map(Into::into),
             source_session: None,
         }
@@ -537,10 +543,17 @@ pub async fn run(cli: Cli) -> Result<()> {
     }
     let skill_dir = crate::daemon::skill_dir(&data_dir);
     match cli.cmd {
+        // `start --foreground` blocks (what `serve` always did); without
+        // it, forks to background and waits for the port to bind. The
+        // hidden `serve` alias maps to `start --foreground` so existing
+        // launchd/systemd configs keep working.
         Command::Serve { port } => {
             return crate::daemon::serve::run(&data_dir, &skill_dir, port).await
         }
-        Command::Start { port } => {
+        Command::Start { port, foreground } => {
+            if foreground {
+                return crate::daemon::serve::run(&data_dir, &skill_dir, port).await;
+            }
             let outcome = crate::daemon::lifecycle::start(&data_dir, &skill_dir, port).await?;
             let update = crate::update::check_quiet(&data_dir).await;
             return emit_lifecycle_with_update(&outcome, Some(&update));
@@ -580,9 +593,6 @@ pub async fn run(cli: Cli) -> Result<()> {
             println!("{}", serde_json::to_string_pretty(&value)?);
             return Ok(());
         }
-        Command::Init => {
-            return cmd_init(&data_dir);
-        }
         Command::Upgrade {
             check,
             force,
@@ -590,17 +600,6 @@ pub async fn run(cli: Cli) -> Result<()> {
             port,
         } => {
             return cmd_upgrade(&data_dir, &skill_dir, check, force, yes, port).await;
-        }
-        // `evict` is episodic-only by definition: it never touches the
-        // curated `semantic` table and the HTTP daemon doesn't expose the
-        // episodic store, so route it straight to the direct episodic
-        // store rather than through the daemon-client dispatch below.
-        Command::Evict(ref args) => {
-            let before = args.before;
-            let store = open_store(&data_dir, true)
-                .await
-                .with_context(|| format!("opening episodic store at {}", data_dir.display()))?;
-            return cmd_evict(&store, before, format).await;
         }
         _ => {}
     }
@@ -633,8 +632,6 @@ pub async fn run(cli: Cli) -> Result<()> {
                 | Command::Stop
                 | Command::Restart { .. }
                 | Command::Status
-                | Command::Init
-                | Command::Evict(_)
                 | Command::Upgrade { .. } => unreachable!("handled above"),
             };
         }
@@ -667,8 +664,6 @@ pub async fn run(cli: Cli) -> Result<()> {
         | Command::Stop
         | Command::Restart { .. }
         | Command::Status
-        | Command::Init
-        | Command::Evict(_)
         | Command::Upgrade { .. } => unreachable!("handled above"),
     }
 }
@@ -912,16 +907,7 @@ fn embed_missing(facts: &mut [crate::memory::Memory]) -> Result<()> {
 }
 
 async fn cmd_list(store: &MemoryStore, args: ListArgs, format: OutputFormat) -> Result<()> {
-    let mut filters = args.filters.into_filters();
-    // `--older-than 30d` is sugar for `--until <now - 30d>`. If both
-    // are passed, pick the stricter (older) cutoff so the result set
-    // is the intersection, not the union.
-    if let Some(cutoff) = args.older_than {
-        filters.until = Some(match filters.until {
-            Some(existing) if existing < cutoff => existing,
-            _ => cutoff,
-        });
-    }
+    let filters = args.filters.into_filters();
     let results = store
         .list(&filters, args.sort.into(), args.limit, args.offset)
         .await?;
@@ -994,58 +980,17 @@ async fn cmd_forget(store: &MemoryStore, args: ForgetArgs, format: OutputFormat)
     }
 }
 
-async fn cmd_evict(
-    store: &MemoryStore,
-    before: DateTime<Utc>,
-    format: OutputFormat,
-) -> Result<()> {
-    let evicted = store.evict_expired(before).await?;
-    match format {
-        OutputFormat::Json => writeln_ndjson(&serde_json::json!({ "evicted": evicted })),
-        OutputFormat::Text => {
-            println!("evicted {evicted} episodic fact(s)");
-            Ok(())
-        }
-    }
-}
-
-// Session-scanning utilities (`cmd_collect` + `cmd_extract`) moved to
-// bash scripts in `skills/memory/scripts/`. The daemon stays focused on
-// the fact store.
-
-/// Implements `ling-mem init` — idempotent seeding of the data directory
-/// and core memory files. Mirrors the `seed_core_memory` step in
-/// `install.sh` so non-`install.sh` install paths (OpenClaw via ClawHub,
-/// or recovery after a `rm -rf ~/.linggen`) can self-recover by running
-/// this command. Output reports which files were newly created.
-fn cmd_init(data_dir: &std::path::Path) -> Result<()> {
-    let memory_dir = data_dir.join("memory");
-    std::fs::create_dir_all(&memory_dir)
-        .with_context(|| format!("creating {}", memory_dir.display()))?;
-
-    fn touch_if_missing(path: &std::path::Path) -> Result<bool> {
-        if path.exists() {
-            return Ok(false);
-        }
-        std::fs::write(path, b"")
-            .with_context(|| format!("creating {}", path.display()))?;
-        Ok(true)
-    }
-
-    let identity = memory_dir.join("identity.md");
-    let style = memory_dir.join("style.md");
-    let identity_created = touch_if_missing(&identity)?;
-    let style_created = touch_if_missing(&style)?;
-
-    let report = serde_json::json!({
-        "data_dir": data_dir,
-        "memory_dir": memory_dir,
-        "identity_md": { "path": identity, "created": identity_created },
-        "style_md":    { "path": style,    "created": style_created },
-    });
-    println!("{}", serde_json::to_string_pretty(&report)?);
-    Ok(())
-}
+// `cmd_evict` and `cmd_init` were removed in v0.7.1:
+//   * `evict --before <ts>` — replaced by `forget --older-than <dur>
+//     --episodic --yes`, which subsumes the past-TTL decay sweep into
+//     the existing bulk-delete verb.
+//   * `init` — the engine no longer reads `identity.md` / `style.md`
+//     since the 2026-05-20 core-tier cutover (rows live in LanceDB
+//     with `tier=core`). The data directory is auto-created on the
+//     first write, so a stand-alone seed step is dead weight.
+// Session-scanning utilities (`collect` / `extract`) live as bash
+// scripts under `skills/shared-memory/scripts/`; the daemon stays
+// focused on the memory store.
 
 async fn cmd_upgrade(
     data_dir: &std::path::Path,
@@ -1214,6 +1159,7 @@ mod tests {
             outcome: Some(CliOutcome::Positive),
             since: None,
             until: None,
+            older_than: None,
         };
         let filters = fa.into_filters();
         assert_eq!(filters.contexts, vec!["code/linggen".to_string()]);

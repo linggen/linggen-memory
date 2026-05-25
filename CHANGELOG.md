@@ -1,5 +1,46 @@
 # Changelog
 
+## [0.7.1] - 2026-05-25 — CLI surface trimmed (CRUD + status + upgrade)
+
+The CLI's user-facing surface is now exactly **CRUD on memory data**
+(`add`, `get`, `search`, `list`, `edit`, `delete`, `forget`) plus
+**`status`** and **`upgrade`**. Daemon lifecycle verbs are hidden from
+`--help` (still callable for installers and service supervisors).
+
+### Removed
+
+- **`init`** — the engine no longer reads `identity.md` / `style.md`
+  since the 2026-05-20 core-tier cutover (core lives as `tier=core`
+  rows in LanceDB). The data directory is auto-created on first
+  write; a stand-alone seed step is dead weight.
+- **`evict --before <ts>`** — fully subsumed by
+  `forget --older-than <dur> --episodic --yes`. The duration sugar +
+  the existing bulk-delete verb cover the same past-TTL decay sweep
+  with a more general filter API.
+
+### Changed
+
+- **`serve` merged into `start --foreground`.** `start` forks to the
+  background by default; pass `--foreground` to block in the current
+  process (what launchd / systemd / docker want). `serve` is kept as
+  a hidden back-compat alias so existing supervisor configs keep
+  working unchanged.
+- **`start`, `stop`, `restart` hidden from `--help`.** The CLI
+  auto-starts the daemon transparently on the first CRUD call —
+  end users never need to type these. Power users and install
+  scripts can still invoke them directly.
+- **`--older-than <s|m|h|d|w>` moved from `list` to `FilterArgs`** so
+  it works on `list`, `search`, and `forget`. When `--until` and
+  `--older-than` are both present, the stricter (older) cutoff wins.
+
+### Stale doc fixed
+
+- `evict` doc previously claimed *"the engine owns the TTL policy"* —
+  obsolete since `/api/config.episodic_ttl_days` shipped in v0.7.0.
+  The dream pass reads TTL from the daemon and passes it to
+  `forget --older-than ${TTL}d` directly; no engine policy lives in
+  the binary.
+
 ## [0.7.0] - 2026-05-25 — shared-memory skill + user-tunable TTL
 
 The skill bundle was renamed `ling-mem` → `shared-memory` in the

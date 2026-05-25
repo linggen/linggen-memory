@@ -200,6 +200,9 @@ pub(crate) async fn search(base: &str, args: SearchArgs, format: OutputFormat) -
 }
 
 pub(crate) async fn list(base: &str, args: ListArgs, format: OutputFormat) -> Result<()> {
+    // `--older-than` is folded into `until` by `filter_body` (which
+    // calls the same `FilterArgs::into_filters` mapping used on the
+    // direct-store path), so there's nothing extra to forward here.
     let mut body = filter_body(&args.filters);
     body["sort"] = match args.sort {
         crate::cli::CliSort::Newest => json!("newest"),
@@ -207,20 +210,6 @@ pub(crate) async fn list(base: &str, args: ListArgs, format: OutputFormat) -> Re
     };
     body["limit"] = json!(args.limit);
     body["offset"] = json!(args.offset);
-    // `--older-than 30d` → set `until = <cutoff>` on the wire. If
-    // `--until` is also set, pick the stricter (older) bound so the
-    // result is the intersection of both predicates.
-    if let Some(cutoff) = args.older_than {
-        let cutoff_str = cutoff.to_rfc3339();
-        let keep_existing = body
-            .get("until")
-            .and_then(|v| v.as_str())
-            .map(|existing| existing < cutoff_str.as_str())
-            .unwrap_or(false);
-        if !keep_existing {
-            body["until"] = Value::String(cutoff_str);
-        }
-    }
     let data = post(base, "/api/memory/list", &body).await?;
     emit_fact_array(&data, format)
 }
@@ -367,7 +356,14 @@ fn filter_body(filters: &FilterArgs) -> Value {
     if let Some(t) = filters.since {
         body["since"] = Value::String(t.to_rfc3339());
     }
-    if let Some(t) = filters.until {
+    // Fold `--older-than 30d` into `until` on the wire (the daemon
+    // doesn't know about `older_than`). When both are present, pick
+    // the stricter (older) cutoff — same rule as `FilterArgs::into_filters`.
+    let until = match (filters.until, filters.older_than) {
+        (Some(a), Some(b)) => Some(if a < b { a } else { b }),
+        (a, b) => a.or(b),
+    };
+    if let Some(t) = until {
         body["until"] = Value::String(t.to_rfc3339());
     }
     // Tier was missing here for the entire daemon path — direct-store mode
