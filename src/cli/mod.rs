@@ -297,6 +297,13 @@ pub struct UpdateArgs {
     #[arg(long, value_enum)]
     pub r#type: Option<CliMemoryType>,
 
+    /// Repair the row's `tier` field — useful when the value drifted
+    /// from the row's table identity (e.g. an episodic-table row
+    /// stuck on `tier=semantic`). Does NOT move the row across
+    /// tables; use `add --episodic` (or `delete` + `add`) for that.
+    #[arg(long, value_enum)]
+    pub tier: Option<CliTier>,
+
     #[arg(long, value_enum)]
     pub from: Option<CliOrigin>,
 
@@ -398,6 +405,12 @@ impl From<CliOutcome> for Outcome {
 pub enum CliTier {
     Core,
     Semantic,
+    /// Episodic is normally selected via the global `--episodic` flag
+    /// (the row lives in a separate table). Exposed on `--tier` so
+    /// `edit --tier episodic` can repair rows whose `tier` field
+    /// drifted from their table identity. Don't pass it to `add` —
+    /// use `--episodic` instead so the row lands in the right table.
+    Episodic,
 }
 
 impl From<CliTier> for Tier {
@@ -405,6 +418,7 @@ impl From<CliTier> for Tier {
         match v {
             CliTier::Core => Tier::Core,
             CliTier::Semantic => Tier::Semantic,
+            CliTier::Episodic => Tier::Episodic,
         }
     }
 }
@@ -885,6 +899,7 @@ async fn cmd_update(store: &MemoryStore, args: UpdateArgs, format: OutputFormat)
         contexts: args.contexts,
         tags: args.tags,
         r#type: args.r#type.map(Into::into),
+        tier: args.tier.map(Into::into),
         origin: args.from.map(Into::into),
         outcome: outcome_patch,
         cwd: cwd_patch,

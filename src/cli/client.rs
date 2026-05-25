@@ -225,6 +225,9 @@ pub(crate) async fn update(base: &str, args: UpdateArgs, format: OutputFormat) -
     if let Some(t) = args.r#type {
         body["type"] = Value::String(cli_memory_type_str(t).to_string());
     }
+    if let Some(t) = args.tier {
+        body["tier"] = Value::String(cli_tier_str(t).to_string());
+    }
     if let Some(o) = args.from {
         body["from"] = Value::String(cli_origin_str(o).to_string());
     }
@@ -497,5 +500,6 @@ fn cli_tier_str(t: crate::cli::CliTier) -> &'static str {
     match t {
         crate::cli::CliTier::Core => "core",
         crate::cli::CliTier::Semantic => "semantic",
+        crate::cli::CliTier::Episodic => "episodic",
     }
 }
