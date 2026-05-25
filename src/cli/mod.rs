@@ -590,7 +590,7 @@ pub async fn run(cli: Cli) -> Result<()> {
         .with_context(|| format!("opening store at {}", data_dir.display()))?;
 
     match cli.cmd {
-        Command::Add(args) => cmd_add(&store, args, format).await,
+        Command::Add(args) => cmd_add(&store, args, format, cli.episodic).await,
         Command::Get { id } => cmd_get(&store, &id, format).await,
         // Default search spans both tables (recall). `store` is the semantic
         // handle here (`!cli.episodic`); reuse it and open episodic alongside.
@@ -655,7 +655,12 @@ pub(crate) fn detect_host() -> Option<String> {
     None
 }
 
-async fn cmd_add(store: &MemoryStore, args: AddArgs, format: OutputFormat) -> Result<()> {
+async fn cmd_add(
+    store: &MemoryStore,
+    args: AddArgs,
+    format: OutputFormat,
+    episodic: bool,
+) -> Result<()> {
     // Bulk stdin path: always plain insert. Dedup against hundreds of incoming
     // rows would be O(N) searches per call; callers who want dedup for bulk
     // imports should run `analyze-clean` afterwards.
@@ -663,10 +668,12 @@ async fn cmd_add(store: &MemoryStore, args: AddArgs, format: OutputFormat) -> Re
         // A stdin row that carries its own `tier` keeps it; rows without one
         // inherit the `--tier` flag (default `semantic`). `read_stdin_facts`
         // reports which rows omitted the key so we only override those.
+        // Episodic-store writes force `tier=Episodic` regardless — the row's
+        // table is the source of truth and `tier` must agree.
         let (mut facts, tier_absent) = read_stdin_facts()?;
-        let default_tier: Tier = args.tier.into();
+        let default_tier: Tier = if episodic { Tier::Episodic } else { args.tier.into() };
         for (i, f) in facts.iter_mut().enumerate() {
-            if tier_absent[i] {
+            if tier_absent[i] || episodic {
                 f.tier = default_tier;
             }
         }
@@ -683,7 +690,10 @@ async fn cmd_add(store: &MemoryStore, args: AddArgs, format: OutputFormat) -> Re
     let mut fact = crate::memory::Memory::new(content, args.r#type.into(), args.from.into());
     fact.contexts = args.contexts;
     fact.tags = args.tags;
-    fact.tier = args.tier.into();
+    // Episodic-store writes pin `tier=Episodic` regardless of `--tier`
+    // (the row's table is the source of truth — mirrors the HTTP add
+    // path so the dashboard can derive its badge from `tier` alone).
+    fact.tier = if episodic { Tier::Episodic } else { args.tier.into() };
     fact.outcome = args.outcome.map(Into::into);
     fact.cwd = args.cwd;
     fact.occurred_at = args.occurred_at;

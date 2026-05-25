@@ -340,24 +340,23 @@ async function fetchRowsForView(endpoint, basePayload) {
     return merged.slice(0, limit);
   }
 
-  // List endpoint: keeps the existing `episodic: bool` flag (server
-  // routes single-table per call). 'all' view still merges sem + ep.
-  if (state.view !== 'all') {
-    const rows = await api(endpoint, basePayload);
-    return tagStorage(rows, basePayload.episodic === true);
+  // List endpoint contract changed in `39e100b` — the daemon now spans
+  // both tables when `episodic` is unset. So 'all' view = one call, no
+  // client-side merge. Tab views ('core' / 'semantic' / 'episodic')
+  // still pin to a single table via the existing `episodic: bool` flag
+  // (set in `filterPayload`).
+  const rows = await api(endpoint, basePayload);
+  return tagStorageFromTier(rows);
+}
+
+// Tier-derived storage label. Invariant: rows in the episodic table
+// carry `tier === 'episodic'`; semantic-table rows carry `core` or
+// `semantic`. Both daemon insert paths enforce this on write.
+function tagStorageFromTier(rows) {
+  for (const r of (rows || [])) {
+    r._storage = r.tier === 'episodic' ? 'episodic' : 'semantic';
   }
-  const [sem, ep] = await Promise.all([
-    api(endpoint, basePayload).then(r => tagStorage(r, false)),
-    api(endpoint, { ...basePayload, episodic: true }).then(r => tagStorage(r, true)),
-  ]);
-  const merged = [...sem, ...ep];
-  merged.sort((a, b) => {
-    const av = a.created_at || '';
-    const bv = b.created_at || '';
-    return state.sort === 'oldest' ? av.localeCompare(bv) : bv.localeCompare(av);
-  });
-  const limit = basePayload.limit || merged.length;
-  return merged.slice(0, limit);
+  return rows || [];
 }
 
 // Storage label: "core" / "semantic" / "episodic". Derived from
