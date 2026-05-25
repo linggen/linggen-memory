@@ -207,6 +207,20 @@ pub(crate) async fn list(base: &str, args: ListArgs, format: OutputFormat) -> Re
     };
     body["limit"] = json!(args.limit);
     body["offset"] = json!(args.offset);
+    // `--older-than 30d` → set `until = <cutoff>` on the wire. If
+    // `--until` is also set, pick the stricter (older) bound so the
+    // result is the intersection of both predicates.
+    if let Some(cutoff) = args.older_than {
+        let cutoff_str = cutoff.to_rfc3339();
+        let keep_existing = body
+            .get("until")
+            .and_then(|v| v.as_str())
+            .map(|existing| existing < cutoff_str.as_str())
+            .unwrap_or(false);
+        if !keep_existing {
+            body["until"] = Value::String(cutoff_str);
+        }
+    }
     let data = post(base, "/api/memory/list", &body).await?;
     emit_fact_array(&data, format)
 }

@@ -253,6 +253,47 @@ pub struct ListArgs {
     /// through results larger than one batch.
     #[arg(long, default_value_t = 0)]
     pub offset: usize,
+
+    /// Sugar over `--until`: select rows older than this duration from
+    /// now. Accepts `<n><unit>` where unit is one of s/m/h/d/w
+    /// (seconds/minutes/hours/days/weeks). Examples: `30d`, `12h`,
+    /// `1w`. The dream worklist uses this to fetch past-TTL episodic
+    /// rows without computing dates client-side.
+    #[arg(long, value_name = "DURATION", value_parser = parse_duration_to_cutoff)]
+    pub older_than: Option<DateTime<Utc>>,
+}
+
+/// Parse a human duration ("30d", "12h") into a `DateTime<Utc>` cutoff —
+/// i.e. `now - duration`. The result is the absolute timestamp callers
+/// pass to `--until` / `filters.until`. Returning a timestamp (not a
+/// `Duration`) keeps `cmd_list` / `client::list` purely a "set the
+/// filter" path, no further math.
+fn parse_duration_to_cutoff(s: &str) -> Result<DateTime<Utc>, String> {
+    let s = s.trim();
+    if s.is_empty() {
+        return Err("duration must not be empty (e.g. 30d, 12h, 1w)".to_string());
+    }
+    let (num_str, unit) = s.split_at(s.len() - 1);
+    let n: i64 = num_str
+        .parse()
+        .map_err(|_| format!("could not parse number from '{s}' (expected like '30d')"))?;
+    if n < 0 {
+        return Err(format!("duration must be non-negative ('{s}')"));
+    }
+    let seconds = match unit {
+        "s" => n,
+        "m" => n * 60,
+        "h" => n * 60 * 60,
+        "d" => n * 24 * 60 * 60,
+        "w" => n * 7 * 24 * 60 * 60,
+        _ => {
+            return Err(format!(
+                "unknown duration unit '{unit}' in '{s}' (use s|m|h|d|w)"
+            ))
+        }
+    };
+    let cutoff = Utc::now() - chrono::Duration::seconds(seconds);
+    Ok(cutoff)
 }
 
 #[derive(Debug, Args, Default, Clone)]
@@ -871,13 +912,18 @@ fn embed_missing(facts: &mut [crate::memory::Memory]) -> Result<()> {
 }
 
 async fn cmd_list(store: &MemoryStore, args: ListArgs, format: OutputFormat) -> Result<()> {
+    let mut filters = args.filters.into_filters();
+    // `--older-than 30d` is sugar for `--until <now - 30d>`. If both
+    // are passed, pick the stricter (older) cutoff so the result set
+    // is the intersection, not the union.
+    if let Some(cutoff) = args.older_than {
+        filters.until = Some(match filters.until {
+            Some(existing) if existing < cutoff => existing,
+            _ => cutoff,
+        });
+    }
     let results = store
-        .list(
-            &args.filters.into_filters(),
-            args.sort.into(),
-            args.limit,
-            args.offset,
-        )
+        .list(&filters, args.sort.into(), args.limit, args.offset)
         .await?;
     emit_facts(&results, format)
 }
