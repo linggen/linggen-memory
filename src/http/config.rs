@@ -53,7 +53,7 @@ fn config_path(data_dir: &std::path::Path) -> PathBuf {
 
 /// Read-or-default. Never errors on missing/corrupt — the daemon
 /// always has a working config even on first run.
-async fn load(data_dir: &std::path::Path) -> Config {
+pub(crate) async fn load(data_dir: &std::path::Path) -> Config {
     let path = config_path(data_dir);
     let Ok(bytes) = tokio::fs::read(&path).await else {
         return Config::default();

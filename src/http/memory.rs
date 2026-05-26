@@ -232,6 +232,14 @@ pub struct FilterDTO {
     /// wrote during one engine session.
     #[serde(default)]
     pub source_session: Option<String>,
+    /// `true` = apply the daemon's configured `episodic_ttl_days` as an
+    /// upper bound on `occurred_at` (i.e. "rows that are past their
+    /// TTL"). Resolved at handler entry and folded into `until`. The
+    /// dream consolidator sets this so the mission body never has to
+    /// know the live TTL value. Opt-in: default `false` keeps every
+    /// existing caller (dashboard, CLI list, etc.) unchanged.
+    #[serde(default)]
+    pub past_ttl: bool,
 }
 
 impl FilterDTO {
@@ -669,8 +677,19 @@ async fn search(
 
 async fn list(
     State(state): State<SharedState>,
-    Json(req): Json<ListRequest>,
+    Json(mut req): Json<ListRequest>,
 ) -> Result<Response, ApiError> {
+    // Resolve `past_ttl: true` into a concrete `until` cutoff. The mission
+    // body sends `past_ttl: true` so it doesn't have to hardcode the TTL
+    // number; the daemon owns the live value and applies it here.
+    // An explicit `until`/`older_than` from the caller wins (caller knows
+    // best); we only fill in when nothing is set.
+    if req.filters.past_ttl && req.filters.until.is_none() {
+        let cfg = crate::http::config::load(&state.data_dir).await;
+        let cutoff = chrono::Utc::now()
+            - chrono::Duration::days(cfg.episodic_ttl_days as i64);
+        req.filters.until = Some(cutoff);
+    }
     let filters = req.filters.into_filters();
     let sort = req.sort.into();
     let mut combined = Vec::new();
