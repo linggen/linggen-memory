@@ -31,6 +31,9 @@ rmdir "$CC/skills/shared-memory/hooks" 2>/dev/null || true
 cat > "$CC/hooks/hooks.json" <<'JSON'
 {
   "hooks": {
+    "SessionStart": [
+      { "hooks": [{ "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/autostart.sh" }] }
+    ],
     "UserPromptSubmit": [
       { "hooks": [{ "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/recall.sh" }] }
     ],
@@ -45,13 +48,21 @@ cat > "$CC/.mcp.json" <<'JSON'
 {
   "mcpServers": {
     "ling-mem": {
-      "type": "stdio",
-      "command": "ling-mem",
-      "args": ["mcp"]
+      "type": "http",
+      "url": "http://localhost:9888/mcp"
     }
   }
 }
 JSON
+
+cat > "$CC/hooks/autostart.sh" <<'BASH'
+#!/usr/bin/env bash
+# Ensure ling-mem daemon is up before the host tries to connect via MCP.
+# `ling-mem start` is idempotent — exits 0 if the daemon is already running.
+command -v ling-mem >/dev/null 2>&1 || exit 0
+ling-mem start >/dev/null 2>&1 || true
+BASH
+chmod +x "$CC/hooks/autostart.sh"
 
 cat > "$CC/README.md" <<'MD'
 # shared-memory (Claude Code plugin)
@@ -77,6 +88,7 @@ rmdir "$CX/skills/shared-memory/hooks" 2>/dev/null || true
 cat > "$CX/hooks/hooks.json" <<'JSON'
 {
   "hooks": [
+    { "event": "SessionStart",     "command": "${PLUGIN_ROOT}/hooks/autostart.sh" },
     { "event": "UserPromptSubmit", "command": "${PLUGIN_ROOT}/hooks/recall.sh" },
     { "event": "Stop",             "command": "${PLUGIN_ROOT}/hooks/encode.sh" }
   ]
@@ -87,12 +99,18 @@ cat > "$CX/.mcp.json" <<'JSON'
 {
   "mcpServers": {
     "ling-mem": {
-      "command": "ling-mem",
-      "args": ["mcp"]
+      "url": "http://localhost:9888/mcp"
     }
   }
 }
 JSON
+
+cat > "$CX/hooks/autostart.sh" <<'BASH'
+#!/usr/bin/env bash
+command -v ling-mem >/dev/null 2>&1 || exit 0
+ling-mem start >/dev/null 2>&1 || true
+BASH
+chmod +x "$CX/hooks/autostart.sh"
 
 # Copy any host-marketing assets if present.
 if [ -d "$TPL/assets" ] && [ -n "$(ls -A "$TPL/assets" 2>/dev/null)" ]; then

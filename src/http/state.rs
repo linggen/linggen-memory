@@ -24,6 +24,11 @@ pub struct AppState {
     /// (`.config.json` — episodic TTL etc.) live under
     /// `<data_dir>/memory/.config.json`.
     pub data_dir: PathBuf,
+    /// Bound TCP port of this daemon's HTTP server. The MCP handler uses
+    /// it to loopback POST against `/api/memory/<verb>` so MCP `tools/call`
+    /// reuses the same handlers (and their dispatch fixes) instead of
+    /// duplicating logic.
+    pub port: u16,
 }
 
 pub type SharedState = Arc<AppState>;

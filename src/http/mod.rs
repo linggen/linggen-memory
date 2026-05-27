@@ -15,6 +15,7 @@
 mod config;
 pub mod envelope;
 mod health;
+mod mcp;
 mod memory;
 pub mod state;
 mod ui;
@@ -41,6 +42,7 @@ pub fn build_router(state: SharedState, telemetry: Telemetry) -> Router {
             telemetry,
             command_telemetry_layer,
         )))
+        .merge(mcp::router())
         .merge(config::router())
         .merge(ui::router())
         .with_state(state)

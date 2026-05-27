@@ -1,8 +1,7 @@
 {
   "mcpServers": {
     "ling-mem": {
-      "command": "ling-mem",
-      "args": ["mcp"]
+      "url": "http://localhost:9888/mcp"
     }
   }
 }

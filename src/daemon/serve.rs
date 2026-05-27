@@ -101,6 +101,7 @@ pub async fn run(data_dir: &Path, skill_dir: &Path, port: u16) -> Result<()> {
         recall,
         embedder: Arc::new(embedder),
         data_dir: data_dir.to_path_buf(),
+        port: bound_port,
     });
 
     let router = http::build_router(state, telemetry);
