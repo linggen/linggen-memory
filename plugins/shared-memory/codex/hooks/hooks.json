@@ -1,7 +1,6 @@
 {
   "hooks": [
     { "event": "SessionStart",     "command": "${PLUGIN_ROOT}/hooks/autostart.sh" },
-    { "event": "UserPromptSubmit", "command": "${PLUGIN_ROOT}/hooks/recall.sh" },
-    { "event": "Stop",             "command": "${PLUGIN_ROOT}/hooks/encode.sh" }
+    { "event": "UserPromptSubmit", "command": "${PLUGIN_ROOT}/hooks/recall.sh" }
   ]
 }
