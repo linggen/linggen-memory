@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Memory</title>
+  <link rel="icon" type="image/svg+xml" href="/logo.svg">
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="memory.css">
+</head>
+<body>
+  <div class="header">
+    <h1>Memory</h1>
+    <nav class="action-bar" id="action-bar">
+      <div class="action-group" title="Pull denoised transcripts from cross-host sessions. Script-only — no LLM cost.">
+        <select id="scan-period" aria-label="Scan period">
+          <option value="today">today</option>
+          <option value="7d">this week</option>
+          <option value="30d">this month</option>
+        </select>
+        <button type="button" id="scan-btn" class="action-btn">🔍 Scan</button>
+      </div>
+      <button type="button" id="dream-btn" class="action-btn"
+              title="Read .scan-output.jsonl, judge candidates, write episodic / semantic / core, promote past-TTL.">
+        🧠 Hippocampus
+      </button>
+      <a href="http://127.0.0.1:9888" target="_blank" rel="noopener"
+         class="action-btn action-link"
+         title="Open the ling-mem daemon's full data browser (filter / edit / delete row-level).">
+        Browse ↗
+      </a>
+    </nav>
+  </div>
+
+  <div class="doctor-container">
+    <!-- Left: sessions list (Linggen's BareSessions iframe).
+         Selection / create flow back via postMessage; pulse.html
+         is the canonical pattern. -->
+    <aside class="sidebar" id="sidebar">
+      <iframe class="sessions-frame" id="sessions-iframe" title="Memory sessions"></iframe>
+    </aside>
+
+    <!-- Middle: model-driven view panel -->
+    <div class="view-panel" id="view-panel">
+      <div class="top-bar-area" id="top-bar-area"></div>
+      <div class="body-area" id="body-area"></div>
+      <div class="footer-area" id="footer-area"></div>
+    </div>
+
+    <!-- Right: chat panel -->
+    <div class="chat-panel" id="chat-panel"></div>
+  </div>
+
+  <script type="module" src="chat-bridge.js"></script>
+  <script type="module" src="memory-app.js"></script>
+</body>
+</html>

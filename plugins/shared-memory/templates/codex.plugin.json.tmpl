@@ -1,0 +1,35 @@
+{
+  "name": "shared-memory",
+  "version": "__VERSION__",
+  "description": "Cross-host durable memory — same ling-mem daemon and store in Claude Code, Codex, OpenClaw, and Linggen.",
+  "author": {
+    "name": "Linggen",
+    "url": "https://linggen.dev"
+  },
+  "homepage": "https://linggen.dev",
+  "repository": "https://github.com/linggen/linggen-memory",
+  "license": "Apache-2.0",
+  "keywords": ["memory", "ling-mem", "linggen", "biography", "cross-host"],
+  "skills": "./skills/",
+  "hooks": "./hooks/hooks.json",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Shared Memory",
+    "shortDescription": "Cross-host durable memory powered by ling-mem.",
+    "longDescription": "One memory store across Claude Code, Codex, OpenClaw, and Linggen. Three-tier model — core identity, long-term semantic, episodic staging. Memory as user biography, not coding activity log.",
+    "developerName": "Linggen",
+    "category": "Productivity",
+    "capabilities": ["Read", "Write"],
+    "websiteURL": "https://linggen.dev",
+    "privacyPolicyURL": "https://linggen.dev/privacy",
+    "termsOfServiceURL": "https://linggen.dev/terms",
+    "defaultPrompt": [
+      "What do you remember about me?",
+      "Remember that I prefer concise responses.",
+      "Clean up duplicate memories about my preferences."
+    ],
+    "brandColor": "#6366F1",
+    "composerIcon": "./assets/icon.png",
+    "logo": "./assets/logo.png"
+  }
+}

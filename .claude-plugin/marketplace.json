@@ -1,0 +1,22 @@
+{
+  "name": "linggen-memory",
+  "description": "Linggen's cross-host memory plugin marketplace.",
+  "owner": {
+    "name": "Linggen",
+    "url": "https://linggen.dev"
+  },
+  "plugins": [
+    {
+      "name": "shared-memory",
+      "description": "Cross-host durable memory — same ling-mem daemon and store in Claude Code, Codex, OpenClaw, and Linggen. Memory as user biography, not coding activity log.",
+      "category": "productivity",
+      "homepage": "https://linggen.dev",
+      "source": {
+        "source": "git-subdir",
+        "url": "https://github.com/linggen/linggen-memory.git",
+        "path": "plugins/shared-memory/cc",
+        "ref": "main"
+      }
+    }
+  ]
+}

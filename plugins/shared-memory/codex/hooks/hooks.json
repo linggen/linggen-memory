@@ -1,0 +1,6 @@
+{
+  "hooks": [
+    { "event": "UserPromptSubmit", "command": "${PLUGIN_ROOT}/hooks/recall.sh" },
+    { "event": "Stop",             "command": "${PLUGIN_ROOT}/hooks/encode.sh" }
+  ]
+}

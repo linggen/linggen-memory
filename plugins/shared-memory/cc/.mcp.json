@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "ling-mem": {
+      "type": "stdio",
+      "command": "ling-mem",
+      "args": ["mcp"]
+    }
+  }
+}
