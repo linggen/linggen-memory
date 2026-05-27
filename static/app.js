@@ -190,6 +190,7 @@ function cloneDraft(fact) {
     contexts: Array.isArray(fact.contexts) ? [...fact.contexts] : [],
     tags: Array.isArray(fact.tags) ? [...fact.tags] : [],
     type: fact.type ?? 'fact',
+    tier: fact.tier ?? 'semantic',
     from: fact.from ?? 'derived',
     outcome: fact.outcome ?? null,
     cwd: fact.cwd ?? null,
@@ -368,13 +369,19 @@ function storageLabel(row) {
   return row.tier === 'core' ? 'core' : 'semantic';
 }
 
-// Best-effort host inference from `cwd`. Linggen / CC / Codex / OpenClaw
-// each have a recognizable home-dir segment when the row was written
-// during a session inside that host's tree; rows written from a plain
-// workspace path can't be attributed and read "—". A future schema
-// addition (explicit `host` column) would replace this.
+// Host label: prefer the row's explicit `host` column (set on write by
+// `detect_host()` / engine dispatch), fall back to cwd inference only
+// for legacy rows that pre-date the column.
+const HOST_LABELS = {
+  'claude-code': 'Claude Code',
+  'codex':       'Codex',
+  'openclaw':    'OpenClaw',
+  'linggen':     'Linggen',
+};
 function hostLabel(row) {
-  const cwd = (row && row.cwd) || '';
+  if (!row) return '—';
+  if (row.host) return HOST_LABELS[row.host] ?? row.host;
+  const cwd = row.cwd || '';
   if (cwd.includes('/.claude/'))   return 'Claude Code';
   if (cwd.includes('/.codex/'))    return 'Codex';
   if (cwd.includes('/.openclaw/')) return 'OpenClaw';
@@ -828,7 +835,7 @@ function detailGrid() {
     rows.push(['Occurred', textOrDim(formatTimestamp(edited.occurred_at))]);
     rows.push(['divider']);
     const original = factForSelected();
-    rows.push(['Tier', textOrDim(storageLabel(original))]);
+    rows.push(['Tier', enumSelect('tier', TIER_LIST)]);
     rows.push(['Host', textOrDim(hostLabel(original))]);
     rows.push(['Created', textOrDim(formatTimestamp(original?.created_at))]);
     rows.push(['Session', idCell(original?.source_session)]);
@@ -936,6 +943,7 @@ function focusChipInput(field) {
 const FACT_TYPE_LIST = ['fact', 'preference', 'decision', 'tried', 'fixed', 'learned', 'built'];
 const ORIGIN_LIST    = ['user', 'agent', 'derived'];
 const OUTCOME_LIST   = ['positive', 'negative', 'neutral'];
+const TIER_LIST      = ['core', 'semantic', 'episodic'];
 
 function enumSelect(field, values) {
   const sel = document.createElement('select');
@@ -1159,6 +1167,10 @@ function diffForUpdate(original, edited) {
     patch.type = edited.type;
     dirty = true;
   }
+  if (edited.tier !== original.tier) {
+    patch.tier = edited.tier;
+    dirty = true;
+  }
   if (edited.from !== original.from) {
     patch.from = edited.from;
     dirty = true;
@@ -1187,6 +1199,9 @@ async function saveEditedFact() {
   if (isEpisodicMode()) patch.episodic = true;
   try {
     const updated = await api('/api/memory/update', patch);
+    // Re-derive `_storage` from the (possibly changed) tier so storageLabel()
+    // reads the correct table identity after a cross-table tier move.
+    tagStorageFromTier([updated]);
     const idx = state.loaded.findIndex(f => f.id === updated.id);
     if (idx >= 0) state.loaded[idx] = updated;
     state.draft = {

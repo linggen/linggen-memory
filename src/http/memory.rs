@@ -18,7 +18,7 @@ use axum::extract::State;
 use axum::response::Response;
 use axum::routing::post;
 use axum::{Json, Router};
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, SubsecRound, Utc};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer};
 use serde_json::{json, Value};
@@ -789,12 +789,48 @@ async fn update(
         ..Default::default()
     };
 
+    // Locate which table currently holds the row, so a tier patch that
+    // crosses the semantic/episodic boundary can be honored by moving the
+    // row across tables instead of leaving a tier=episodic row stranded
+    // in the semantic table (or vice-versa).
+    let mut located: Option<(Arc<MemoryStore>, Memory)> = None;
     for store in stores_for_read(&state, req.episodic) {
-        if let Some(fact) = store.update(&req.id, &patch).await? {
-            return Ok(ok(fact_public(&fact)));
+        if let Some(fact) = store.get(&req.id).await? {
+            located = Some((store, fact));
+            break;
         }
     }
-    Err(ApiError::not_found(format!("no fact with id {}", req.id)))
+    let Some((current_store, existing)) = located else {
+        return Err(ApiError::not_found(format!("no fact with id {}", req.id)));
+    };
+
+    let target_tier = patch.tier.unwrap_or(existing.tier);
+    let target_is_episodic = matches!(target_tier, Tier::Episodic);
+    let current_is_episodic = Arc::ptr_eq(&current_store, &state.episodic);
+
+    if current_is_episodic == target_is_episodic {
+        // Same-table update — delete+reinsert inside one store.
+        let updated = current_store
+            .update(&req.id, &patch)
+            .await?
+            .ok_or_else(|| ApiError::not_found(format!("no fact with id {}", req.id)))?;
+        return Ok(ok(fact_public(&updated)));
+    }
+
+    // Cross-table move: apply patch in memory, delete from source, insert
+    // into target. Preserves the id and the existing embedding vector.
+    let target_store = if target_is_episodic {
+        Arc::clone(&state.episodic)
+    } else {
+        Arc::clone(&state.store)
+    };
+    let mut moved = existing;
+    patch.apply(&mut moved);
+    moved.tier = target_tier;
+    moved.updated_at = Some(Utc::now().trunc_subsecs(6));
+    current_store.delete(&req.id).await?;
+    target_store.insert(std::slice::from_ref(&moved)).await?;
+    Ok(ok(fact_public(&moved)))
 }
 
 async fn delete(
