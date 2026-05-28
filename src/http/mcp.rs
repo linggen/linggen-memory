@@ -32,6 +32,62 @@ const MCP_PROTOCOL_VERSION: &str = "2024-11-05";
 const SERVER_NAME: &str = "ling-mem";
 const LOOPBACK_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// Always-on primer injected into the client's system prompt at session
+/// start. The MCP spec's `instructions` field is the daemon's way to teach
+/// every connected host (Claude Code, Codex, Cursor, …) the ling-mem
+/// doctrine without per-host CLAUDE.md edits. Keep it tight — each token
+/// here costs every session.
+const INSTRUCTIONS: &str = r#"ling-mem provides durable cross-session memory for this user — shared across Claude Code, Codex, OpenClaw, and Linggen. Memory is how the agent grows up: a fact earns its place only if a future session would make better predictions because the fact exists. Focus on the user, not the task.
+
+# The three tiers
+
+- **core** — narrow universals about the *person*: name, role, location, timezone, languages, family / pets. Always-loaded at session start. Keep tight.
+- **semantic** (default) — durable long-term facts retrieved on demand: long-term goals / vision, cross-project preferences, decisions whose reasoning is the value, cross-project tech gotchas. Most writes land here.
+- **episodic** — per-session staging. The dream mission promotes-or-evicts past-TTL rows. Don't write here directly; let the system manage promotion.
+
+# When to SEARCH (before answering)
+
+Call Memory_search when the user's question could connect to past preferences, decisions, or gotchas. Chip every fact you actually use: "From memory: …".
+
+# When to SAVE (call Memory_add)
+
+**Always Memory_search the candidate content before Memory_add.** Write-time dedup is cheaper than read-time cleanup:
+- If a near-duplicate row exists → skip the add, or Memory_delete the loser when your version is better-phrased.
+- If a conflict exists (same subject, incompatible value) → ask the user via the host's ask-user primitive, write the winner, delete the losers. Do not write on top of a conflict.
+
+HIGH-SIGNAL — save silently after the search check, no other confirmation:
+- Name + relationship ("my cat <name>", "my wife <name>") → tier=core, type=fact
+- Location / timezone → tier=core, type=fact
+- Role / identity ("I'm a robotics engineer") → tier=core, type=fact
+- Long-term goal ("I'm building X") → default tier, type=fact, tag intent:goal
+- Commitment ("always X", "never Y", "from now on Z") → tier=core, type=preference
+- Cross-project tech gotcha that will recur → default tier, type=learned
+
+Explicit imperatives — act immediately:
+- "remember X" → save, reply "Saved."
+- "forget X" → search + delete, reply "Deleted: …"
+- "update X to Y" → search + edit, reply "Updated."
+
+# When NOT to save
+
+- Project-internal facts — the agent re-reads project files next session.
+- Content already in AGENTS.md / CLAUDE.md / README — creates a stale duplicate.
+- Activity logs, single architectural calls, opinions without commitment.
+
+# Memory hygiene — hard floor
+
+Always keep memory clean. When recall surfaces duplicates or conflicts in the natural flow of a turn, fix them in the same pass:
+
+- **Duplicates** (same fact, different wording) → `Memory_delete` the loser, keep the better-phrased row. No prompt if confident.
+- **Conflicts** (same subject, incompatible value) → ask the user via the host's ask-user primitive (Claude Code: AskUserQuestion; Linggen: AskUser; Codex/OpenClaw: plain chat with numbered options). Don't pick silently.
+- After AskUser-resolved conflict: `Memory_add` the winner, then `Memory_delete` the losers.
+
+Inline reconciliation fires on **incidental** recall hits only. When the user is explicitly steering memory ("clean up", "remember X", "what's in memory", "ignore those hits"), follow their direction — do not side-quest dedup.
+
+# Tool gotchas — CRITICAL
+
+For Memory_search / Memory_list: do NOT pass `type`, `from`, or `outcome` unless the user explicitly asked. Models hallucinate these defaults and over-constrain queries to 0 rows. Pass only the query (and `limit` if relevant)."#;
+
 pub fn router() -> Router<SharedState> {
     Router::new().route("/mcp", post(handler))
 }
@@ -78,7 +134,8 @@ fn handle_initialize() -> Value {
         "serverInfo": {
             "name": SERVER_NAME,
             "version": env!("CARGO_PKG_VERSION"),
-        }
+        },
+        "instructions": INSTRUCTIONS,
     })
 }
 

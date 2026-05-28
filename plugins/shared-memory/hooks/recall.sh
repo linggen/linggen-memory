@@ -48,7 +48,7 @@ hits="$(printf '%s' "$out" | jq -sr --arg proj "$proj" --argjson k "$topk" '
   ))
   | .[:$k]
   | .[]
-  | "From memory (\(.type), \(.host // "unknown"), \((.created_at // "")[0:10]), id=\(.id)): \(.content)"
+  | "From memory (\(.type), \(.host // "unknown"), \((.created_at // "")[0:10]), score=\((.score // 0) * 100 | floor / 100), id=\(.id)): \(.content)"
 ' 2>/dev/null || true)"
 
 [ -z "$hits" ] && exit 0
@@ -56,5 +56,14 @@ hits="$(printf '%s' "$out" | jq -sr --arg proj "$proj" --argjson k "$topk" '
 printf '%s\n' "$hits"
 hit_count="$(printf '%s\n' "$hits" | grep -c .)"
 if [ "$hit_count" -gt 1 ]; then
-  echo "Note: When you see duplicates, dedup via 'ling-mem delete <id>'. When you see conflicts, ask the user which is correct, then 'ling-mem edit <id>'. Please keep memory in good shape."
+  # Mirrors linggen/src/engine/prompt/core_block.rs:RECONCILE_FOOTER.
+  # Adapted: ling-mem MCP exposes memory_delete / memory_add as discrete
+  # verbs; replace_ids is on the daemon's HTTP /api/memory/add but not yet
+  # in the MCP tool schema, so for conflicts use ordered memory_add (winner)
+  # then memory_delete (losers) — write before delete keeps the worst-case
+  # window safe.
+  cat <<'NOTE'
+
+Note: If duplicates or conflicting rows appear above AND the user's current turn is unrelated to memory itself (incidental recall hit), resolve them on the side — memory_delete for exact dups; for conflicts, AskUser, then memory_add the winner followed by memory_delete on each loser (write before delete). If the user IS explicitly steering memory ("clean up", "remember X", "what's in memory", "ignore the hits"), follow their instruction and do NOT side-quest into dedup. Either way, keep memory in good shape.
+NOTE
 fi
