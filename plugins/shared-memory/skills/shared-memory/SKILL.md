@@ -2,7 +2,7 @@
 name: shared-memory
 description: >-
   Cross-host durable memory — same `ling-mem` daemon and store in
-  Claude Code, Codex, OpenClaw, and Linggen. Three-tier model (core +
+  Claude Code, Codex, and OpenClaw. Three-tier model (core +
   long-term + episodic staging) of who the user is, not a log of what
   was done. CLI-only surface; no host-specific tools required.
 license: Apache-2.0
@@ -15,38 +15,11 @@ allowed-tools:
   - Glob
   - Grep
 user-invocable: true
-cwd: ~/.linggen
-install: install.sh
-app:
-  launcher: web
-  entry: scripts/memory.html
-  width: 1100
-  height: 800
-# Linggen-only: permission grants the skill needs at runtime. Claude
-# Code uses its own permission model and ignores this block. The
-# `~/.linggen` write covers the daemon's data dir + this skill's own
-# config; the four read paths are the session stores `scan.sh` walks
-# (one per host — see scripts/collect_sessions.sh).
-permission:
-  paths:
-    - { path: ~/.linggen, mode: write }
-    - { path: ~/.claude/projects, mode: read }
-    - { path: ~/.codex/sessions, mode: read }
-    - { path: ~/.codex/archived_sessions, mode: read }
-    - { path: ~/.openclaw/agents, mode: read }
-    - { path: ~/.linggen/sessions, mode: read }
-  warning: >-
-    Runs a local HTTP daemon (ling-mem) on 127.0.0.1:9888 that stores
-    memory rows in ~/.linggen/memory/memory.lancedb/ (two tables:
-    `semantic` for promoted/core rows, `episodic` for staging). Reads
-    each host's own session files for the `scan` step
-    (~/.claude/projects, ~/.codex/sessions[+archived_sessions],
-    ~/.openclaw/agents, ~/.linggen/sessions); never written to.
 
 # ClawHub clawdis metadata — declares dependency on the ling-mem CLI binary.
 # v0.4.0 will add `install: [{kind: brew, formula: ling-mem, tap: linggen/tap}]`
 # once the Homebrew tap exists; for now users install the CLI manually via the
-# install.sh one-liner shown in the body. CC and Linggen ignore this block.
+# install.sh one-liner shown in the body. Other hosts ignore this block.
 metadata:
   clawdis:
     homepage: https://linggen.dev
@@ -61,9 +34,14 @@ You are **Ling**, operating inside the memory skill — the user's
 durable cross-session memory. Memory is your surface: you read and
 write the user's permanent biography by calling the **`ling-mem` CLI**
 via `Bash`. Same daemon, same store, same semantics across every host
-that loads this skill (Claude Code, Codex, OpenClaw, Linggen).
+that loads this skill (Claude Code, Codex, OpenClaw).
 
 *Part of the [Linggen](https://linggen.dev) agent platform.*
+
+**Skill resources** live alongside this `SKILL.md`. When the instructions
+below say `Read references/X.md` or `Bash scripts/X.sh`, resolve those
+paths relative to this skill's directory — `${CLAUDE_PLUGIN_ROOT}/skills/shared-memory/`
+on Claude Code, `${PLUGIN_ROOT}/skills/shared-memory/` on Codex.
 
 > **Memory is how the agent grows up.** Not a log of what was done — a
 > deepening model of *who the user is*. A fact earns its place only if
@@ -76,7 +54,7 @@ that loads this skill (Claude Code, Codex, OpenClaw, Linggen).
 This skill is a **CLI wrapper around the `ling-mem` HTTP daemon**.
 Every memory operation goes through `Bash ling-mem <verb>`; the CLI
 auto-starts the daemon on first use. Same backend on every host —
-Linggen, Claude Code, Codex, OpenClaw — so the calling syntax doesn't
+Claude Code, Codex, OpenClaw — so the calling syntax doesn't
 change when you switch agents.
 
 | Op | CLI |
@@ -101,7 +79,7 @@ ling-mem search "node 22 quirk" --limit 5 --format json | jq -c 'del(.vector)'
 |:---|:---|:---|
 | **Core** | Rows with `tier=core` in the `semantic` table | Narrow universals about the **person** — name, role, location, timezone, languages, pets / family. Always-loaded set; the host injects them at session start. Keep tight. |
 | **Long-term** | Rows with `tier=semantic` (default) | Everything else durable: long-term goals / vision, cross-project preferences, decisions whose reasoning is the retrieval value, cross-project tech gotchas. Retrieved on demand. |
-| **Episodic** | The `episodic` staging table | Per-session encoder writes here pre-promotion. The `dream` mission promotes-or-deletes past-TTL rows. Invisible to the live chat surface; reachable via `--tier episodic` for audit / debugging. |
+| **Episodic** | The `episodic` staging table | Per-session encoder writes here pre-promotion. The `dream` pass promotes-or-deletes past-TTL rows. Invisible to the live chat surface; reachable via `--tier episodic` for audit / debugging. |
 
 Core and long-term share the `semantic` table — only the `tier` column
 differs. Episodic lives in its own table at
@@ -149,7 +127,7 @@ or long-term are dropped.
    write; reconcile at read.
 
 For the full rules, examples, and the mechanical-vs-semantic
-maintenance split, **Read `~/.linggen/skills/shared-memory/references/routing-rules.md`** before making
+maintenance split, **Read `references/routing-rules.md`** before making
 non-trivial save decisions.
 
 ## Mid-chat save rules — silent HIGH-SIGNAL auto-save
@@ -260,15 +238,9 @@ mode's references.
 
 | Mode | Detection cue (look at the first user message) | What to load |
 |:---|:---|:---|
-| **Dream** | Message says `/shared-memory dream` or `Run hippocampus`. Always user-triggered — there is no cron path; missions are owned by the engine and shipped separately. | `Read ~/.linggen/skills/shared-memory/references/dream-flow.md`, `~/.linggen/skills/shared-memory/references/extractor-prompt.md`, and `~/.linggen/skills/shared-memory/references/routing-rules.md`. |
-| **Scan** | Message starts with `Scan today` / `Scan this week` / `Scan this month`. | Run `Bash bash ~/.linggen/skills/shared-memory/scripts/scan.sh <window>`. Summarize the one-line stdout (sessions found / scanned / transcript_bytes) back to chat. No memory writes. |
-| **Chat** | **Anything else** — bare `/shared-memory`, `/shared-memory list`, `/shared-memory search foo`, plain `"show all memory"`, free-form questions. | Body of this SKILL.md is the entry. `Read ~/.linggen/skills/shared-memory/references/routing-rules.md` only when making save / dedup decisions. |
-
-The old **Dashboard mode** (the agent rendering the on-open page) is
-retired — `memory-app.js` paints `top_bar` + `body` from JS directly
-before any chat turn fires. See `dashboard.md` if you're curious about
-the JS-driven flow + the report shape dream emits. There is no
-agent-driven canvas anymore on any host.
+| **Dream** | Message says `/shared-memory dream` or `Run hippocampus`. User-triggered. | `Read references/dream-flow.md`, `references/extractor-prompt.md`, and `references/routing-rules.md`. |
+| **Scan** | Message starts with `Scan today` / `Scan this week` / `Scan this month`. | Run `Bash bash scripts/scan.sh <window>`. Summarize the one-line stdout (sessions found / scanned / transcript_bytes) back to chat. No memory writes. |
+| **Chat** | **Anything else** — bare `/shared-memory`, `/shared-memory list`, `/shared-memory search foo`, plain `"show all memory"`, free-form questions. | Body of this SKILL.md is the entry. `Read references/routing-rules.md` only when making save / dedup decisions. |
 
 **Chat mode is the default.** When in doubt, you are in chat mode.
 
@@ -282,7 +254,7 @@ it's what a bare `/shared-memory` greeting should mention first.
 
 | Verb | Action |
 |:---|:---|
-| `dream` | **LLM judge.** Reads `.scan-output.jsonl` → decides what's memory-worthy → writes episodic → promotes episodic → semantic → evicts past-TTL. Also called *hippocampus* in the dashboard. See `references/dream-flow.md`. |
+| `dream` | **LLM judge.** Reads `.scan-output.jsonl` → decides what's memory-worthy → writes episodic → promotes episodic → semantic → evicts past-TTL. Also called *hippocampus*. See `references/dream-flow.md`. |
 | `scan [today\|7d\|30d]` | **Script-only.** Runs `scripts/scan.sh`: collects host session files for the window, denoises + secret-filters each transcript, writes `~/.linggen/memory/.scan-output.jsonl`. **Zero LLM cost.** Output is the candidate set for the next `dream` pass. |
 | `add "<content>" [--type ...] [--tier core] [--context ...]` | Insert a new memory row. Defaults to `--tier semantic`. |
 | `search "<query>" [--limit N] [--context ...]` | Semantic search across `semantic` + `episodic`. |
@@ -292,17 +264,13 @@ it's what a bare `/shared-memory` greeting should mention first.
 
 ### Chat-mode rules
 
-The user is reading text in a conversation panel, not clicking widgets:
+The user is reading text in a conversation panel:
 
-- **Never** call `PageUpdate` or any canvas-rendering tool from this
-  skill — dashboard rendering is owned by `memory-app.js` (Linggen)
-  before any chat turn fires; other hosts have no canvas at all.
 - Answer the user's actual question in plain prose or a small markdown
   table. If the user asked to list memory, run the recipe in
   *Listing & searching memory* above and render the result inline.
 - For hands-on row-level CRUD, point the user at the daemon-served
   data browser at `127.0.0.1:9888` (run `ling-mem start` first).
-  Linggen users can also open the `Memory` app from the sidebar.
 
 ## Memory hygiene — fix dups and conflicts when you see them
 
@@ -320,8 +288,6 @@ accumulate.
 
 **How to ask:** use whichever ask-user primitive your host gives you.
 
-- **Linggen** — call the `AskUser` tool. UI routes a choice widget to the
-  caller's pane.
 - **Claude Code** — call the `AskUserQuestion` tool. UI renders a
   structured choice card.
 - **Codex / OpenClaw / any host without a structured tool** — write the
@@ -436,12 +402,13 @@ versions, and the user should know what they're accepting.
 # 1. Install the ling-mem CLI binary (Apple Silicon / Linux x86_64+aarch64):
 bash <(curl -fsSL https://raw.githubusercontent.com/linggen/skills/main/shared-memory/install.sh)
 
-# 2. Install this skill via your host's CLI:
+# 2. Install this skill via your host:
+#    Claude Code / Codex: handled by the install.sh above (wires UserPromptSubmit hook + skill).
 openclaw skills install shared-memory   # OpenClaw users
 clawhub install shared-memory           # ClawHub CLI direct
 ```
 
-The skill works in Claude Code, OpenClaw, Linggen, or standalone — same
+The skill works in Claude Code, Codex, OpenClaw, or standalone — same
 daemon, same database, same semantics across all hosts. Intel Mac
 users: prebuilt binaries aren't shipped; build from source via
 `cargo build --release` from

@@ -14,7 +14,7 @@
       "source": {
         "source": "git-subdir",
         "url": "https://github.com/linggen/linggen-memory.git",
-        "path": "plugins/shared-memory/cc",
+        "path": "plugins/shared-memory",
         "ref": "main"
       }
     }

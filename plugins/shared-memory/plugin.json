@@ -11,7 +11,7 @@
   "license": "Apache-2.0",
   "keywords": ["memory", "ling-mem", "linggen", "biography", "cross-host"],
   "skills": "./skills/",
-  "hooks": "./hooks/hooks.json",
+  "hooks": "./hooks/codex.hooks.json",
   "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "Shared Memory",
