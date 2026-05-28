@@ -20,6 +20,14 @@ set -u
 
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-${PLUGIN_ROOT:-}}"
 DATA_DIR="${CLAUDE_PLUGIN_DATA:-$HOME/.linggen/plugin-data}"
+
+# If neither host injects a plugin-root env var (e.g. Codex's hook runner
+# doesn't expand ${PLUGIN_ROOT} when launching shell hooks), we have no
+# stable place to read VERSION or scripts/install-bin.sh from. Bail
+# silently — the daemon may still be reachable on whatever the user has
+# already installed; nothing here can do useful work blind.
+[ -z "$PLUGIN_ROOT" ] && exit 0
+
 mkdir -p "$DATA_DIR/bin"
 
 VERSION="$(cat "$PLUGIN_ROOT/VERSION" 2>/dev/null || echo "v0.7.1")"
@@ -39,7 +47,11 @@ if [ -x "$BIN" ]; then
   ln -sf "$BIN" "$HOME/.local/bin/ling-mem" 2>/dev/null || true
 fi
 
-command -v ling-mem >/dev/null 2>&1 && ling-mem start >/dev/null 2>&1 || true
+# Use $BIN directly — relying on `command -v ling-mem` after just
+# creating the symlink would hit the shell's stale PATH cache, and on
+# systems where ~/.local/bin is not on PATH it returns false even though
+# the binary exists.
+[ -x "$BIN" ] && "$BIN" start >/dev/null 2>&1 || true
 
 # ── Inject core memory into the session's system prompt ─────────────────────
 #
@@ -48,9 +60,9 @@ command -v ling-mem >/dev/null 2>&1 && ling-mem start >/dev/null 2>&1 || true
 # additionalContext.
 
 command -v jq >/dev/null 2>&1 || exit 0
-command -v ling-mem >/dev/null 2>&1 || exit 0
+[ -x "$BIN" ] || exit 0
 
-core_rows="$(ling-mem list --tier core --limit 100 --format json --quiet 2>/dev/null || true)"
+core_rows="$("$BIN" list --tier core --limit 100 --format json --quiet 2>/dev/null || true)"
 [ -z "$core_rows" ] && exit 0
 
 core_block="$(printf '%s' "$core_rows" | jq -sr '

@@ -22,7 +22,7 @@
 #      "started_at": "<ISO>", "finished_at": "<ISO>",
 #      "window": "today|7d|30d",
 #      "sessions_found": N, "sessions_scanned": N, "skipped_empty": N,
-#      "bytes_total": N, "duration_ms": N}
+#      "transcript_bytes": N, "duration_ms": N}
 #
 #   Lines 2..N — one per non-empty session:
 #     {"filepath": "...", "source": "CC|Codex|OpenClaw|Linggen",

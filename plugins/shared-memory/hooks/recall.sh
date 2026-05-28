@@ -30,14 +30,34 @@ if   command -v timeout  >/dev/null 2>&1; then TIMEOUT_BIN="timeout"
 elif command -v gtimeout >/dev/null 2>&1; then TIMEOUT_BIN="gtimeout"
 fi
 
-if [ -n "$TIMEOUT_BIN" ]; then
-  out="$($TIMEOUT_BIN "$to" ling-mem search "$prompt" \
-      --limit "$limit" --min-score "$min_score" \
-      --format json --quiet 2>/dev/null || true)"
-else
-  out="$(ling-mem search "$prompt" \
-      --limit "$limit" --format json --quiet 2>/dev/null || true)"
-fi
+# Portable timeout. Stock macOS ships neither `timeout` nor `gtimeout`
+# (those are GNU coreutils, opt-in via Homebrew). Without a fallback, a
+# hung daemon — slow LanceDB scan, OOM, lock contention — would block
+# the user's prompt indefinitely. The background+kill pattern works on
+# any POSIX shell.
+run_with_timeout() {
+  local seconds="$1"; shift
+  if [ -n "$TIMEOUT_BIN" ]; then
+    "$TIMEOUT_BIN" "$seconds" "$@" 2>/dev/null
+    return
+  fi
+  "$@" 2>/dev/null &
+  local pid=$!
+  (
+    sleep "$seconds"
+    kill -TERM "$pid" 2>/dev/null
+    sleep 1
+    kill -KILL "$pid" 2>/dev/null
+  ) &
+  local watcher=$!
+  wait "$pid" 2>/dev/null
+  kill -KILL "$watcher" 2>/dev/null
+  wait "$watcher" 2>/dev/null
+}
+
+out="$(run_with_timeout "$to" ling-mem search "$prompt" \
+    --limit "$limit" --min-score "$min_score" \
+    --format json --quiet || true)"
 
 [ -z "$out" ] && exit 0
 

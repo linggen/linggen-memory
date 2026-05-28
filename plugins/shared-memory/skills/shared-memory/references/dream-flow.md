@@ -31,14 +31,16 @@ Line 1 is the meta header (already produced by `scan.sh`):
 {"_meta": true, "started_at": "...", "finished_at": "...",
  "window": "today|7d|30d",
  "sessions_found": N, "sessions_scanned": N, "skipped_empty": N,
- "bytes_total": N, "duration_ms": N}
+ "transcript_bytes": N, "duration_ms": N}
 ```
 
-Lines 2..N are one cleaned session per line:
+`transcript_bytes` is the post-denoise extracted transcript size (sum
+of the per-session `transcript_bytes` field below), not the raw
+session-file `bytes` field. Per-session lines that follow:
 
 ```json
 {"filepath": "...", "source": "CC|Codex|OpenClaw|Linggen",
- "date": "YYYY-MM-DD", "user_turns": N, "bytes": N,
+ "date": "YYYY-MM-DD", "user_turns": N, "bytes": N, "transcript_bytes": N,
  "transcript": "[SESSION_CWD]: ...\n[user]: ...\n[assistant]: ..."}
 ```
 
