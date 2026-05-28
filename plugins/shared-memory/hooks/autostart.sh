@@ -65,6 +65,17 @@ command -v jq >/dev/null 2>&1 || exit 0
 core_rows="$("$BIN" list --tier core --limit 100 --format json --quiet 2>/dev/null || true)"
 [ -z "$core_rows" ] && exit 0
 
+# Defensive guard: if `ling-mem list --quiet` somehow leaked non-JSON
+# to stdout (daemon bug, mixed warning, partial response), the jq
+# pipeline below would fail silently and the session would start with
+# no core context and no log of why. Validate parse first; on failure,
+# log to stderr (CC shows hook stderr in the transcript) and bail
+# cleanly without emitting hookSpecificOutput.
+if ! printf '%s' "$core_rows" | jq -es '.' >/dev/null 2>&1; then
+  printf 'shared-memory autostart: ling-mem list --tier core returned non-JSON; skipping core injection\n' >&2
+  exit 0
+fi
+
 core_block="$(printf '%s' "$core_rows" | jq -sr '
   map(. // empty)
   | flatten

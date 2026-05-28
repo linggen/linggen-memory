@@ -74,12 +74,35 @@ if [ "${LING_MEM_SKIP_CHECKSUM:-0}" = "1" ]; then
   say "WARNING: SHA-256 verification skipped"
 else
   curl -fsSL --retry 3 --retry-delay 2 "$SUM_URL" -o "$TMP/$ASSET.sha256"
+
+  # Pull the expected hex digest and reject anything that doesn't look
+  # like a real checksum line. Both `shasum -c` and `sha256sum -c` parse
+  # the file as `<hex>  <filename>` — a malformed file (HTML error page,
+  # truncated download, wrong path component) can pass `-c` silently on
+  # some implementations when the filename doesn't match any file in cwd
+  # ("no properly formatted SHA1 checksum lines found" → exit 1 on GNU
+  # but inconsistent elsewhere). Pin both inputs explicitly: extract the
+  # first 64-hex token, recompute, compare literal strings.
+  expected="$(awk 'match($0, /^[0-9a-fA-F]{64}/) { print toupper(substr($0, RSTART, RLENGTH)); exit }' "$TMP/$ASSET.sha256")"
+  if [ -z "$expected" ]; then
+    echo "install-bin: malformed .sha256 from $SUM_URL" >&2
+    sed -n '1,3p' "$TMP/$ASSET.sha256" >&2
+    exit 1
+  fi
+
   if command -v shasum >/dev/null 2>&1; then
-    (cd "$TMP" && shasum -a 256 -c "$ASSET.sha256" >/dev/null)
+    actual="$(shasum -a 256 "$TMP/$ASSET" | awk '{print toupper($1)}')"
   elif command -v sha256sum >/dev/null 2>&1; then
-    (cd "$TMP" && sha256sum -c "$ASSET.sha256" >/dev/null)
+    actual="$(sha256sum "$TMP/$ASSET" | awk '{print toupper($1)}')"
   else
     echo "install-bin: no shasum / sha256sum available" >&2; exit 1
+  fi
+
+  if [ "$actual" != "$expected" ]; then
+    echo "install-bin: SHA-256 mismatch" >&2
+    echo "  expected: $expected" >&2
+    echo "  actual:   $actual" >&2
+    exit 1
   fi
   say "verified SHA-256"
 fi

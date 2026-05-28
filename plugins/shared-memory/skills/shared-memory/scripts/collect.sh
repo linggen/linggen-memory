@@ -47,11 +47,20 @@ ERRLOG="$MISSION_OUTPUT_DIR/collect.err"
 : > "$MANIFEST"
 : > "$ERRLOG"
 
-# Scan today + yesterday to cover the full 24-hour window.
+# Scan today + yesterday to cover the full 24-hour window. Match
+# collect_sessions.sh's explicit `uname` branching: a fallback chain of
+# `date -v ... || date -d ...` silently substitutes $TODAY for $YESTERDAY
+# when both fail (minimal container, sandboxed PATH), which masks the
+# problem instead of surfacing it.
 TODAY=$(date +%Y-%m-%d)
-YESTERDAY=$(date -v-1d +%Y-%m-%d 2>/dev/null \
-         || date -d 'yesterday' +%Y-%m-%d 2>/dev/null \
-         || echo "$TODAY")  # fall back to today if neither BSD nor GNU date works
+if [[ "$(uname)" == "Darwin" ]]; then
+  YESTERDAY=$(date -v-1d +%Y-%m-%d)
+else
+  YESTERDAY=$(date -d 'yesterday' +%Y-%m-%d)
+fi
+# If date is so broken that even the platform-correct invocation failed,
+# scan today only — better than re-scanning the same day twice.
+[ -z "$YESTERDAY" ] && YESTERDAY="$TODAY"
 
 # stderr goes to a side log so the manifest stays valid NDJSON.
 bash "$COLLECT" "$TODAY"     >> "$MANIFEST" 2>> "$ERRLOG" || true
