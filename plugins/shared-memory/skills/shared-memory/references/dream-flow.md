@@ -174,72 +174,9 @@ Write `~/.linggen/memory/.dream-state.json` (overwrite wholesale):
 concern — scan handles its own dedup; dream doesn't have to advance
 it.)
 
-### Report — dashboard mode (Linggen)
+### Report
 
-The skill's web app expects ONE `PageUpdate` with this body shape.
-Do **not** touch `top_bar` — JS owns it (tier counts auto-refresh
-post-PageUpdate via `refreshTierCounts`).
-
-```json
-{
-  "body": [
-    {
-      "type": "greeting",
-      "icon": "🧠",
-      "title": "Hippocampus done — N new memories",
-      "stats": "Judged N sessions · +N core · +N semantic · +N episodic · ↑N promoted · −N evicted · elapsed Ns",
-      "actions": [
-        { "label": "Open in ling-mem console ↗",
-          "href": "http://127.0.0.1:9888/?session=<this-engine-session-id>&since=<run-started-at>",
-          "kind": "primary" },
-        { "label": "Scan again", "icon": "🔍", "message": "Scan today" }
-      ]
-    },
-    {
-      "type": "fact-list",
-      "title": "JUST WRITTEN",
-      "count": N,
-      "source": "rag:mixed",
-      "items": [
-        { "id": "<id>", "content": "<text>", "context": "core",
-          "added": "now", "badge": "+" },
-        { "id": "<id>", "content": "<text>", "context": "semantic",
-          "added": "now", "badge": "+" },
-        { "id": "<id>", "content": "<text>", "context": "episodic",
-          "added": "now", "badge": "+" }
-      ]
-    },
-    {
-      "type": "fact-list",
-      "title": "PROMOTED",
-      "count": N,
-      "source": "rag:mixed",
-      "items": [
-        { "id": "<new-semantic-id>", "content": "<text>",
-          "context": "ep→sem", "added": "now", "badge": "~" }
-      ]
-    }
-  ]
-}
-```
-
-- `<this-engine-session-id>` = the session this dream runs in. Pull
-  from your engine context; it's the `source_session` you stamp on
-  each `ling-mem add ... --source-session <id>` call.
-- `<run-started-at>` = the ISO timestamp at the top of Phase 1, in
-  full RFC-3339 form. The dashboard accepts both ISO and bare
-  `YYYY-MM-DD`.
-- `context` on each fact-list item carries the tier label (`"core"` /
-  `"semantic"` / `"episodic"`) so the user can tell at a glance where
-  a row landed.
-- Cap rows per section at ~10 with a trailing "+N more" item if
-  there are more — the user goes to the daemon's console for the
-  full list.
-
-### Report — headless mode (Claude Code / Codex / OpenClaw)
-
-These hosts have no `PageUpdate` canvas; emit a terse markdown report
-as your final agent message instead:
+Emit a terse markdown report as your final agent message:
 
 ```
 ## Hippocampus complete — N new memories
@@ -257,6 +194,9 @@ Judged N sessions · elapsed Ns
 Row-level edit: http://127.0.0.1:9888/?since=<run-started-at>
 (run `ling-mem start` if not running)
 ```
+
+`<run-started-at>` = the ISO timestamp at the top of Phase 1, in full
+RFC-3339 form.
 
 ## Tool-call hygiene
 
