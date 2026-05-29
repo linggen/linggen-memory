@@ -20,7 +20,8 @@
 #   Line 1 — header object:
 #     {"_meta": true,
 #      "started_at": "<ISO>", "finished_at": "<ISO>",
-#      "window": "today|7d|30d",
+#      "window": "24h|7d|30d|14d|YYYY-MM-DD",
+#      "scanned_from": "<ISO date>", "scanned_to": "<ISO date>",
 #      "sessions_found": N, "sessions_scanned": N, "skipped_empty": N,
 #      "transcript_bytes": N, "duration_ms": N}
 #
@@ -32,20 +33,49 @@
 # Empty-session filter: skip when `user_turns < 2 AND bytes < 2000`
 # (matches dream-flow.md). Counted under `skipped_empty`.
 #
-# Usage:  ./scan.sh [today|7d|30d]
-#         (default: today)
+# Usage:  ./scan.sh [WINDOW]
+#         WINDOW is one of:
+#           today | 24h            -> last 1 day   (default)
+#           week                   -> last 7 days
+#           month                  -> last 30 days
+#           <n>d | <n>w | <n>m | <n>y   e.g. 14d, 3w, 2m, 1y
+#           YYYY-MM-DD             -> scan exactly that one day
+#         (default: 24h)
 #
 # Requires: jq
 
 set -uo pipefail
 
-WINDOW="${1:-today}"
+# Parse a flexible window into DAYS_BACK (calendar days to walk back)
+# and a normalized WINDOW label. Aliases map to durations; <n><unit>
+# accepts d(ay) / w(eek) / m(onth=30d) / y(ear=365d).
+WINDOW="${1:-24h}"
+SCAN_DATE=""   # set when WINDOW is a specific YYYY-MM-DD (dream one day)
 case "$WINDOW" in
-  today|24h) DAYS_BACK=1 ;;
-  7d|week)   DAYS_BACK=7  ; WINDOW=7d  ;;
-  30d|month) DAYS_BACK=30 ; WINDOW=30d ;;
-  *) echo "Usage: $0 [today|7d|30d]" >&2; exit 1 ;;
+  today|24h)  DAYS_BACK=1  ; WINDOW=24h ;;
+  week)       DAYS_BACK=7  ; WINDOW=7d  ;;
+  month)      DAYS_BACK=30 ; WINDOW=30d ;;
+  *)
+    if [[ "$WINDOW" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+      SCAN_DATE="$WINDOW"; DAYS_BACK=1   # scan exactly this calendar day
+    elif [[ "$WINDOW" =~ ^([0-9]+)([dwmy])$ ]]; then
+      n="${BASH_REMATCH[1]}"
+      case "${BASH_REMATCH[2]}" in
+        d) DAYS_BACK=$n ;;
+        w) DAYS_BACK=$(( n * 7 )) ;;
+        m) DAYS_BACK=$(( n * 30 )) ;;
+        y) DAYS_BACK=$(( n * 365 )) ;;
+      esac
+    else
+      echo "Usage: $0 [today|24h|week|month|<n>d|<n>w|<n>m|<n>y|YYYY-MM-DD]  (e.g. 14d, 2m, 2026-05-20)" >&2
+      exit 1
+    fi
+    ;;
 esac
+if (( DAYS_BACK < 1 )); then
+  echo "window must resolve to >= 1 day (got '$WINDOW')" >&2
+  exit 1
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COLLECT="$SCRIPT_DIR/collect_sessions.sh"
@@ -80,18 +110,35 @@ trap 'rm -f "$TMP_MANIFEST" "$TMP_ERR"' EXIT
 STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 START_EPOCH="$(date +%s)"
 
-# Walk the requested number of calendar days back from today. The
-# collect script accepts a single date and de-duping happens in jq
-# below — sessions that span midnight only appear once.
-for ((i = 0; i < DAYS_BACK; i++)); do
-  if [[ "$(uname)" == "Darwin" ]]; then
-    DATE_ISO="$(date -v-${i}d +%Y-%m-%d 2>/dev/null || echo)"
-  else
-    DATE_ISO="$(date -d "$i days ago" +%Y-%m-%d 2>/dev/null || echo)"
-  fi
-  [[ -z "$DATE_ISO" ]] && continue
-  bash "$COLLECT" "$DATE_ISO" >> "$TMP_MANIFEST" 2>> "$TMP_ERR" || true
-done
+# Track the actual calendar-day range walked (lexicographic min/max on
+# ISO dates). The dream records this so the heatmap greens every day a
+# run covered, not just the run day.
+SCANNED_FROM=""
+SCANNED_TO=""
+record_date() {
+  [[ -z "$SCANNED_TO"   || "$1" > "$SCANNED_TO"   ]] && SCANNED_TO="$1"
+  [[ -z "$SCANNED_FROM" || "$1" < "$SCANNED_FROM" ]] && SCANNED_FROM="$1"
+}
+
+if [[ -n "$SCAN_DATE" ]]; then
+  # Single specific day — scan only that date.
+  record_date "$SCAN_DATE"
+  bash "$COLLECT" "$SCAN_DATE" >> "$TMP_MANIFEST" 2>> "$TMP_ERR" || true
+else
+  # Walk DAYS_BACK calendar days back from today. The collect script
+  # accepts a single date; de-duping happens in jq below — sessions
+  # that span midnight only appear once.
+  for ((i = 0; i < DAYS_BACK; i++)); do
+    if [[ "$(uname)" == "Darwin" ]]; then
+      DATE_ISO="$(date -v-${i}d +%Y-%m-%d 2>/dev/null || echo)"
+    else
+      DATE_ISO="$(date -d "$i days ago" +%Y-%m-%d 2>/dev/null || echo)"
+    fi
+    [[ -z "$DATE_ISO" ]] && continue
+    record_date "$DATE_ISO"
+    bash "$COLLECT" "$DATE_ISO" >> "$TMP_MANIFEST" 2>> "$TMP_ERR" || true
+  done
+fi
 
 # Dedup manifest by filepath.
 TMP_MANIFEST_DEDUP="$(mktemp)"
@@ -162,12 +209,15 @@ jq -n -c \
   --arg started "$STARTED_AT" \
   --arg finished "$FINISHED_AT" \
   --arg window "$WINDOW" \
+  --arg scanned_from "$SCANNED_FROM" \
+  --arg scanned_to "$SCANNED_TO" \
   --argjson found "$SESSIONS_FOUND" \
   --argjson scanned "$SESSIONS_SCANNED" \
   --argjson skipped "$SKIPPED_EMPTY" \
   --argjson transcript_bytes "$TRANSCRIPT_BYTES" \
   --argjson duration_ms "$DURATION_MS" \
   '{_meta: true, started_at: $started, finished_at: $finished, window: $window,
+    scanned_from: $scanned_from, scanned_to: $scanned_to,
     sessions_found: $found, sessions_scanned: $scanned, skipped_empty: $skipped,
     transcript_bytes: $transcript_bytes, duration_ms: $duration_ms}' \
   > "$OUT"

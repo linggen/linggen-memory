@@ -1,23 +1,56 @@
-# Dream flow — `/shared-memory dream`
+# Dream flow — `/shared-memory dream [window]`
 
 Read this when the user invokes `/shared-memory dream` (or the
 dashboard's **Hippocampus** action on Linggen). One LLM pass — no
 continuous encode hook.
 
 ```
-read .scan-output.jsonl → judge & write → consolidate + evict → state + report
+scan(window) → read .scan-output.jsonl → judge & write → consolidate + evict → state + report
 ```
 
-The dream is **judgment only**. The mechanical extraction step lives
-in `scripts/scan.sh` and runs separately (see `SKILL.md` →
-*Slash commands* → `scan`). Dream reads the cleaned transcripts that
-scan already produced; it does not collect or denoise session files
-itself.
+The dream owns the whole pipeline: it runs the mechanical scan first
+(Phase 0, zero LLM), then does the judgment (Phases 2–3). The scan
+step lives in `scripts/scan.sh` (no standalone verb — `dream` is the
+only caller) and refreshes the candidate set itself, so a normal
+`dream` no longer depends on a prior manual scan.
 
-If `.scan-output.jsonl` is missing or empty, the dream still runs —
-it just skips Phase 2 (judge + write) and goes straight to Phase 3
-(consolidate past-TTL episodic rows). The user can re-trigger
-`/shared-memory scan` to refresh the candidate set.
+**Window argument** — `/shared-memory dream [window]` selects how far
+back the Phase 0 scan walks. Defaults to **24h**. Accepts the same
+grammar as `scan.sh`:
+
+| Invocation | Window |
+|:---|:---|
+| `/shared-memory dream` | 24h (last 1 day) |
+| `/shared-memory dream week` | 7 days |
+| `/shared-memory dream month` | 30 days |
+| `/shared-memory dream 14d` | 14 days |
+| `/shared-memory dream 2m` | 60 days (2×30) |
+| `/shared-memory dream 2026-05-20` | **only that one day** |
+
+Grammar: `today`/`24h`, `week`, `month`, `<n><unit>` (unit
+`d`/`w`/`m`(=30d)/`y`(=365d)), or a literal `YYYY-MM-DD` to scan
+exactly that calendar day. The Linggen dashboard heatmap sends the
+date form when the user clicks a specific day.
+
+## Phase 0 — Scan (refresh candidates)
+
+Run the mechanical walk for the requested window. This is zero-LLM —
+it just collects, denoises, and secret-filters host sessions into
+`.scan-output.jsonl`:
+
+```bash
+bash scripts/scan.sh <window>
+```
+
+`<window>` is whatever the user passed after `dream` (default `24h`).
+The one-line stdout (`window=… found=… scanned=…`) tells you how many
+sessions landed. If the scan finds nothing, `.scan-output.jsonl` will
+contain only the `_meta` header — the dream still proceeds to Phase 3
+(consolidate past-TTL episodic rows).
+
+If `scan.sh` fails (missing `jq`, no session dirs, etc.), don't abort —
+fall through to Phase 1 reading whatever `.scan-output.jsonl` already
+exists, and note the scan failure in the final report.
 
 ## Phase 1 — Read candidates
 
@@ -161,6 +194,7 @@ Write `~/.linggen/memory/.dream-state.json` (overwrite wholesale):
 ```json
 {
   "last_run_at": "<ISO-8601>",
+  "window": "<window>",
   "duration_ms": <int>,
   "sessions_judged": <int>,
   "encoded_core": <int>,
@@ -171,6 +205,29 @@ Write `~/.linggen/memory/.dream-state.json` (overwrite wholesale):
   "dropped": <int>
 }
 ```
+
+`window` is the normalized scan window this pass used (read it from
+the `_meta.window` field of `.scan-output.jsonl`, e.g. `24h`, `7d`,
+`30d`, `14d`).
+
+**Also append one history row** to
+`~/.linggen/memory/.dream-history.jsonl` (append, never overwrite —
+this is the only durable per-run log; the Linggen dashboard's year
+heatmap reads it, and dreams run on any host land in the same shared
+file):
+
+```bash
+printf '%s\n' '{"date":"<YYYY-MM-DD>","run_at":"<ISO-8601>","window":"<window>","scanned_from":"<YYYY-MM-DD>","scanned_to":"<YYYY-MM-DD>","encoded_total":<int>,"encoded_core":<int>,"encoded_semantic":<int>,"encoded_episodic":<int>,"promoted":<int>,"evicted":<int>,"dropped":<int>,"duration_ms":<int>}' \
+  >> ~/.linggen/memory/.dream-history.jsonl
+```
+
+`date` is the run's local calendar day. `scanned_from`/`scanned_to`
+are the calendar-day range the scan actually walked — **copy them
+verbatim from the `_meta.scanned_from` / `_meta.scanned_to` fields of
+`.scan-output.jsonl`**. The Linggen dashboard heatmap greens every day
+in that inclusive range, so a `dream week` lights 7 cells and a
+`dream 2026-05-20` lights one. `encoded_total` = core + semantic +
+episodic. One line per run; multiple runs are separate lines.
 
 (The per-host watermark from `scan.sh` is a different file
 concern — scan handles its own dedup; dream doesn't have to advance

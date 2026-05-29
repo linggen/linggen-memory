@@ -232,30 +232,29 @@ neither stores nor authors that content.
 
 ## Modes — which references to load when
 
-This skill enters one of three modes per invocation. **Detect the mode
+This skill enters one of two modes per invocation. **Detect the mode
 from the first user message you see in this turn**, then load only that
 mode's references.
 
 | Mode | Detection cue (look at the first user message) | What to load |
 |:---|:---|:---|
-| **Dream** | Message says `/shared-memory dream` or `Run hippocampus`. User-triggered. | `Read references/dream-flow.md`, `references/extractor-prompt.md`, and `references/routing-rules.md`. |
-| **Scan** | Message starts with `Scan today` / `Scan this week` / `Scan this month`. | Run `Bash bash scripts/scan.sh <window>`. Summarize the one-line stdout (sessions found / scanned / transcript_bytes) back to chat. No memory writes. |
+| **Dream** | Message says `/shared-memory dream [window]` or `Run hippocampus`. Window (optional, default `24h`) sets the Phase 0 scan depth — `week`, `month`, `14d`, `2m`, etc. User-triggered. | `Read references/dream-flow.md`, `references/extractor-prompt.md`, and `references/routing-rules.md`. |
 | **Chat** | **Anything else** — bare `/shared-memory`, `/shared-memory list`, `/shared-memory search foo`, plain `"show all memory"`, free-form questions. | Body of this SKILL.md is the entry. `Read references/routing-rules.md` only when making save / dedup decisions. |
 
 **Chat mode is the default.** When in doubt, you are in chat mode.
 
-## Slash commands — `dream` + `scan` + daemon passthrough
+## Slash commands — `dream` + daemon passthrough
 
-`/shared-memory <verb>` is the primary surface. `dream` and `scan` are
-the two memory-consolidation passes (split since v0.7 — see the design
-split); the rest map 1:1 to daemon CRUD endpoints. **`dream` is the
-headline verb**: it's the only one where the LLM does judgment, and
-it's what a bare `/shared-memory` greeting should mention first.
+`/shared-memory <verb>` is the primary surface. `dream` is the
+memory-consolidation pass (it runs the zero-LLM scan walk itself as
+Phase 0, then judges); the rest map 1:1 to daemon CRUD endpoints.
+**`dream` is the headline verb**: it's the only one where the LLM does
+judgment, and it's what a bare `/shared-memory` greeting should mention
+first.
 
 | Verb | Action |
 |:---|:---|
-| `dream` | **LLM judge.** Reads `.scan-output.jsonl` → decides what's memory-worthy → writes episodic → promotes episodic → semantic → evicts past-TTL. Also called *hippocampus*. See `references/dream-flow.md`. |
-| `scan [today\|7d\|30d]` | **Script-only.** Runs `scripts/scan.sh`: collects host session files for the window, denoises + secret-filters each transcript, writes `~/.linggen/memory/.scan-output.jsonl`. **Zero LLM cost.** Output is the candidate set for the next `dream` pass. |
+| `dream [window]` | **Full pass.** Runs the zero-LLM scan walk (`scripts/scan.sh <window>`, Phase 0) → reads `.scan-output.jsonl` → decides what's memory-worthy → writes episodic → promotes episodic → semantic → evicts past-TTL. `window` defaults to `24h`; accepts `today`/`24h`, `week`, `month`, `<n>d`/`<n>w`/`<n>m`/`<n>y` (e.g. `14d`, `2m`). Also called *hippocampus*. See `references/dream-flow.md`. |
 | `add "<content>" [--type ...] [--tier core] [--context ...]` | Insert a new memory row. Defaults to `--tier semantic`. |
 | `search "<query>" [--limit N] [--context ...]` | Semantic search across `semantic` + `episodic`. |
 | `list [--type ...] [--tier ...] [--limit N]` | Paginated listing. |
