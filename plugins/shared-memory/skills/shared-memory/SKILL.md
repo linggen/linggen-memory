@@ -49,6 +49,25 @@ on Claude Code, `${PLUGIN_ROOT}/skills/shared-memory/` on Codex.
 > predictions about this user because the fact exists. Focus on the
 > user, not the task.
 
+## First use — ensure the `ling-mem` binary is installed
+
+Every operation in this skill shells out to the **`ling-mem`** CLI, so
+the binary must be on `PATH`. Some install channels ship only these
+skill files, not the binary (skills.sh, ClawHub, manual), so **before
+your first memory op, run this check — it's a no-op if `ling-mem` is
+already present** (Linggen bundles it; the Claude Code / Codex plugin's
+hook installs it):
+
+```bash
+command -v ling-mem >/dev/null 2>&1 || \
+  bash <(curl -fsSL https://raw.githubusercontent.com/linggen/skills/main/shared-memory/install.sh)
+```
+
+Just run it yourself if the binary is missing — don't ask the user. The
+installer drops `ling-mem` on `PATH` (`/usr/local/bin`, or `~/.local/bin`
+with no sudo) and is idempotent. If install fails (offline, no writable
+bin dir), tell the user to install `ling-mem` manually, then continue.
+
 ## Interface — the `ling-mem` CLI
 
 This skill is a **CLI wrapper around the `ling-mem` HTTP daemon**.
