@@ -708,9 +708,13 @@ async fn list(
 
 fn sort_combined(rows: &mut [crate::memory::Memory], sort: crate::memory::SortOrder) {
     use crate::memory::SortOrder::*;
+    // Match the store-layer order (and the UI's age badge): sort by
+    // activity_timestamp (updated_at ?? created_at), NOT effective_timestamp.
+    // effective_timestamp prefers the consolidator's back-dated occurred_at,
+    // which buries freshly-written rows below their save date.
     rows.sort_by(|a, b| match sort {
-        Newest => b.effective_timestamp().cmp(&a.effective_timestamp()),
-        Oldest => a.effective_timestamp().cmp(&b.effective_timestamp()),
+        Newest => b.activity_timestamp().cmp(&a.activity_timestamp()),
+        Oldest => a.activity_timestamp().cmp(&b.activity_timestamp()),
     });
 }
 
@@ -727,30 +731,37 @@ async fn count(
         total = total.saturating_add(store.count_filtered(&filters).await?);
     }
 
-    // Cheapest "latest" — one-row list, newest order, post-merge max.
-    // Skipped when count is 0 to avoid an empty fetch.
+    // "Latest" = max activity_timestamp (updated_at ?? created_at) across
+    // in-scope stores — the same key the list order and UI badge use.
+    //
+    // NOTE: we can't ask `list` for the top-1, because `list` applies the
+    // LanceDB `limit` BEFORE its in-process sort, so `limit=1` returns an
+    // arbitrary row, not the newest. Fetch the full filtered set per store
+    // (small at current scale; same posture as `core_facts`) and take the
+    // true max. Skipped when count is 0 to avoid an empty fetch.
     let latest = if total == 0 {
         None
     } else {
-        let mut newest: Option<crate::memory::Memory> = None;
+        let mut newest: Option<chrono::DateTime<chrono::Utc>> = None;
         for store in &stores {
+            let n = store.count_filtered(&filters).await?;
+            if n == 0 {
+                continue;
+            }
             let rows = store
-                .list(&filters, crate::memory::SortOrder::Newest, 1, 0)
+                .list(&filters, crate::memory::SortOrder::Newest, n, 0)
                 .await?;
-            if let Some(row) = rows.into_iter().next() {
-                if newest
-                    .as_ref()
-                    .map(|cur| row.created_at > cur.created_at)
-                    .unwrap_or(true)
-                {
-                    newest = Some(row);
-                }
+            if let Some(ts) = rows.iter().map(|r| r.activity_timestamp()).max() {
+                newest = Some(newest.map_or(ts, |cur| cur.max(ts)));
             }
         }
-        newest.map(|r| r.created_at)
+        newest
     };
 
     Ok(ok(json!({
+        // Key kept for the dashboard's existing contract; value is now the
+        // activity timestamp (updated_at ?? created_at), so an edited row
+        // counts as "latest".
         "count": total,
         "latest_created_at": latest,
     })))

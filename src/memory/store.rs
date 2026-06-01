@@ -726,14 +726,16 @@ impl MemoryStore {
         let mut facts = self.collect_query(q).await?;
         apply_origin_filter(&mut facts, filters.origin);
 
-        // List = "what was added recently" — sort by created_at, not
-        // effective_timestamp. effective_timestamp falls back to
-        // occurred_at which the LLM/consolidator routinely stamps as
-        // "today midnight UTC" for any same-day fact, collapsing many
-        // newest rows to the same key and breaking newest-first order.
+        // List = "what was written recently" — sort by activity_timestamp
+        // (updated_at ?? created_at), the SAME key the UI shows as the
+        // "N ago" age, so sort position and badge agree. NOT
+        // effective_timestamp: that falls back to occurred_at, which the
+        // LLM/consolidator routinely back-dates to the source session
+        // ("today midnight UTC" for same-day facts), collapsing many
+        // newest rows to one key and burying freshly-written rows.
         facts.sort_by(|a, b| match order {
-            SortOrder::Newest => b.created_at.cmp(&a.created_at),
-            SortOrder::Oldest => a.created_at.cmp(&b.created_at),
+            SortOrder::Newest => b.activity_timestamp().cmp(&a.activity_timestamp()),
+            SortOrder::Oldest => a.activity_timestamp().cmp(&b.activity_timestamp()),
         });
 
         if offset >= facts.len() {

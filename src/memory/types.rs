@@ -149,6 +149,18 @@ impl Memory {
     pub fn effective_timestamp(&self) -> DateTime<Utc> {
         self.occurred_at.unwrap_or(self.created_at)
     }
+
+    /// `updated_at` if set, otherwise `created_at` — the row's *activity*
+    /// time (when it was last written or touched). This is the single key
+    /// for newest-first ordering AND the displayed "N ago" age, so the sort
+    /// position and the badge always agree. An edit resurfaces a row and
+    /// ages it from the edit. Distinct from `effective_timestamp`, which
+    /// prefers `occurred_at` for fact-age / staleness reasoning (the
+    /// consolidator back-dates `occurred_at` to the source session, so it
+    /// must NOT drive "newest").
+    pub fn activity_timestamp(&self) -> DateTime<Utc> {
+        self.updated_at.unwrap_or(self.created_at)
+    }
 }
 
 // ── MemoryType ────────────────────────────────────────────────────────────────

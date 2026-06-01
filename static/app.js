@@ -683,8 +683,11 @@ function renderRowHead(fact) {
 
   const age = document.createElement('span');
   age.className = 'row-age';
-  age.textContent = relAge(fact.created_at);
-  age.title = fact.created_at ?? '';
+  // Activity time (updated_at ?? created_at) — same key the server sorts
+  // by, so the badge age and the row's position always agree.
+  const activityTs = fact.updated_at ?? fact.created_at;
+  age.textContent = relAge(activityTs);
+  age.title = activityTs ?? '';
   head.appendChild(age);
 
   return head;
