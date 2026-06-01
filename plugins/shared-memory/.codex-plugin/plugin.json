@@ -1,6 +1,6 @@
 {
   "name": "shared-memory",
-  "version": "0.7.2",
+  "version": "0.7.4",
   "description": "Cross-host durable memory — same ling-mem daemon and store in Claude Code, Codex, OpenClaw, and Linggen.",
   "author": {
     "name": "Linggen",
