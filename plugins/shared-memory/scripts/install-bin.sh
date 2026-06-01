@@ -6,7 +6,7 @@
 # on first plugin use, and standalone via the linggen.dev wrapper for hosts
 # without a plugin model (OpenClaw, Linggen native).
 #
-#   --version vX.Y.Z   pin a specific release    (default: from $VERSION env or v0.7.1)
+#   --version vX.Y.Z   pin a specific release    (default: from $VERSION env or v0.7.2)
 #   --dest <dir>       install dir for the binary (default: ~/.local/bin)
 #   --quiet            suppress informational output
 #   --force            re-download even if version matches
@@ -17,7 +17,7 @@
 set -euo pipefail
 
 REPO="linggen/linggen-memory"
-VERSION="${VERSION:-v0.7.1}"
+VERSION="${VERSION:-v0.7.2}"
 DEST="$HOME/.local/bin"
 QUIET=0
 FORCE=0

@@ -30,7 +30,7 @@ DATA_DIR="${CLAUDE_PLUGIN_DATA:-$HOME/.linggen/plugin-data}"
 
 mkdir -p "$DATA_DIR/bin"
 
-VERSION="$(cat "$PLUGIN_ROOT/VERSION" 2>/dev/null || echo "v0.7.1")"
+VERSION="$(cat "$PLUGIN_ROOT/VERSION" 2>/dev/null || echo "v0.7.2")"
 BIN="$DATA_DIR/bin/ling-mem"
 EXPECTED="${VERSION#v}"
 HAVE="$("$BIN" --version 2>/dev/null | awk '{print $2}' || echo none)"
