@@ -733,25 +733,18 @@ async fn count(
 
     // "Latest" = max activity_timestamp (updated_at ?? created_at) across
     // in-scope stores — the same key the list order and UI badge use.
-    //
-    // NOTE: we can't ask `list` for the top-1, because `list` applies the
-    // LanceDB `limit` BEFORE its in-process sort, so `limit=1` returns an
-    // arbitrary row, not the newest. Fetch the full filtered set per store
-    // (small at current scale; same posture as `core_facts`) and take the
-    // true max. Skipped when count is 0 to avoid an empty fetch.
+    // `list(Newest, 1)` returns each store's true newest row (list sorts the
+    // full filtered set before slicing), so the top row's activity timestamp
+    // is the answer. Skipped when count is 0 to avoid an empty fetch.
     let latest = if total == 0 {
         None
     } else {
         let mut newest: Option<chrono::DateTime<chrono::Utc>> = None;
         for store in &stores {
-            let n = store.count_filtered(&filters).await?;
-            if n == 0 {
-                continue;
-            }
             let rows = store
-                .list(&filters, crate::memory::SortOrder::Newest, n, 0)
+                .list(&filters, crate::memory::SortOrder::Newest, 1, 0)
                 .await?;
-            if let Some(ts) = rows.iter().map(|r| r.activity_timestamp()).max() {
+            if let Some(ts) = rows.first().map(|r| r.activity_timestamp()) {
                 newest = Some(newest.map_or(ts, |cur| cur.max(ts)));
             }
         }

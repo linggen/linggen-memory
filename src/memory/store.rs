@@ -695,10 +695,16 @@ impl MemoryStore {
     ///
     /// Sorting is done in-process after the batch returns — LanceDB's query
     /// builder doesn't expose an ORDER BY equivalent for list-style queries
-    /// without a vector. Pagination is over-fetch-and-slice: we ask LanceDB
-    /// for `limit + offset` rows, sort, and return the `[offset .. offset+limit]`
-    /// window. For v0.1 row counts this is fine; revisit if files grow past
-    /// ~100k rows.
+    /// without a vector, and our sort key is `activity_timestamp`
+    /// (`COALESCE(updated_at, created_at)`), not a plain column. Because the
+    /// sort happens after the fetch, a DB-side `limit` would cap the scan to
+    /// an ARBITRARY set of rows before ordering — `list(Newest, 1)` would
+    /// return a random row, and page 1 of a store larger than the page size
+    /// would be a random page sorted among itself, not the global newest.
+    /// So we fetch the FULL filtered set, sort, then slice the
+    /// `[offset .. offset+limit]` window. For v0.1 row counts this is fine
+    /// (same posture as `core_facts`); revisit with a DB-side sort if files
+    /// grow past ~100k rows.
     pub async fn list(
         &self,
         filters: &Filters,
@@ -706,19 +712,16 @@ impl MemoryStore {
         limit: usize,
         offset: usize,
     ) -> Result<Vec<Memory>> {
-        let fetch = limit.saturating_add(offset);
-        if fetch == 0 {
+        if limit == 0 {
             return Ok(Vec::new());
         }
 
-        // When an origin filter is set we can't push it into LanceDB SQL
-        // (see `apply_origin_filter` for the keyword bug), so we may over-fetch
-        // here and drop rows post-fetch. Skip the LanceDB-side limit in that
-        // case to avoid losing matching rows below the page window.
+        // No LanceDB-side `limit`: the in-process sort below must see every
+        // matching row, or pagination returns an arbitrary page (see the
+        // doc comment). Filtering is pushed into SQL where possible; the
+        // origin filter is applied post-fetch (`apply_origin_filter`) due to
+        // a LanceDB keyword bug.
         let mut q = self.table.query();
-        if filters.origin.is_none() {
-            q = q.limit(fetch);
-        }
         if let Some(sql) = filters.to_sql() {
             q = q.only_if(sql);
         }
@@ -1111,6 +1114,44 @@ mod tests {
             .unwrap();
         assert_eq!(oldest_first[0].content, "old");
         assert_eq!(oldest_first[2].content, "new");
+    }
+
+    #[tokio::test]
+    async fn list_returns_global_newest_when_limit_below_total() {
+        // Regression: `list` must sort the FULL filtered set before slicing
+        // the page window. A DB-side limit-then-sort returns an arbitrary
+        // `limit` rows — the bug that made list(Newest, 1) (and the dashboard
+        // "latest" badge) pick a random row, and would corrupt page 1 once a
+        // store exceeds the page size.
+        let (store, _dir) = fresh_store().await;
+
+        // Six rows one hour apart, inserted OLDEST-first so the newest rows
+        // are written last — a fetch of the first N would miss them.
+        let base = Utc::now() - Duration::days(1);
+        let mut facts = Vec::new();
+        for i in 0..6 {
+            let mut f = make_fact(&format!("row{i}"), MemoryType::Fact);
+            f.created_at = base + Duration::hours(i);
+            facts.push(f);
+        }
+        store.insert(&facts).await.unwrap();
+
+        // limit 2 of 6 → the two GLOBAL newest, in order.
+        let top2 = store
+            .list(&Filters::default(), SortOrder::Newest, 2, 0)
+            .await
+            .unwrap();
+        assert_eq!(top2.len(), 2);
+        assert_eq!(top2[0].content, "row5");
+        assert_eq!(top2[1].content, "row4");
+
+        // limit 1 → the single global newest (the count endpoint relies on this).
+        let top1 = store
+            .list(&Filters::default(), SortOrder::Newest, 1, 0)
+            .await
+            .unwrap();
+        assert_eq!(top1.len(), 1);
+        assert_eq!(top1[0].content, "row5");
     }
 
     #[tokio::test]
