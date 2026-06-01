@@ -9,7 +9,7 @@
 #
 # Manifests stamped:
 #   plugins/shared-memory/.claude-plugin/plugin.json   (Claude Code)
-#   plugins/shared-memory/plugin.json                  (Codex)
+#   plugins/shared-memory/.codex-plugin/plugin.json    (Codex)
 #
 # Run from the linggen-memory repo root, or via the path-relative invocation.
 
@@ -20,7 +20,7 @@ cd "$(dirname "$0")/.."
 VERSION="$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"(.*)"/\1/')"
 ROOT="plugins/shared-memory"
 CC_MANIFEST="$ROOT/.claude-plugin/plugin.json"
-CX_MANIFEST="$ROOT/plugin.json"
+CX_MANIFEST="$ROOT/.codex-plugin/plugin.json"
 
 [ -f "$CC_MANIFEST" ] || { echo "missing $CC_MANIFEST" >&2; exit 1; }
 [ -f "$CX_MANIFEST" ] || { echo "missing $CX_MANIFEST" >&2; exit 1; }
