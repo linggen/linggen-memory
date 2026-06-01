@@ -403,8 +403,8 @@ bash <(curl -fsSL https://raw.githubusercontent.com/linggen/skills/main/shared-m
 
 # 2. Install this skill via your host:
 #    Claude Code / Codex: handled by the install.sh above (wires UserPromptSubmit hook + skill).
-openclaw skills install shared-memory   # OpenClaw users
-clawhub install shared-memory           # ClawHub CLI direct
+openclaw skills install ling-mem        # OpenClaw users
+clawhub install ling-mem                # ClawHub CLI direct (clawhub.ai/linggen/ling-mem)
 ```
 
 The skill works in Claude Code, Codex, OpenClaw, or standalone — same
