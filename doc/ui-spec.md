@@ -115,8 +115,10 @@ v0.1 — `limit` caps the DOM size.
   [Design tokens](#design-tokens)).
 - `<outcome?>` renders only for `tried` / `fixed` types: ✓ positive,
   ✗ negative, — neutral.
-- `<age>` relative: `Nm` (minutes), `Nh`, `Nd`, `Nw`, `Nmo`. Hover tooltip
-  shows absolute `created_at`.
+- `<age>` relative: `Nm` (minutes), `Nh`, `Nd`, `Nw`, `Nmo`. Computed from
+  the row's **activity timestamp** (`updated_at ?? created_at`) — the same
+  key `sort: newest` orders by, so an edited row both resurfaces and re-ages.
+  Hover tooltip shows that absolute timestamp.
 - Selected row: lighter background + left accent bar.
 
 ### Detail pane

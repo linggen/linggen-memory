@@ -68,7 +68,7 @@ LanceDB table name: `semantic` (curated long-term memory; holds both `tier=core`
 | `tier` | Utf8 | no | `core` / `semantic`. Defaults to `semantic`. Older JSON without it reads as `semantic` |
 | `cwd` | Utf8 | yes | Working directory at capture time. Extraction hint and filter |
 | `created_at` | Timestamp(Microsecond, UTC) | no | When the fact was added to memory |
-| `updated_at` | Timestamp(Microsecond, UTC) | yes | Last-edit time; the decay/TTL clock (falls back to `created_at`) |
+| `updated_at` | Timestamp(Microsecond, UTC) | yes | Last-edit time. Doubles as the decay/TTL clock AND the *activity timestamp* `updated_at ?? created_at` that drives list `--sort` and the UI age badge (falls back to `created_at`) |
 | `occurred_at` | Timestamp(Microsecond, UTC) | yes | When the thing described happened. Falls back to `created_at` in queries |
 | `source_session` | Utf8 | yes | Session id the fact was extracted from. Escape hatch when the fact is later ambiguous |
 
@@ -124,6 +124,16 @@ REST API and the Data Browser UI. See the [Skill integration](#skill-integration
 section below and `ui-spec.md`.
 
 Deferred: `archive` (soft-delete; may land if `delete` proves insufficient).
+
+**`list` sort order.** `--sort newest|oldest` orders by the *activity
+timestamp* (`updated_at ?? created_at`), **not** `occurred_at` — the
+consolidator back-dates `occurred_at` to the source session, which would
+bury freshly-written rows. The sort runs over the **full filtered set
+before** the page window is sliced (no DB-side `limit` pre-sort), so
+`list(newest, 1)` and pagination both return the true global order; the
+`count` endpoint's `latest_created_at` is the max activity timestamp. Full
+scan is acceptable at the v0.1 `<100k`-row scale (same posture as core
+reads); revisit with a DB-side sort beyond that.
 
 ### I/O contract
 
