@@ -10,6 +10,7 @@
 
 pub mod recall;
 pub mod schema;
+pub mod schema_version;
 pub mod store;
 pub mod types;
 

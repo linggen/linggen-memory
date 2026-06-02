@@ -409,6 +409,14 @@ impl MemoryStore {
             .await
             .with_context(|| format!("creating memory dir at {}", lancedb_dir.display()))?;
 
+        // Store schema-version gate (see schema_version + doc/schema-versioning.md).
+        // Refuse a store written by a newer release, or one too old to migrate,
+        // before touching it. Openable cases fall through and are stamped below.
+        let compat = super::schema_version::classify(data_dir);
+        if let Some(msg) = super::schema_version::refuse_message(compat, &lancedb_dir) {
+            return Err(anyhow!(msg));
+        }
+
         let uri = lancedb_dir
             .to_str()
             .ok_or_else(|| anyhow!("memory path is not valid UTF-8: {}", lancedb_dir.display()))?;
@@ -447,6 +455,12 @@ impl MemoryStore {
                 .await
                 .with_context(|| format!("creating `{table_name}` table"))?
         };
+
+        // Record the store schema version that opened this store. Idempotent —
+        // writes only when the sidecar differs (so patch/minor binaries sharing
+        // a STORE_SCHEMA_VERSION never churn it). For an adopted legacy store,
+        // the per-table additive migrations above have already run.
+        super::schema_version::stamp_current(data_dir)?;
 
         Ok(Self { _conn: conn, table })
     }
