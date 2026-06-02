@@ -1,10 +1,10 @@
 {
   "hooks": {
     "SessionStart": [
-      { "hooks": [{ "type": "command", "command": "./hooks/autostart.sh" }] }
+      { "hooks": [{ "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/autostart.sh" }] }
     ],
     "UserPromptSubmit": [
-      { "hooks": [{ "type": "command", "command": "./hooks/recall.sh" }] }
+      { "hooks": [{ "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/recall.sh" }] }
     ]
   }
 }
