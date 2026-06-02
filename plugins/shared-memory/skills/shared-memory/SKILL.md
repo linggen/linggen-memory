@@ -99,7 +99,7 @@ ling-mem search "node 22 quirk" --limit 5 --format json | jq -c 'del(.vector)'
 |:---|:---|:---|
 | **Core** | Rows with `tier=core` in the `semantic` table | Narrow universals about the **person** — name, role, location, timezone, languages, pets / family. Always-loaded set; the host injects them at session start. Keep tight. |
 | **Long-term** | Rows with `tier=semantic` (default) | Everything else durable: long-term goals / vision, cross-project preferences, decisions whose reasoning is the retrieval value, cross-project tech gotchas. Retrieved on demand. |
-| **Episodic** | The `episodic` staging table | Per-session encoder writes here pre-promotion. The `dream` pass promotes-or-deletes past-TTL rows. Invisible to the live chat surface; reachable via `--tier episodic` for audit / debugging. |
+| **Episodic** | The `episodic` staging table | **Per-turn working capture** — append uncertain-durability signal here each turn (fast, append-only, no search-first): `ling-mem add "<content>" --tier episodic`. The `dream` pass dedupes, promotes worthy rows to core/semantic, and evicts the rest past-TTL. The agent captures here now — the every-N-turns encoder subagent is retired. |
 
 Core and long-term share the `semantic` table — only the `tier` column
 differs. Episodic lives in its own table at
@@ -114,10 +114,12 @@ ling-mem list --tier core --limit 100 | jq -c 'del(.vector)'
 
 Omit `--tier` to default to `semantic` (long-term).
 
-**If a candidate doesn't fit core or long-term, drop it.** Memory does
-not write to project files (`<project>/AGENTS.md`, `CLAUDE.md`, source,
-docs); those are user-curated and the agent reads them directly when it
-needs the content.
+**If a candidate doesn't clearly fit core or long-term but might matter
+later → episodic** (`--tier episodic`; staging, the dream pass sorts it
+out). Only drop true non-signal: project-internal facts (the agent
+re-reads project files next session — Memory never writes to
+`<project>/AGENTS.md`, `CLAUDE.md`, source, docs), activity logs, and
+opinions without commitment.
 
 **Goals and projects → long-term, not core.** *"User is building Linggen
 as an agent platform"* is a goal — `tier=semantic` with

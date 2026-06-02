@@ -43,7 +43,7 @@ const INSTRUCTIONS: &str = r#"ling-mem provides durable cross-session memory for
 
 - **core** — narrow universals about the *person*: name, role, location, timezone, languages, family / pets. Always-loaded at session start. Keep tight.
 - **semantic** (default) — durable long-term facts retrieved on demand: long-term goals / vision, cross-project preferences, decisions whose reasoning is the value, cross-project tech gotchas. Most writes land here.
-- **episodic** — per-session staging. The dream mission promotes-or-evicts past-TTL rows. Don't write here directly; let the system manage promotion.
+- **episodic** — per-turn working capture. Append anything that *might* matter but isn't yet high-confidence enough for core/semantic — fast, append-only, **no search-first**. The dream mission later promotes worthy rows to semantic/core and evicts the rest past-TTL. This is your steady-state capture lane now that the every-N-turns encoder subagent is retired.
 
 # When to SEARCH (before answering)
 
@@ -51,11 +51,13 @@ Call Memory_search when the user's question could connect to past preferences, d
 
 # When to SAVE (call Memory_add)
 
-**Always Memory_search the candidate content before Memory_add.** Write-time dedup is cheaper than read-time cleanup:
+**Per-turn capture → episodic.** Each turn, append genuinely-noteworthy signal you're not yet sure is durable to `tier=episodic` — fast, no search-first, no confirmation. This is the default lane; the dream pass dedupes and promotes. Don't overthink it.
+
+**Curated writes → core / semantic** (high confidence) follow the read-before-write rule: **Always Memory_search the candidate content before a core/semantic Memory_add.** Write-time dedup is cheaper than read-time cleanup:
 - If a near-duplicate row exists → skip the add, or Memory_delete the loser when your version is better-phrased.
 - If a conflict exists (same subject, incompatible value) → ask the user via the host's ask-user primitive, write the winner, delete the losers. Do not write on top of a conflict.
 
-HIGH-SIGNAL — save silently after the search check, no other confirmation:
+HIGH-SIGNAL — promote straight to core/semantic (search-first), don't leave these in episodic:
 - Name + relationship ("my cat <name>", "my wife <name>") → tier=core, type=fact
 - Location / timezone → tier=core, type=fact
 - Role / identity ("I'm a robotics engineer") → tier=core, type=fact
@@ -197,7 +199,7 @@ fn tool_defs() -> Vec<Value> {
                 "properties": {
                     "content":  {"type": "string", "description": "The fact text the model will see when this row is recalled."},
                     "type":     {"type": "string", "enum": ["fact", "preference", "decision", "tried", "fixed", "learned", "built"]},
-                    "tier":     {"type": "string", "enum": ["core", "semantic", "episodic"], "description": "Destination tier. Default `semantic`. `core` for tiny always-injected universals; `episodic` for staging."},
+                    "tier":     {"type": "string", "enum": ["core", "semantic", "episodic"], "description": "Destination tier. `episodic` = per-turn working capture (fast, append-only, no search-first; the dream pass promotes/evicts) — the default lane for uncertain-durability signal. `semantic` = curated durable facts (search-first). `core` = tiny always-injected universals about the person (search-first)."},
                     "contexts": {"type": "array", "items": {"type": "string"}},
                     "host":     {"type": "string", "description": "Identify the calling host (e.g. claude-code, codex, cursor). Stamped on the row for cross-host attribution. Optional."}
                 },
