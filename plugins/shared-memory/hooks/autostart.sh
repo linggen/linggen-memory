@@ -3,10 +3,12 @@
 # SessionStart hook for shared-memory.
 #
 # 1. Bootstrap the ling-mem binary on first run (or after a plugin update
-#    that bumped VERSION) into ${CLAUDE_PLUGIN_DATA}/bin/. The symlink at
-#    ~/.local/bin/ling-mem makes it discoverable to the agent's later
-#    Bash subshells.
-# 2. Start the daemon idempotently.
+#    that bumped VERSION) into the ONE canonical, cross-host location
+#    ~/.local/bin/ling-mem — a real file shared by every host/channel, not
+#    a per-plugin copy. install-bin resolves the (range) pin, won't
+#    downgrade a newer shared binary, and replaces any legacy symlink.
+# 2. Start the daemon idempotently (restart only if it's older than the
+#    on-disk binary — never downgrade a daemon another host started).
 # 3. Emit core memory as `hookSpecificOutput.additionalContext` so the
 #    host injects always-on identity facts (name, role, location, family,
 #    standing-instruction preferences) into the agent's system prompt.
@@ -19,7 +21,6 @@
 set -u
 
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-${PLUGIN_ROOT:-}}"
-DATA_DIR="${CLAUDE_PLUGIN_DATA:-$HOME/.linggen/plugin-data}"
 
 # If neither host injects a plugin-root env var (e.g. Codex's hook runner
 # doesn't expand ${PLUGIN_ROOT} when launching shell hooks), we have no
@@ -28,46 +29,37 @@ DATA_DIR="${CLAUDE_PLUGIN_DATA:-$HOME/.linggen/plugin-data}"
 # already installed; nothing here can do useful work blind.
 [ -z "$PLUGIN_ROOT" ] && exit 0
 
-mkdir -p "$DATA_DIR/bin"
-
+# ONE canonical, cross-host binary path. Every channel (CC/Codex plugin,
+# OpenClaw, skills.sh, Linggen engine) installs/upgrades this same real file —
+# never a per-plugin copy or symlink — so there's one binary, one daemon, one
+# store. ~/.local/bin (not /usr/local) because plugins/skills install without
+# sudo. install-bin.sh defaults to this dir too.
+DEST="$HOME/.local/bin"
+BIN="$DEST/ling-mem"
 VERSION="$(cat "$PLUGIN_ROOT/VERSION" 2>/dev/null || echo "v0.7.2")"
-BIN="$DATA_DIR/bin/ling-mem"
-EXPECTED="${VERSION#v}"
-HAVE="$("$BIN" --version 2>/dev/null | awk '{print $2}' || echo none)"
+mkdir -p "$DEST" 2>/dev/null || true
 
-if [ "$HAVE" != "$EXPECTED" ]; then
-  bash "$PLUGIN_ROOT/scripts/install-bin.sh" \
-    --version "$VERSION" \
-    --dest "$DATA_DIR/bin" \
-    --quiet >/dev/null 2>&1 || exit 0
-fi
+# Install/upgrade the shared binary. install-bin resolves a range pin, verifies
+# SHA-256, won't downgrade a newer shared binary, and replaces a legacy symlink
+# with a real file. Idempotent and cheap when already satisfied.
+bash "$PLUGIN_ROOT/scripts/install-bin.sh" \
+  --version "$VERSION" --dest "$DEST" --quiet >/dev/null 2>&1 || true
 
-if [ -x "$BIN" ]; then
-  mkdir -p "$HOME/.local/bin" 2>/dev/null
-  ln -sf "$BIN" "$HOME/.local/bin/ling-mem" 2>/dev/null || true
-fi
+[ -x "$BIN" ] || exit 0
+HAVE="$("$BIN" --version 2>/dev/null | awk '{print $2}')"
 
-# Reconcile the RUNNING daemon with the pinned binary. A plugin/skill update
-# bumps VERSION and swaps the binary on disk above, but a `start` is a no-op
-# while a daemon is already bound to the port — so the old in-memory version
-# keeps serving until something restarts it. Decide from the live daemon:
-#   not running      -> start
-#   running, older    -> restart onto the freshly-pinned binary
-#   running, >= pin   -> leave it (don't let a stale-pinned host downgrade a
-#                        newer daemon that another channel already started)
-# $BIN is used directly: a freshly-created ~/.local/bin symlink would miss the
-# shell's stale PATH cache, and where ~/.local/bin isn't on PATH a
-# `command -v ling-mem` check returns false even though the binary exists.
-if [ -x "$BIN" ]; then
-  _st="$("$BIN" status --format json 2>/dev/null)"
-  _state="$(printf '%s' "$_st" | jq -r '.state // empty' 2>/dev/null)"
-  _running_ver="$(printf '%s' "$_st" | jq -r '.version // empty' 2>/dev/null)"
-  if [ "$_state" != "running" ]; then
-    "$BIN" start >/dev/null 2>&1 || true
-  elif [ -n "$_running_ver" ] && [ "$_running_ver" != "$EXPECTED" ] && \
-       [ "$(printf '%s\n%s\n' "$_running_ver" "$EXPECTED" | sort -V | head -n1)" = "$_running_ver" ]; then
-    "$BIN" restart >/dev/null 2>&1 || true
-  fi
+# Reconcile the RUNNING daemon with the on-disk binary: start if down; restart
+# only if the daemon is OLDER than the binary on disk (so a stale-pinned host
+# never downgrades a daemon another host already started — we only move
+# forward). $BIN is used by absolute path to dodge stale PATH caching.
+_st="$("$BIN" status --format json 2>/dev/null)"
+_state="$(printf '%s' "$_st" | jq -r '.state // empty' 2>/dev/null)"
+_running="$(printf '%s' "$_st" | jq -r '.version // empty' 2>/dev/null)"
+if [ "$_state" != "running" ]; then
+  "$BIN" start >/dev/null 2>&1 || true
+elif [ -n "$HAVE" ] && [ -n "$_running" ] && [ "$_running" != "$HAVE" ] && \
+     [ "$(printf '%s\n%s\n' "$_running" "$HAVE" | sort -V | head -n1)" = "$_running" ]; then
+  "$BIN" restart >/dev/null 2>&1 || true
 fi
 
 # ── Inject core memory into the session's system prompt ─────────────────────

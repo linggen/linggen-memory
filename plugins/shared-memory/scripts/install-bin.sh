@@ -136,10 +136,15 @@ if ! VERSION="$(resolve_version "$VERSION")" || [ -z "$VERSION" ]; then
 fi
 
 EXPECTED="${VERSION#v}"
+# Skip unless the installed binary is strictly OLDER than the target — never
+# downgrade. The shared canonical binary is touched by every host; a
+# stale-pinned channel must not roll back a newer one. (`sort -V` lowest ==
+# EXPECTED means installed is >= target.)
 if [ "$FORCE" = "0" ] && [ -x "$BIN" ]; then
   HAVE="$("$BIN" --version 2>/dev/null | awk '{print $2}' || true)"
-  if [ "$HAVE" = "$EXPECTED" ]; then
-    say "already at $VERSION ($BIN)"
+  if [ -n "$HAVE" ] && \
+     [ "$(printf '%s\n%s\n' "$HAVE" "$EXPECTED" | sort -V | head -n1)" = "$EXPECTED" ]; then
+    say "already at $HAVE (target $VERSION; not downgrading) ($BIN)"
     exit 0
   fi
 fi
@@ -192,6 +197,9 @@ else
   say "verified SHA-256"
 fi
 
+# Replace any legacy symlink (older plugins symlinked ~/.local/bin/ling-mem to
+# a per-plugin data-dir copy) with a real file, so tar doesn't write through it.
+rm -f "$BIN"
 tar -xzf "$TMP/$ASSET" -C "$DEST" ling-mem
 chmod +x "$BIN"
 say "installed $BIN"
