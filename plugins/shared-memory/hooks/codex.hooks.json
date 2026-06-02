@@ -1,6 +1,10 @@
 {
-  "hooks": [
-    { "event": "SessionStart",     "command": "${PLUGIN_ROOT}/hooks/autostart.sh" },
-    { "event": "UserPromptSubmit", "command": "${PLUGIN_ROOT}/hooks/recall.sh" }
-  ]
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [{ "type": "command", "command": "./hooks/autostart.sh" }] }
+    ],
+    "UserPromptSubmit": [
+      { "hooks": [{ "type": "command", "command": "./hooks/recall.sh" }] }
+    ]
+  }
 }
