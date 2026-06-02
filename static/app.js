@@ -1858,7 +1858,7 @@ async function buildSettingsCard() {
   card.className = 'help-card settings-card';
   card.setAttribute('role', 'document');
   // Load current config (best-effort — fall back to defaults).
-  let cfg = { episodic_ttl_days: 7 };
+  let cfg = { episodic_ttl_days: 7, recall_min_score: 0.6 };
   try {
     const resp = await fetch('/api/config');
     const json = await resp.json();
@@ -1879,6 +1879,16 @@ async function buildSettingsCard() {
         episodic memory live longer before consolidation.
       </p>
     </div>
+    <div class="settings-row">
+      <label for="settings-recall">Recall threshold</label>
+      <input id="settings-recall" type="number" min="0" max="1" step="0.05"
+             value="${cfg.recall_min_score}" />
+      <p class="settings-hint">
+        Minimum cosine similarity for a memory to be recalled. Applied across
+        every host (Claude Code, Codex, Linggen) unless that host overrides it.
+        Default 0.6. Higher = stricter (fewer, more relevant); lower = broader.
+      </p>
+    </div>
     <div class="settings-actions">
       <button type="button" class="settings-save">Save</button>
       <button type="button" class="settings-cancel">Cancel</button>
@@ -1888,19 +1898,26 @@ async function buildSettingsCard() {
   card.querySelector('.help-close').addEventListener('click', closeSettings);
   card.querySelector('.settings-cancel').addEventListener('click', closeSettings);
   card.querySelector('.settings-save').addEventListener('click', async () => {
-    const input = card.querySelector('#settings-ttl');
     const status = card.querySelector('.settings-status');
-    const ttl = parseInt(input.value, 10);
+    const ttl = parseInt(card.querySelector('#settings-ttl').value, 10);
     if (!Number.isFinite(ttl) || ttl < 1 || ttl > 3650) {
       status.textContent = 'Episodic TTL must be 1–3650 days.';
       status.hidden = false;
       return;
     }
+    const recall = parseFloat(card.querySelector('#settings-recall').value);
+    if (!Number.isFinite(recall) || recall < 0 || recall > 1) {
+      status.textContent = 'Recall threshold must be between 0 and 1.';
+      status.hidden = false;
+      return;
+    }
     try {
+      // PUT replaces the whole Config — send every field so omitting one
+      // doesn't reset it to the server default.
       await fetch('/api/config', {
         method: 'PUT',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ episodic_ttl_days: ttl }),
+        body: JSON.stringify({ episodic_ttl_days: ttl, recall_min_score: recall }),
       });
       status.textContent = 'Saved.';
       status.hidden = false;
