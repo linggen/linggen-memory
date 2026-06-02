@@ -47,11 +47,28 @@ if [ -x "$BIN" ]; then
   ln -sf "$BIN" "$HOME/.local/bin/ling-mem" 2>/dev/null || true
 fi
 
-# Use $BIN directly — relying on `command -v ling-mem` after just
-# creating the symlink would hit the shell's stale PATH cache, and on
-# systems where ~/.local/bin is not on PATH it returns false even though
-# the binary exists.
-[ -x "$BIN" ] && "$BIN" start >/dev/null 2>&1 || true
+# Reconcile the RUNNING daemon with the pinned binary. A plugin/skill update
+# bumps VERSION and swaps the binary on disk above, but a `start` is a no-op
+# while a daemon is already bound to the port — so the old in-memory version
+# keeps serving until something restarts it. Decide from the live daemon:
+#   not running      -> start
+#   running, older    -> restart onto the freshly-pinned binary
+#   running, >= pin   -> leave it (don't let a stale-pinned host downgrade a
+#                        newer daemon that another channel already started)
+# $BIN is used directly: a freshly-created ~/.local/bin symlink would miss the
+# shell's stale PATH cache, and where ~/.local/bin isn't on PATH a
+# `command -v ling-mem` check returns false even though the binary exists.
+if [ -x "$BIN" ]; then
+  _st="$("$BIN" status --format json 2>/dev/null)"
+  _state="$(printf '%s' "$_st" | jq -r '.state // empty' 2>/dev/null)"
+  _running_ver="$(printf '%s' "$_st" | jq -r '.version // empty' 2>/dev/null)"
+  if [ "$_state" != "running" ]; then
+    "$BIN" start >/dev/null 2>&1 || true
+  elif [ -n "$_running_ver" ] && [ "$_running_ver" != "$EXPECTED" ] && \
+       [ "$(printf '%s\n%s\n' "$_running_ver" "$EXPECTED" | sort -V | head -n1)" = "$_running_ver" ]; then
+    "$BIN" restart >/dev/null 2>&1 || true
+  fi
+fi
 
 # ── Inject core memory into the session's system prompt ─────────────────────
 #
