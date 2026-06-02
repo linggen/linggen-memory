@@ -1882,7 +1882,7 @@ async function buildSettingsCard() {
     <div class="settings-row">
       <label for="settings-recall">Recall threshold</label>
       <input id="settings-recall" type="number" min="0" max="1" step="0.05"
-             value="${cfg.recall_min_score}" />
+             value="${Math.round((cfg.recall_min_score ?? 0.6) * 100) / 100}" />
       <p class="settings-hint">
         Minimum cosine similarity for a memory to be recalled. Applied across
         every host (Claude Code, Codex, Linggen) unless that host overrides it.
