@@ -18,7 +18,10 @@ cwd="$(printf '%s' "$input"   | jq -r '.cwd    // empty' 2>/dev/null || true)"
 topk="${LING_MEM_RECALL_TOPK:-3}"
 limit="${LING_MEM_RECALL_LIMIT:-8}"
 to="${LING_MEM_RECALL_TIMEOUT:-3}"
-min_score="${LING_MEM_RECALL_MIN_SCORE:-0.30}"
+# No hardcoded floor: omit --min-score so the daemon applies its store-wide
+# `recall_min_score` (one selectivity shared by all hosts). Set
+# LING_MEM_RECALL_MIN_SCORE to override per-host.
+min_score="${LING_MEM_RECALL_MIN_SCORE:-}"
 
 proj=""
 if [ -n "$cwd" ] && [ "$cwd" != "$HOME" ]; then
@@ -55,8 +58,11 @@ run_with_timeout() {
   wait "$watcher" 2>/dev/null
 }
 
+score_arg=""
+[ -n "$min_score" ] && score_arg="--min-score $min_score"
+# shellcheck disable=SC2086
 out="$(run_with_timeout "$to" ling-mem search "$prompt" \
-    --limit "$limit" --min-score "$min_score" \
+    --limit "$limit" $score_arg \
     --format json --quiet || true)"
 
 [ -z "$out" ] && exit 0

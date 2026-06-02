@@ -27,16 +27,30 @@ pub struct Config {
     /// human-facing knob the console / dream skill reads.
     #[serde(default = "default_episodic_ttl_days")]
     pub episodic_ttl_days: u32,
+
+    /// Store-wide cosine floor for `search`. Applied server-side when a
+    /// search request omits `min_score`, so every host (engine auto-recall,
+    /// the CC/Codex recall hook, the CLI) shares one recall selectivity
+    /// instead of each hardcoding its own. An explicit per-call `min_score`
+    /// still overrides. Same role as `episodic_ttl_days`: a store property
+    /// the daemon owns and clients defer to.
+    #[serde(default = "default_recall_min_score")]
+    pub recall_min_score: f32,
 }
 
 fn default_episodic_ttl_days() -> u32 {
     7
 }
 
+fn default_recall_min_score() -> f32 {
+    0.6
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
             episodic_ttl_days: default_episodic_ttl_days(),
+            recall_min_score: default_recall_min_score(),
         }
     }
 }
@@ -90,6 +104,11 @@ async fn put_config(
     if cfg.episodic_ttl_days > 3650 {
         return Err(ApiError::bad_request(
             "episodic_ttl_days must be <= 3650 (10 years)",
+        ));
+    }
+    if !(0.0..=1.0).contains(&cfg.recall_min_score) {
+        return Err(ApiError::bad_request(
+            "recall_min_score must be between 0.0 and 1.0",
         ));
     }
     save(&state.data_dir, &cfg)

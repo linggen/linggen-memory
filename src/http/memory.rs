@@ -652,23 +652,33 @@ async fn search(
         .await
         .map_err(ApiError::internal)?;
     let filters = req.filters.into_filters();
+
+    // Store-wide recall floor: when the client omits `min_score`, apply the
+    // daemon's configured `recall_min_score` so every host shares one recall
+    // selectivity. An explicit per-call `min_score` overrides. (Same
+    // server-owns-it pattern as `episodic_ttl_days`.)
+    let min_score = match req.min_score {
+        Some(s) => Some(s),
+        None => Some(crate::http::config::load(&state.data_dir).await.recall_min_score),
+    };
+
     let results = match req.table {
         SearchTable::Both => {
             state
                 .recall
-                .query(&vector, &filters, req.limit, req.min_score)
+                .query(&vector, &filters, req.limit, min_score)
                 .await?
         }
         SearchTable::Semantic => {
             state
                 .store
-                .search_scored(&vector, &filters, req.limit, req.min_score)
+                .search_scored(&vector, &filters, req.limit, min_score)
                 .await?
         }
         SearchTable::Episodic => {
             state
                 .episodic
-                .search_scored(&vector, &filters, req.limit, req.min_score)
+                .search_scored(&vector, &filters, req.limit, min_score)
                 .await?
         }
     };
