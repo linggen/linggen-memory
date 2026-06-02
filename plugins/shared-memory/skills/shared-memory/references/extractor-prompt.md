@@ -72,9 +72,11 @@ Three destinations, picked from the utterance itself:
    tech gotchas. Use this when the user **explicitly** asked to
    remember it (*"remember X"*, *"记住 X"*) or used commitment language.
 
-3. **`--episodic`** — incidental durable signal: the user mentioned
-   it in passing, you judge it useful later but it didn't come with
-   "remember this". Phase 3 (consolidate) promotes or evicts at TTL.
+3. **`--episodic`** — uncertain-durability signal: useful-looking but not
+   clearly worth a permanent core/semantic row. This is the default
+   capture lane (the live agent also appends here every turn). Phase 3
+   (consolidate) clusters near-dups, promotes the durable, and evicts the
+   rest at TTL.
 
 ## Type taxonomy — emit only four by default
 
@@ -99,17 +101,17 @@ adding each candidate:
    value) → **skip the write.** Don't add a duplicate. Decide sameness
    by *reading the content*, not the similarity score.
 3. **An existing row contradicts the candidate** (same subject,
-   *incompatible* value) → **ask the user.** The encoder subagent has
-   an `ask_user_bridge` wired (engine `tools/mod.rs:348-354`,
-   `consolidation.rs:333-337`), so call `AskUser` with the existing
-   row, the candidate row, and the resolve options. On the user's pick,
-   write the winner then delete each loser:
-   `ling-mem add "<winner>" --type <t> --from <f> [...]` followed by
-   `ling-mem delete <loser-id> --yes` for each loser. (The CLI has no
-   atomic replace verb; write-before-delete is the safe ordering — a
-   concurrent recall either sees the old rows or both, never an empty
-   hole.) **Never silently write both and hope live recall sorts it
-   out later** — that's how drift accumulates.
+   *incompatible* value) → **never overwrite a semantic row on your own.**
+   - **If you can ask the user** (a user-triggered `dream` with `AskUser`
+     available): surface the existing row, the candidate, and the resolve
+     options; on their pick, write the winner then delete each loser
+     (`ling-mem add "<winner>" --type <t> --from <f> [...]` then
+     `ling-mem delete <loser-id> --yes` — no atomic replace verb, so
+     write-before-delete).
+   - **If you're headless** (the nightly cron, no user present): **defer.**
+     Leave the candidate in `--episodic` and **don't touch the live
+     semantic row** — the contradiction is resolved at recall time when
+     the user is present. Episodic is staging; deferring there is safe.
 4. **New / unrelated** → write normally.
 
 ## Commands
@@ -126,7 +128,7 @@ Core write (always-loaded universals about the person):
 ling-mem add "<content>" --type fact --from user --tier core [--context <scope>]…
 ```
 
-Episodic write (incidental durable signal, awaits consolidation):
+Episodic write (uncertain-durability signal, awaits consolidation):
 
 ```
 ling-mem add "<content>" --episodic --type <type> --from <from> [--context <scope>]…

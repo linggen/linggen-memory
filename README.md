@@ -56,20 +56,28 @@ The `ling-mem` binary ships as part of the **`shared-memory` skill** (in the [li
 
 Best experience: **Linggen agent**, which exposes typed `Memory_query` / `Memory_write` tools and a built-in dashboard. The skill also works with **any other agent** that can shell out (Claude Code, Codex, OpenClaw, plain scripts) — they just call the `ling-mem` CLI directly.
 
-```bash
-# One-liner installer (cross-host: drops the canonical bundle at
-# ~/.linggen/skills/shared-memory and per-host stubs under
-# ~/.claude/, ~/.codex/, ~/.openclaw/ if those dirs exist):
-curl -fsSL https://linggen.dev/install-shared-memory.sh | bash
+Install from your agent's own marketplace — it manages updates and (on Claude
+Code / Codex) the per-turn recall hook. Pick **one** channel per host:
 
-# Or from a checked-out clone:
-git clone https://github.com/linggen/skills
-cd skills/shared-memory
-./install.sh                                # auto-detects every host runtime
-LING_MEM_VERSION=v1.0.0 ./install.sh        # pin a specific binary version
+```text
+Claude Code   /plugin marketplace add linggen/linggen-memory
+              /plugin install shared-memory@linggen-memory
+Codex         codex plugin marketplace add linggen/linggen-memory
+              codex plugin add shared-memory@linggen-memory
+OpenClaw      clawhub install ling-mem
+Any agent     npx skills add linggen/linggen-memory@shared-memory
+Linggen       Settings → Skills → shared-memory   (in-app)
 ```
 
-Prebuilt binaries are available for macOS Apple Silicon and Linux (x86_64 + aarch64) on the [releases page](https://github.com/linggen/linggen-memory/releases).
+The `ling-mem` binary is fetched automatically on first use (pinned, SHA-256
+verified) to the one cross-host location `~/.local/bin/ling-mem`. To install
+just the binary manually:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/linggen/linggen-memory/main/plugins/shared-memory/scripts/install-bin.sh) --version '~1'
+```
+
+Prebuilt binaries for macOS Apple Silicon and Linux x86_64 are on the [releases page](https://github.com/linggen/linggen-memory/releases).
 
 To build from source instead:
 

@@ -15,13 +15,13 @@ A single-binary memory layer that remembers useful facts about you and your work
 
 ## Quick start
 
+Install from your agent's marketplace (pick one per host): Claude Code
+`/plugin install shared-memory@linggen-memory`, Codex `codex plugin add
+shared-memory@linggen-memory`, OpenClaw `clawhub install ling-mem`, any agent
+`npx skills add linggen/linggen-memory@shared-memory`. The `ling-mem` binary
+auto-installs on first use.
+
 ```bash
-# Install via ClawHub
-clawhub install shared-memory
-
-# Or run install.sh directly (cross-host installer at linggen.dev)
-curl -fsSL https://linggen.dev/install-shared-memory.sh | bash
-
 # Add a fact
 ling-mem add "prefers concise replies, no hedging" --type preference --from user
 

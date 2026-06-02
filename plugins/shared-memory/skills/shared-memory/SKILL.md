@@ -295,7 +295,7 @@ The user is reading text in a conversation panel:
 
 ## Memory hygiene — fix dups and conflicts when you see them
 
-**Hard rule, applies everywhere (live chat, dream, encoder subagent):**
+**Hard rule, applies everywhere (live chat, per-turn capture, dream):**
 when you encounter duplicates or conflicts during any memory operation,
 **resolve them in the same pass — don't defer**. Garbage in memory poisons
 every future retrieval; "leave it for later" is how 7 word-count rows

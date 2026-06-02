@@ -134,10 +134,11 @@ Pure rule application. No LLM judgment, no asking.
 
 ### Semantic maintenance — silent when confident, AskUser when not
 
-These need LLM judgment. The agent CAN do them — including from a
-subagent (`ask_user_bridge` is wired on the encoder subagent per
-engine `consolidation.rs:333-337`). The line between silent and
-ask-first is **confidence**, not "live vs offline":
+These need LLM judgment, available on every memory pass (live chat,
+per-turn capture, the `dream` consolidation). The line between silent
+and ask-first is **confidence**, not "live vs offline" — except that a
+headless `dream` (no user present) can't ask, so it **defers** a
+contradiction (leaves the candidate in episodic) rather than guessing:
 
 | Operation | Silent if… | Ask if… |
 |:---|:---|:---|
