@@ -221,12 +221,21 @@ Each release asset: `ling-mem-<target>.tar.gz` with the binary + LICENSE + a min
 
 ## Versioning
 
-Semver. Breaking schema changes (adding / removing / retyping a LanceDB column) bump the minor version pre-1.0. Add a `--migrate-data` subcommand on the first such bump and keep backwards-read capability for one minor version.
+Semver, and the contract is enforced — the binary semver is what plugins/skills range-pin (`~1.x`), so a wrong bump corrupts user stores.
+
+**Store schema is the hard line.** A monotonic `STORE_SCHEMA_VERSION` (in `schema_version.rs`, recorded in the `<data_dir>/memory/SCHEMA_VERSION` sidecar — see `doc/schema-versioning.md`) is decoupled from the binary semver and gates every open:
+
+- **Nullable column add, with a shipped migration** → migratable → **MINOR** bump. Safe for `~1.x` auto-update; `STORE_SCHEMA_VERSION` increments and a registered migration runs on open.
+- **Required column, rename, type change, vector-dim/model change** → not migratable → **MAJOR** bump. `STORE_SCHEMA_VERSION` increments; the open-time guard refuses an incompatible store rather than corrupting it.
+
+The rule that makes `~1.x` auto-update safe: **a non-migratable store change is always a MAJOR release — no exceptions.** Majors sit outside the range and are never auto-installed; a manual major jump is caught by the guard, not silently applied.
+
+`1.0.0` baseline: `STORE_SCHEMA_VERSION = 1`. A pre-1.0 (`0.7.x`) store carries no sidecar → classified `Adopt` → stamped `1` on first 1.x open; the Arrow schema is unchanged across the boundary, so the migration is a no-op. The `--migrate-data` subcommand idea is superseded by `ling-mem export | import` (schema-agnostic JSONL — the escape hatch for the non-migratable/MAJOR case).
 
 ## Open technical issues
 
 1. **Embedding model bundling vs download.** For v0.1 the model downloads from HuggingFace Hub on first use. For release-grade distribution, bundling the model as a release asset (one more tarball) avoids network at first-run.
-2. **macOS Gatekeeper on unsigned releases.** v0.1 plan: document the "control-click → Open" workaround. v0.2: Apple Developer ID signing via CI.
+2. **macOS Gatekeeper.** Resolved enough to ship: `release.sh` ad-hoc-signs the binary (`codesign --force --sign -`) before tarballing, which clears the Sequoia 26.x "Code Signature Invalid" SIGKILL on downloaded tarball binaries. Apple Developer ID signing + notarization via CI is still the polish item (removes the first-run Gatekeeper prompt entirely); not a 1.0 blocker.
 
 ### Resolved
 
