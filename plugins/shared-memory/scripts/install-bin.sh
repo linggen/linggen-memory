@@ -25,7 +25,7 @@
 set -euo pipefail
 
 REPO="linggen/linggen-memory"
-VERSION="${VERSION:-v0.7.3}"
+VERSION="${VERSION:-v0.8.0}"
 DEST="$HOME/.local/bin"
 QUIET=0
 FORCE=0

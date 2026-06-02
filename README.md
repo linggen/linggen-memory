@@ -6,7 +6,7 @@
 
 Built as the default memory skill for [Linggen](https://github.com/linggen/linggen); works equally well invoked from Claude Code or any tool that can shell out.
 
-> 🚀 **Status: v0.7.0 — prebuilt binaries available** for macOS Apple Silicon and Linux (x86_64 + aarch64). Active development on `main`. The pre-refactor code-indexing tool is preserved at the `v0-legacy` git tag.
+> 🚀 **Status: v0.8.0 — prebuilt binaries available** for macOS Apple Silicon and Linux x86_64. Active development on `main`. The pre-refactor code-indexing tool is preserved at the `v0-legacy` git tag.
 
 ---
 
@@ -66,7 +66,7 @@ curl -fsSL https://linggen.dev/install-shared-memory.sh | bash
 git clone https://github.com/linggen/skills
 cd skills/shared-memory
 ./install.sh                                # auto-detects every host runtime
-LING_MEM_VERSION=v0.7.0 ./install.sh        # pin a specific binary version
+LING_MEM_VERSION=v0.8.0 ./install.sh        # pin a specific binary version
 ```
 
 Prebuilt binaries are available for macOS Apple Silicon and Linux (x86_64 + aarch64) on the [releases page](https://github.com/linggen/linggen-memory/releases).

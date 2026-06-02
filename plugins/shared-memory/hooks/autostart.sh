@@ -36,7 +36,7 @@ PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-${PLUGIN_ROOT:-}}"
 # sudo. install-bin.sh defaults to this dir too.
 DEST="$HOME/.local/bin"
 BIN="$DEST/ling-mem"
-VERSION="$(cat "$PLUGIN_ROOT/VERSION" 2>/dev/null || echo "v0.7.3")"
+VERSION="$(cat "$PLUGIN_ROOT/VERSION" 2>/dev/null || echo "v0.8.0")"
 mkdir -p "$DEST" 2>/dev/null || true
 
 # Install/upgrade the shared binary. install-bin resolves a range pin, verifies

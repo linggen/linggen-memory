@@ -60,7 +60,7 @@ hook installs it):
 
 ```bash
 command -v ling-mem >/dev/null 2>&1 || \
-  bash <(curl -fsSL https://raw.githubusercontent.com/linggen/linggen-memory/main/plugins/shared-memory/scripts/install-bin.sh) --version '~0.7'
+  bash <(curl -fsSL https://raw.githubusercontent.com/linggen/linggen-memory/main/plugins/shared-memory/scripts/install-bin.sh) --version '~0.8'
 ```
 
 Just run it yourself if the binary is missing — don't ask the user. This
@@ -437,7 +437,7 @@ SHA-256 verified). To install just the binary manually (Apple Silicon /
 Linux x86_64+aarch64):
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/linggen/linggen-memory/main/plugins/shared-memory/scripts/install-bin.sh) --version '~0.7'
+bash <(curl -fsSL https://raw.githubusercontent.com/linggen/linggen-memory/main/plugins/shared-memory/scripts/install-bin.sh) --version '~0.8'
 ```
 
 The skill works in Claude Code, Codex, OpenClaw, Linggen, or standalone —

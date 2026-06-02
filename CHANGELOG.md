@@ -1,5 +1,39 @@
 # Changelog
 
+## [0.8.0] - 2026-06-02 — schema guard, per-turn episodic, one cross-host binary
+
+A feature release that hardens upgrades and unifies memory behavior across hosts.
+
+### Added
+
+- **Store schema-version guard.** A monotonic `STORE_SCHEMA_VERSION` recorded
+  in a `<data_dir>/memory/SCHEMA_VERSION` sidecar; the store refuses to open
+  under a too-new (written by a newer release) or too-old binary instead of
+  corrupting data. Prerequisite for range-pinning the binary. See
+  `doc/schema-versioning.md`.
+- **`export` / `import`** — schema-agnostic newline-delimited JSON dump/load
+  (vectors stripped on export, re-embedded on import). The escape hatch for a
+  major store-schema break: export → reset → import.
+- **Store-wide `recall_min_score`** config (default 0.6) in `.config.json` /
+  `PUT /api/config` + the console Settings. Applied server-side when a search
+  omits `min_score`, so every host shares one recall floor.
+- **Semver-range resolver in `install-bin.sh`** (`~X.Y`, `^X`, `latest`) with a
+  24h cache + offline fallback; a no-downgrade guard so a stale-pinned channel
+  can't roll back a newer shared binary.
+- **`status` JSON** now reports `store_schema` + `binary_schema`.
+
+### Changed
+
+- **Per-turn episodic capture is the steady-state lane.** Now that the
+  every-N-turns encoder subagent is retired, the agent appends
+  uncertain-durability signal to `tier=episodic` each turn (fast, append-only,
+  no search-first); core/semantic stay curated (search-first). The dream pass
+  dedupes/promotes/evicts. Aligned across the MCP `instructions`, the
+  `Memory_*` tool descriptions, the Linggen engine protocol, and the SKILL.md.
+- **One canonical cross-host binary** at `~/.local/bin/ling-mem` (a real file,
+  not per-plugin copies or symlinks). The plugin `autostart` installs there
+  directly and restarts the daemon when it's older than the on-disk binary.
+
 ## [0.7.1] - 2026-05-25 — CLI surface trimmed (CRUD + status + upgrade)
 
 The CLI's user-facing surface is now exactly **CRUD on memory data**
