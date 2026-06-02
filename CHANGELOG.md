@@ -1,5 +1,28 @@
 # Changelog
 
+## [1.0.0] - 2026-06-02 — stable release (contract frozen)
+
+First stable release, cut in lockstep with Linggen 1.0. **1.0 freezes the
+contract:** the store schema (`STORE_SCHEMA_VERSION = 1`, the 15-field layout
+across the `semantic` + `episodic` tables) and the CLI / HTTP / MCP API surface
+are now stable — a breaking change to either is a 2.0 (see `doc/tech-spec.md`
+§Versioning and `doc/schema-versioning.md`). Behavior and prompts (per-turn
+capture wording, dream consolidation tuning) continue to iterate within 1.x.
+
+Plugins/skills and the engine now **range-pin** the binary at `~1`, so patch and
+minor releases reach users without a plugin release; the `install-bin` resolver
++ no-downgrade guard make that safe.
+
+### Changed
+
+- **Dream consolidation tuned for per-turn episodic input.** The dream mission
+  (Linggen) and `dream-flow` (skill) now expect a high-volume, near-duplicate
+  episodic pool from per-turn capture: cluster intra-pass duplicates first,
+  promote one representative per cluster, and bias toward eviction. `scan` is
+  reframed as backfill, not the steady-state feeder.
+
+Everything from 0.8.0 (below) ships in 1.0.
+
 ## [0.8.0] - 2026-06-02 — schema guard, per-turn episodic, one cross-host binary
 
 A feature release that hardens upgrades and unifies memory behavior across hosts.

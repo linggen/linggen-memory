@@ -60,12 +60,12 @@ hook installs it):
 
 ```bash
 command -v ling-mem >/dev/null 2>&1 || \
-  bash <(curl -fsSL https://raw.githubusercontent.com/linggen/linggen-memory/main/plugins/shared-memory/scripts/install-bin.sh) --version '~0.8'
+  bash <(curl -fsSL https://raw.githubusercontent.com/linggen/linggen-memory/main/plugins/shared-memory/scripts/install-bin.sh) --version '~1'
 ```
 
 Just run it yourself if the binary is missing — don't ask the user. This
 fetches **only the `ling-mem` binary** (no host hooks or stubs) to
-`~/.local/bin`, pinned to the `0.7.x` line, SHA-256 verified, idempotent.
+`~/.local/bin`, pinned to the `1.x` line, SHA-256 verified, idempotent.
 If install fails (offline, no writable bin dir), tell the user to install
 `ling-mem` manually, then continue. To update later: `ling-mem upgrade`.
 
@@ -437,7 +437,7 @@ SHA-256 verified). To install just the binary manually (Apple Silicon /
 Linux x86_64+aarch64):
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/linggen/linggen-memory/main/plugins/shared-memory/scripts/install-bin.sh) --version '~0.8'
+bash <(curl -fsSL https://raw.githubusercontent.com/linggen/linggen-memory/main/plugins/shared-memory/scripts/install-bin.sh) --version '~1'
 ```
 
 The skill works in Claude Code, Codex, OpenClaw, Linggen, or standalone —
