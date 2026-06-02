@@ -1,18 +1,26 @@
 # Dream flow — `/shared-memory dream [window]`
 
 Read this when the user invokes `/shared-memory dream` (or the
-dashboard's **Hippocampus** action on Linggen). One LLM pass — no
-continuous encode hook.
+dashboard's **Hippocampus** action on Linggen).
 
 ```
 scan(window) → read .scan-output.jsonl → judge & write → consolidate + evict → state + report
 ```
 
-The dream owns the whole pipeline: it runs the mechanical scan first
-(Phase 0, zero LLM), then does the judgment (Phases 2–3). The scan
-step lives in `scripts/scan.sh` (no standalone verb — `dream` is the
-only caller) and refreshes the candidate set itself, so a normal
-`dream` no longer depends on a prior manual scan.
+**The episodic pool is mostly fed by per-turn capture now.** In normal
+use the agent appends uncertain-durability signal to `tier=episodic`
+every turn — fast, broad, low-bar, **not deduped**. So episodic is
+high-volume and full of **near-duplicates of each other** (the same fact
+restated across turns), partial captures, and noise. Phase 3 below is
+where that gets sorted; the every-N-turns encoder subagent that used to
+pre-filter is retired.
+
+The `scan` (Phase 0, zero LLM, `scripts/scan.sh`) is now **backfill** —
+it walks historic host transcripts and stages anything not already
+captured. It's not the steady-state feeder; it's for catching up on
+sessions that predate capture or ran on a host without it. A normal
+`dream` runs it but most episodic rows will already be there from
+per-turn capture.
 
 **Window argument** — `/shared-memory dream [window]` selects how far
 back the Phase 0 scan walks. Defaults to **24h**. Accepts the same
@@ -101,9 +109,10 @@ pointer to engine `agents/ling-mem.md` ENCODE phase). Rules:
   - **`semantic`** (default) — long-term goals / vision, cross-project
     preferences, decisions whose reasoning is the retrieval value,
     cross-project tech gotchas, explicit "remember X" requests.
-  - **`episodic`** — incidental durable signal, single-mention
-    candidates, anything you're not yet sure earns long-term shelf
-    space. Consolidator (Phase 3) promotes or evicts past-TTL.
+  - **`episodic`** — per-turn working captures: high-volume, low-bar,
+    near-duplicate-heavy, anything not yet sure to earn long-term shelf
+    space. Consolidator (Phase 3) clusters, promotes the durable, and
+    evicts the rest past-TTL — **most rows evict.**
 - **Read before write — every row**: `ling-mem search "<gist>" --format
   json | jq -c 'del(.vector)'`. If an equivalent value exists, skip.
   If a contradicting value exists, write anyway — never drop what the
@@ -115,8 +124,14 @@ here, not the binary's.
 
 ## Phase 3 — Consolidate + evict (same back-half as the Linggen dream mission)
 
-For each past-TTL episodic row, make **one terminal decision** — there
-is no "leave it" in episodic.
+**Cluster first, then decide.** Per-turn capture means the worklist is
+full of near-duplicates of each other — group rows by subject before
+deciding, promote the single best-phrased representative once, and
+delete the rest of each cluster (never promote two restatements as two
+semantic rows). Then for each remaining row make **one terminal
+decision** — there is no "leave it" in episodic. The default outcome is
+**evict**: per-turn capture is intentionally low-bar, so only genuinely
+durable signal promotes.
 
 **TTL is user-configurable** via the daemon's `/api/config` endpoint
 (defaults to 7 days; dashboard gear icon at `http://127.0.0.1:9888/`
