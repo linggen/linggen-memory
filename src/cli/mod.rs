@@ -609,6 +609,26 @@ pub async fn run(cli: Cli) -> Result<()> {
                 }
                 map.insert("update".to_string(), update);
             }
+            // Surface store-schema compatibility so callers (autostart's
+            // version reconcile, the website "store compatible?" check) can
+            // see the on-disk store version vs what this binary speaks.
+            if let Some(map) = value.as_object_mut() {
+                use crate::memory::schema_version as sv;
+                map.insert(
+                    "store_schema".to_string(),
+                    match sv::read_version(&data_dir) {
+                        Some(v) => serde_json::json!(v),
+                        None => serde_json::Value::Null,
+                    },
+                );
+                map.insert(
+                    "binary_schema".to_string(),
+                    serde_json::json!({
+                        "writes": sv::STORE_SCHEMA_VERSION,
+                        "min_readable": sv::MIN_READABLE_SCHEMA,
+                    }),
+                );
+            }
             println!("{}", serde_json::to_string_pretty(&value)?);
             return Ok(());
         }
