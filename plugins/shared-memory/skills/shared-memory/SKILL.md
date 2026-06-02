@@ -60,13 +60,14 @@ hook installs it):
 
 ```bash
 command -v ling-mem >/dev/null 2>&1 || \
-  bash <(curl -fsSL https://raw.githubusercontent.com/linggen/skills/main/shared-memory/install.sh)
+  bash <(curl -fsSL https://raw.githubusercontent.com/linggen/linggen-memory/main/plugins/shared-memory/scripts/install-bin.sh) --version '~0.7'
 ```
 
-Just run it yourself if the binary is missing — don't ask the user. The
-installer drops `ling-mem` on `PATH` (`/usr/local/bin`, or `~/.local/bin`
-with no sudo) and is idempotent. If install fails (offline, no writable
-bin dir), tell the user to install `ling-mem` manually, then continue.
+Just run it yourself if the binary is missing — don't ask the user. This
+fetches **only the `ling-mem` binary** (no host hooks or stubs) to
+`~/.local/bin`, pinned to the `0.7.x` line, SHA-256 verified, idempotent.
+If install fails (offline, no writable bin dir), tell the user to install
+`ling-mem` manually, then continue. To update later: `ling-mem upgrade`.
 
 ## Interface — the `ling-mem` CLI
 
@@ -416,18 +417,29 @@ versions, and the user should know what they're accepting.
 
 ## Install
 
-```bash
-# 1. Install the ling-mem CLI binary (Apple Silicon / Linux x86_64+aarch64):
-bash <(curl -fsSL https://raw.githubusercontent.com/linggen/skills/main/shared-memory/install.sh)
+Install from your agent's own marketplace — it manages updates and, on
+Claude Code / Codex, the per-turn recall hook. Pick **one** channel per host:
 
-# 2. Install this skill via your host:
-#    Claude Code / Codex: handled by the install.sh above (wires UserPromptSubmit hook + skill).
-openclaw skills install ling-mem        # OpenClaw users
-clawhub install ling-mem                # ClawHub CLI direct (clawhub.ai/linggen/ling-mem)
+```text
+Claude Code   /plugin marketplace add linggen/linggen-memory
+              /plugin install shared-memory@linggen-memory
+Codex         codex plugin marketplace add linggen/linggen-memory
+              codex plugin add shared-memory@linggen-memory
+OpenClaw      clawhub install ling-mem
+Any agent     npx skills add linggen/linggen-memory@shared-memory
+Linggen       Settings → Skills → shared-memory   (in-app)
 ```
 
-The skill works in Claude Code, Codex, OpenClaw, or standalone — same
-daemon, same database, same semantics across all hosts. Intel Mac
+The `ling-mem` binary is fetched automatically on first use (pinned,
+SHA-256 verified). To install just the binary manually (Apple Silicon /
+Linux x86_64+aarch64):
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/linggen/linggen-memory/main/plugins/shared-memory/scripts/install-bin.sh) --version '~0.7'
+```
+
+The skill works in Claude Code, Codex, OpenClaw, Linggen, or standalone —
+same daemon, same database, same semantics across all hosts. Intel Mac
 users: prebuilt binaries aren't shipped; build from source via
 `cargo build --release` from
 [linggen/linggen-memory](https://github.com/linggen/linggen-memory).
