@@ -167,6 +167,25 @@ pub enum Command {
         #[arg(long, default_value_t = crate::daemon::DEFAULT_PORT)]
         port: u16,
     },
+
+    /// Dump every fact as newline-delimited JSON (one object per line),
+    /// schema-agnostic, embeddings omitted. Pass `-` for stdout. With the
+    /// global `--episodic` flag, exports the staging table. The escape hatch
+    /// for a major store-schema break: export → reset → import.
+    Export {
+        /// Output file path, or `-` for stdout.
+        #[arg(default_value = "-")]
+        file: String,
+    },
+
+    /// Load facts from a newline-delimited JSON file produced by `export`
+    /// (or any NDJSON of fact objects). Re-embeds `content` and inserts
+    /// without dedup. Pass `-` for stdin. Honors the global `--episodic` flag.
+    Import {
+        /// Input file path, or `-` for stdin.
+        #[arg(default_value = "-")]
+        file: String,
+    },
 }
 
 // ── Argument structs ────────────────────────────────────────────────────────
@@ -604,6 +623,23 @@ pub async fn run(cli: Cli) -> Result<()> {
         _ => {}
     }
 
+    // Export/import are direct-store maintenance ops — never routed through the
+    // daemon (bulk local I/O; export must read every row, import bulk-inserts).
+    // Handled here so they bypass both the daemon branch and the store match.
+    match &cli.cmd {
+        Command::Export { .. } | Command::Import { .. } => {
+            let store = open_store(&data_dir, cli.episodic)
+                .await
+                .with_context(|| format!("opening store at {}", data_dir.display()))?;
+            return match cli.cmd {
+                Command::Export { file } => cmd_export(&store, &file, format).await,
+                Command::Import { file } => cmd_import(&store, &file, format, cli.episodic).await,
+                _ => unreachable!("matched Export/Import above"),
+            };
+        }
+        _ => {}
+    }
+
     // Prefer the running daemon when one is reachable. This eliminates the
     // CLI/daemon data-path split: with the daemon up, the CLI is a typed
     // shell client over HTTP and there's exactly one writer to the store.
@@ -632,7 +668,9 @@ pub async fn run(cli: Cli) -> Result<()> {
                 | Command::Stop
                 | Command::Restart { .. }
                 | Command::Status
-                | Command::Upgrade { .. } => unreachable!("handled above"),
+                | Command::Upgrade { .. }
+                | Command::Export { .. }
+                | Command::Import { .. } => unreachable!("handled above"),
             };
         }
     }
@@ -664,7 +702,9 @@ pub async fn run(cli: Cli) -> Result<()> {
         | Command::Stop
         | Command::Restart { .. }
         | Command::Status
-        | Command::Upgrade { .. } => unreachable!("handled above"),
+        | Command::Upgrade { .. }
+        | Command::Export { .. }
+        | Command::Import { .. } => unreachable!("handled above"),
     }
 }
 
@@ -1032,23 +1072,100 @@ async fn cmd_upgrade(
 /// key, so the caller can apply the `--tier` default only to those rows
 /// (a row that names its own tier wins over the flag).
 fn read_stdin_facts() -> Result<(Vec<crate::memory::Memory>, Vec<bool>)> {
+    read_facts(std::io::stdin().lock(), "stdin")
+}
+
+/// Parse newline-delimited JSON facts from any reader. Returns the parsed
+/// facts plus a parallel `tier_absent` mask (rows that omitted the `tier`
+/// key, so callers can default only those). `src` names the source for
+/// error context ("stdin" or a file path).
+fn read_facts<R: BufRead>(
+    reader: R,
+    src: &str,
+) -> Result<(Vec<crate::memory::Memory>, Vec<bool>)> {
     let mut out = Vec::new();
     let mut tier_absent = Vec::new();
-    let stdin = std::io::stdin();
-    for (i, line) in stdin.lock().lines().enumerate() {
-        let line = line.with_context(|| format!("reading stdin line {}", i + 1))?;
+    for (i, line) in reader.lines().enumerate() {
+        let line = line.with_context(|| format!("reading {src} line {}", i + 1))?;
         if line.trim().is_empty() {
             continue;
         }
         let value: serde_json::Value = serde_json::from_str(&line)
-            .with_context(|| format!("parsing JSON on stdin line {}", i + 1))?;
+            .with_context(|| format!("parsing JSON on {src} line {}", i + 1))?;
         let has_tier = value.get("tier").is_some();
         let fact: crate::memory::Memory = serde_json::from_value(value)
-            .with_context(|| format!("parsing JSON on stdin line {}", i + 1))?;
+            .with_context(|| format!("parsing JSON on {src} line {}", i + 1))?;
         out.push(fact);
         tier_absent.push(!has_tier);
     }
     Ok((out, tier_absent))
+}
+
+async fn cmd_export(store: &MemoryStore, file: &str, _format: OutputFormat) -> Result<()> {
+    // No filter, no limit cap: dump every row. `list` fetches all matching
+    // rows before sorting, so usize::MAX returns the whole table.
+    let mut facts = store
+        .list(&Filters::default(), SortOrder::Newest, usize::MAX, 0)
+        .await?;
+    // Strip embeddings — they bloat the dump ~1024 floats/row and are
+    // re-derived from `content` on import.
+    for f in &mut facts {
+        f.vector = None;
+    }
+
+    let mut out: Box<dyn Write> = if file == "-" {
+        Box::new(std::io::stdout().lock())
+    } else {
+        Box::new(std::io::BufWriter::new(
+            std::fs::File::create(file).with_context(|| format!("creating export file {file}"))?,
+        ))
+    };
+    for f in &facts {
+        serde_json::to_writer(&mut out, f).context("serializing fact to JSON")?;
+        out.write_all(b"\n").context("writing newline")?;
+    }
+    out.flush().context("flushing export output")?;
+
+    // Summary to stderr so stdout stays clean NDJSON when file == "-".
+    let dest = if file == "-" { String::new() } else { format!(" to {file}") };
+    eprintln!("exported {} facts{dest}", facts.len());
+    Ok(())
+}
+
+async fn cmd_import(
+    store: &MemoryStore,
+    file: &str,
+    format: OutputFormat,
+    episodic: bool,
+) -> Result<()> {
+    let (mut facts, tier_absent) = if file == "-" {
+        read_facts(std::io::stdin().lock(), "stdin")?
+    } else {
+        let f = std::fs::File::open(file).with_context(|| format!("opening import file {file}"))?;
+        read_facts(std::io::BufReader::new(f), file)?
+    };
+
+    // Rows that omitted `tier` inherit the target table's default; an
+    // episodic-store import pins `tier=Episodic` (the table is the source of
+    // truth). Mirrors the `add --stdin` path.
+    let default_tier: Tier = if episodic { Tier::Episodic } else { Tier::Semantic };
+    for (i, f) in facts.iter_mut().enumerate() {
+        if tier_absent[i] || episodic {
+            f.tier = default_tier;
+        }
+    }
+
+    embed_missing(&mut facts)?;
+    let n = store.insert(&facts).await?;
+    match format {
+        OutputFormat::Json => {
+            for f in &facts {
+                writeln_ndjson(f)?;
+            }
+        }
+        OutputFormat::Text => eprintln!("imported {n} facts"),
+    }
+    Ok(())
 }
 
 fn emit_facts(facts: &[crate::memory::Memory], format: OutputFormat) -> Result<()> {
