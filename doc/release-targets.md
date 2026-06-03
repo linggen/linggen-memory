@@ -17,7 +17,7 @@ skills.sh has no version — it tracks repo `HEAD`.
 
 ## Release order
 
-1. **Binary** — tag `vX.Y.Z` → GitHub Actions cross-compiles the four targets and publishes assets (`ling-mem-<target>.tar.gz` + `.sha256`). `scripts/release.sh`. macOS binaries must be `codesign --force --sign -`'d before tarball (Sequoia SIGKILLs unsigned).
+1. **Binary** — `scripts/release.sh` builds and publishes the GitHub release **manually — there is no CI** (`.github/workflows` does not exist): macOS `aarch64` is built locally and `codesign --force --sign -`'d before the tarball (Sequoia SIGKILLs unsigned), Linux `x86_64` is built natively on DS242 over ssh, then the tarball is `scp`'d back and `gh release upload`'d from the mac (which holds the `gh` auth). Each target ships `ling-mem-<target>.tar.gz` + `.sha256`.
 2. **Binary pin** — if the binary changed, bump `plugins/shared-memory/VERSION` (exact tag, or a `~X.Y` range post-1.0). Skip if the binary is unchanged.
 3. **Plugin bundle** — bump `.claude-plugin` + `.codex-plugin` `version` whenever the bundle (hooks/SKILL.md) changes, even if the binary didn't. `build-plugin.sh` stamps only `VERSION` from Cargo — it must NOT touch the manifest versions.
 4. **Channels** — push the targets below.
@@ -26,7 +26,7 @@ skills.sh has no version — it tracks repo `HEAD`.
 
 | Target | Source | Publish / update | Status |
 |---|---|---|---|
-| **GitHub release** (binary) | `linggen/linggen-memory` tag `v*` | `scripts/release.sh` → CI | live |
+| **GitHub release** (binary) | `linggen/linggen-memory` tag `v*` | `scripts/release.sh` — manual (mac local + DS242 linux, no CI) | live |
 | **Claude Code — decentralized** | repo marketplace | users: `/plugin marketplace add linggen/linggen-memory` → install | live |
 | **Claude Code — community marketplace** | `anthropics/claude-plugins-community` | submit at claude.ai/settings/plugins/submit (`claude plugin validate --strict` first); CI pins a SHA on approval | submitted, pending review |
 | **Claude Code — official** | `claude-plugins-official` | invite-only (Anthropic) | future |

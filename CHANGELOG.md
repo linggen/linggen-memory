@@ -1,5 +1,29 @@
 # Changelog
 
+## [1.0.1] - 2026-06-03 — episodic gate + per-turn capture nudge
+
+Patch release — behavior/prompt iteration within the frozen 1.0 contract (no
+store-schema or API-surface change).
+
+### Changed
+
+- **Lowered the episodic capture gate.** Project-scoped milestones,
+  decisions-with-reasoning, and non-obvious run learnings are now explicitly
+  captured instead of dropped as "project-internal." The "drop project-internal"
+  rule is scoped to `core`/`semantic` only; `episodic` is staging, not
+  user-biography. Updated in the MCP `instructions` (`src/http/mcp.rs`, the
+  always-on doctrine for CC/Codex/Cursor) and the skill `SKILL.md`. Mirrored in
+  the Linggen engine (separate `linggen` release).
+
+### Added
+
+- **Always-on per-turn capture nudge in `recall.sh`.** Every turn (including
+  zero-recall turns, which often produce the new memory) the recall hook now
+  emits a short "Memory capture" reminder: recognize anything worth keeping and
+  write it at the right tier. Definitions stay in the session-start MCP
+  instructions; this is only the nudge. Shared by CC + Codex (one `recall.sh`),
+  word-for-word aligned with the engine's per-turn reminder.
+
 ## [1.0.0] - 2026-06-02 — stable release (contract frozen)
 
 First stable release, cut in lockstep with Linggen 1.0. **1.0 freezes the
