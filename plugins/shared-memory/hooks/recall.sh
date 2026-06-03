@@ -77,10 +77,17 @@ hits="$(printf '%s' "$out" | jq -sr --arg proj "$proj" --argjson k "$topk" '
   | "From memory (\(.type), \(.host // "unknown"), \((.created_at // "")[0:10]), score=\((.score // 0) * 100 | floor / 100), id=\(.id)): \(.content)"
 ' 2>/dev/null || true)"
 
-[ -z "$hits" ] && exit 0
-
-printf '%s\n' "$hits"
 hit_count="$(printf '%s\n' "$hits" | grep -c .)"
+[ -n "$hits" ] && printf '%s\n' "$hits"
+
+# Always-on capture nudge — fires EVERY turn, including zero-hit turns
+# (often the very turns that produce new memory). Tier definitions / routing
+# live in the session-start MCP instructions; this is only the per-turn reminder.
+cat <<'CAPTURE'
+
+Memory capture: before finishing this turn, recognize anything worth remembering and write it at the right tier per the memory protocol (core/semantic = search-first; episodic = incidental). Nothing worth keeping? Skip silently.
+CAPTURE
+
 if [ "$hit_count" -gt 1 ]; then
   # Mirrors linggen/src/engine/prompt/core_block.rs:RECONCILE_FOOTER.
   # Adapted: ling-mem MCP exposes memory_delete / memory_add as discrete
