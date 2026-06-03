@@ -221,14 +221,14 @@ Each release asset: `ling-mem-<target>.tar.gz` with the binary + LICENSE + a min
 
 ## Versioning
 
-Semver, and the contract is enforced — the binary semver is what plugins/skills range-pin (`~1.x`), so a wrong bump corrupts user stores.
+Semver, and the contract is enforced — the binary semver is what plugins/skills range-pin (`^1`), so a wrong bump corrupts user stores.
 
 **Store schema is the hard line.** A monotonic `STORE_SCHEMA_VERSION` (in `schema_version.rs`, recorded in the `<data_dir>/memory/SCHEMA_VERSION` sidecar — see `doc/schema-versioning.md`) is decoupled from the binary semver and gates every open:
 
-- **Nullable column add, with a shipped migration** → migratable → **MINOR** bump. Safe for `~1.x` auto-update; `STORE_SCHEMA_VERSION` increments and a registered migration runs on open.
+- **Nullable column add, with a shipped migration** → migratable → **MINOR** bump. Safe for `^1` auto-update; `STORE_SCHEMA_VERSION` increments and a registered migration runs on open.
 - **Required column, rename, type change, vector-dim/model change** → not migratable → **MAJOR** bump. `STORE_SCHEMA_VERSION` increments; the open-time guard refuses an incompatible store rather than corrupting it.
 
-The rule that makes `~1.x` auto-update safe: **a non-migratable store change is always a MAJOR release — no exceptions.** Majors sit outside the range and are never auto-installed; a manual major jump is caught by the guard, not silently applied.
+The rule that makes `^1` auto-update safe: **a non-migratable store change is always a MAJOR release — no exceptions.** Majors sit outside the range and are never auto-installed; a manual major jump is caught by the guard, not silently applied.
 
 `1.0.0` baseline: `STORE_SCHEMA_VERSION = 1`. A pre-1.0 (`0.7.x`) store carries no sidecar → classified `Adopt` → stamped `1` on first 1.x open; the Arrow schema is unchanged across the boundary, so the migration is a no-op. The `--migrate-data` subcommand idea is superseded by `ling-mem export | import` (schema-agnostic JSONL — the escape hatch for the non-migratable/MAJOR case).
 

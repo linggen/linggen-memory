@@ -15,7 +15,7 @@
 //! on LanceDB internals.
 //!
 //! The guard makes binary upgrades data-safe in both directions so the
-//! plugin/skill can range-pin (`~1.x`) the binary instead of an exact version:
+//! plugin/skill can range-pin (`^1`) the binary instead of an exact version:
 //! a newer binary migrates an older store; an older binary refuses a newer
 //! store rather than writing old-shape rows into it (the multi-channel skew
 //! that bit us when a stale plugin's binary opened a store a newer one wrote).
@@ -31,7 +31,7 @@ use std::path::{Path, PathBuf};
 
 /// On-disk store layout version this binary writes. Bump ONLY on a store
 /// layout change (new required column, rename, type/dim change), which is by
-/// policy a MAJOR binary release — keeping `~1.x` auto-update from ever
+/// policy a MAJOR binary release — keeping `^1` auto-update from ever
 /// crossing an incompatible store.
 pub const STORE_SCHEMA_VERSION: u32 = 1;
 

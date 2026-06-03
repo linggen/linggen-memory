@@ -40,4 +40,4 @@ skills.sh has no version — it tracks repo `HEAD`.
 
 - ClawHub slug is **`ling-mem`** (owner `linggen` → clawhub.ai/linggen/ling-mem), not `shared-memory`.
 - ClawHub / skills.sh / community-marketplace SKILL.md must self-reference the right slug and the per-platform install (no curl fan-out — `install-shared-memory.sh` is retired).
-- Post-1.0: switch the binary pin from an exact tag to a `~1.x` range so patch/minor binaries reach users without a plugin release (`install-bin.sh` resolves ranges; the store-schema guard makes it safe). See `doc/schema-versioning.md`.
+- Post-1.0: switch the binary pin from an exact tag to a `^1` range so patch/minor binaries reach users without a plugin release (`install-bin.sh` resolves ranges; the store-schema guard makes it safe). See `doc/schema-versioning.md`.

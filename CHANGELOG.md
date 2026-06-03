@@ -33,7 +33,7 @@ are now stable — a breaking change to either is a 2.0 (see `doc/tech-spec.md`
 §Versioning and `doc/schema-versioning.md`). Behavior and prompts (per-turn
 capture wording, dream consolidation tuning) continue to iterate within 1.x.
 
-Plugins/skills and the engine now **range-pin** the binary at `~1`, so patch and
+Plugins/skills and the engine now **range-pin** the binary at `^1`, so patch and
 minor releases reach users without a plugin release; the `install-bin` resolver
 + no-downgrade guard make that safe.
 

@@ -5,7 +5,7 @@ Status: design (v1 scope). Owner: ling-mem binary.
 ## Why
 
 ling-mem is distributed as a binary pinned by the shared-memory plugin/skill.
-To adopt semver auto-update (`~1.x`: take patch/minor automatically), a binary
+To adopt semver auto-update (`^1`: take patch/minor automatically), a binary
 upgrade must never silently break or wipe a user's store. Today there is no
 store-version concept — only two ad-hoc checks in `store.rs`
 (`ensure_late_schema_additions` adds a nullable `host` column;
@@ -87,13 +87,13 @@ struct Migration { from: u32, to: u32, run: fn(&Table) -> Result<()> }
 
 ## Discipline: what a version bump means (the semver contract)
 
-| Store change                                            | Migratable? | semver | Auto-update via `~1.x`? |
+| Store change                                            | Migratable? | semver | Auto-update via `^1`? |
 |---------------------------------------------------------|-------------|--------|-------------------------|
 | Add **nullable** column (+ shipped migration)           | yes         | minor  | yes — flows free        |
 | Add **required** col / rename / type / vector-dim change | no          | major  | no — explicit pin bump  |
 
 Rule: **a non-migratable store change is a MAJOR version bump, no exceptions.**
-Majors sit outside `~1.x`, so auto-update never crosses an incompatible store.
+Majors sit outside `^1`, so auto-update never crosses an incompatible store.
 A *manual* major jump still cannot corrupt data — the open-time guard refuses.
 Belt and suspenders.
 
