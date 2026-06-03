@@ -36,14 +36,21 @@ PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-${PLUGIN_ROOT:-}}"
 # sudo. install-bin.sh defaults to this dir too.
 DEST="$HOME/.local/bin"
 BIN="$DEST/ling-mem"
-VERSION="$(cat "$PLUGIN_ROOT/VERSION" 2>/dev/null || echo "v1.0.0")"
+# Range-pin the shared binary to the latest 1.x so patch/minor releases reach
+# users without a plugin update — matches the engine's LING_MEM_PIN=^1 and the
+# SKILL.md first-use gate. Overridable via $LING_MEM_VERSION. The VERSION file
+# records the exact release this bundle was built against; autostart floats
+# within the major so the one shared cross-host binary stays current.
+# (`^1` resolves to the highest v1.x.x; `~1` is NOT valid — install-bin's `~`
+# needs X.Y like `~1.0`.)
+PIN="${LING_MEM_VERSION:-^1}"
 mkdir -p "$DEST" 2>/dev/null || true
 
-# Install/upgrade the shared binary. install-bin resolves a range pin, verifies
+# Install/upgrade the shared binary. install-bin resolves the range pin, verifies
 # SHA-256, won't downgrade a newer shared binary, and replaces a legacy symlink
 # with a real file. Idempotent and cheap when already satisfied.
 bash "$PLUGIN_ROOT/scripts/install-bin.sh" \
-  --version "$VERSION" --dest "$DEST" --quiet >/dev/null 2>&1 || true
+  --version "$PIN" --dest "$DEST" --quiet >/dev/null 2>&1 || true
 
 [ -x "$BIN" ] || exit 0
 HAVE="$("$BIN" --version 2>/dev/null | awk '{print $2}')"

@@ -74,7 +74,7 @@ verified) to the one cross-host location `~/.local/bin/ling-mem`. To install
 just the binary manually:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/linggen/linggen-memory/main/plugins/shared-memory/scripts/install-bin.sh) --version '~1'
+bash <(curl -fsSL https://raw.githubusercontent.com/linggen/linggen-memory/main/plugins/shared-memory/scripts/install-bin.sh) --version '^1'
 ```
 
 Prebuilt binaries for macOS Apple Silicon and Linux x86_64 are on the [releases page](https://github.com/linggen/linggen-memory/releases).
