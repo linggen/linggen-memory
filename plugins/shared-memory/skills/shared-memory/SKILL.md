@@ -116,10 +116,14 @@ Omit `--tier` to default to `semantic` (long-term).
 
 **If a candidate doesn't clearly fit core or long-term but might matter
 later → episodic** (`--tier episodic`; staging, the dream pass sorts it
-out). Only drop true non-signal: project-internal facts (the agent
-re-reads project files next session — Memory never writes to
-`<project>/AGENTS.md`, `CLAUDE.md`, source, docs), activity logs, and
-opinions without commitment.
+out). **Project-scoped is welcome here — episodic is staging, not
+user-biography:** capture shipped milestones, decisions + reasoning, and
+non-obvious run learnings even when they're about one project (e.g.
+*"Shipped Linggen 1.0"*, *"Sanji docking: treat all cost-points
+uniformly"*). The only hard drops: secrets, and content verbatim
+re-derivable from a file the agent re-reads — store the *decision/learning
+about* it, never the file body, and Memory never writes to
+`<project>/AGENTS.md`, `CLAUDE.md`, source, or docs.
 
 **Goals and projects → long-term, not core.** *"User is building Linggen
 as an agent platform"* is a goal — `tier=semantic` with

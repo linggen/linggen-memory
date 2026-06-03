@@ -43,7 +43,7 @@ const INSTRUCTIONS: &str = r#"ling-mem provides durable cross-session memory for
 
 - **core** — narrow universals about the *person*: name, role, location, timezone, languages, family / pets. Always-loaded at session start. Keep tight.
 - **semantic** (default) — durable long-term facts retrieved on demand: long-term goals / vision, cross-project preferences, decisions whose reasoning is the value, cross-project tech gotchas. Most writes land here.
-- **episodic** — per-turn working capture. Append anything that *might* matter but isn't yet high-confidence enough for core/semantic — fast, append-only, **no search-first**. The dream mission later promotes worthy rows to semantic/core and evicts the rest past-TTL. This is your steady-state capture lane now that the every-N-turns encoder subagent is retired.
+- **episodic** — per-turn working capture (your steady-state lane). Append anything that *might* matter — **including project-scoped milestones, decisions + reasoning, and run learnings**. Fast, append-only, **no search-first**. The dream mission promotes worthy rows to semantic/core and evicts the rest past-TTL. This is the lane now that the every-N-turns encoder subagent is retired.
 
 # When to SEARCH (before answering)
 
@@ -51,7 +51,7 @@ Call Memory_search when the user's question could connect to past preferences, d
 
 # When to SAVE (call Memory_add)
 
-**Per-turn capture → episodic.** Each turn, append genuinely-noteworthy signal you're not yet sure is durable to `tier=episodic` — fast, no search-first, no confirmation. This is the default lane; the dream pass dedupes and promotes. Don't overthink it.
+**Per-turn capture → episodic.** Each turn, append genuinely-noteworthy signal to `tier=episodic` — fast, no search-first, no confirmation. **Project-scoped is fine; episodic is staging, not user-biography.** Capture: shipped milestones, decisions + *why*, non-obvious learnings from a run/experiment. E.g. "Shipped Linggen 1.0"; "Sanji docking: dropped dock-wall cost, treat all cost-points uniformly"; "BlueBoat cruise tops out ~0.2 m/s". If a future session would be smarter for it, stage it — the dream pass dedupes and promotes.
 
 **Curated writes → core / semantic** (high confidence) follow the read-before-write rule: **Always Memory_search the candidate content before a core/semantic Memory_add.** Write-time dedup is cheaper than read-time cleanup:
 - If a near-duplicate row exists → skip the add, or Memory_delete the loser when your version is better-phrased.
@@ -72,9 +72,8 @@ Explicit imperatives — act immediately:
 
 # When NOT to save
 
-- Project-internal facts — the agent re-reads project files next session.
-- Content already in AGENTS.md / CLAUDE.md / README — creates a stale duplicate.
-- Activity logs, single architectural calls, opinions without commitment.
+- **Never, any tier:** secrets (credentials, tokens, keys); content verbatim re-derivable from a file the agent re-reads (store the *decision/learning about* it, not the file body).
+- **Keep out of core/semantic — episodic is fine:** project-internal facts, raw activity logs, single architectural calls, opinions without commitment. These stage in episodic; the dream pass decides if any earn a curated row.
 
 # Memory hygiene — hard floor
 
