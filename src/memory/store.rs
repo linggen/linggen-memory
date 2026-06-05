@@ -373,6 +373,15 @@ fn merge_fact(existing: &Memory, candidate: &Memory) -> Memory {
 pub struct MemoryStore {
     _conn: Connection,
     table: Table,
+    /// Serializes read-modify-write mutations (dedup merge, update) against
+    /// this table. The daemon shares one `MemoryStore` per table across a
+    /// multi-thread Tokio runtime, so without this two concurrent
+    /// `insert_with_dedup` calls on the same (content, type) could both
+    /// observe "no existing row" (TOCTOU) and write duplicates, or a
+    /// concurrent update+update on one id could lose a patch. Per-table:
+    /// the semantic and episodic stores hold independent locks, so a
+    /// cross-tier write touching both never self-deadlocks.
+    write_lock: tokio::sync::Mutex<()>,
 }
 
 impl MemoryStore {
@@ -462,7 +471,35 @@ impl MemoryStore {
         // the per-table additive migrations above have already run.
         super::schema_version::stamp_current(data_dir)?;
 
-        Ok(Self { _conn: conn, table })
+        Ok(Self {
+            _conn: conn,
+            table,
+            write_lock: tokio::sync::Mutex::new(()),
+        })
+    }
+
+    /// Atomic upsert keyed on `id`: replace the row with a matching id if one
+    /// exists, insert otherwise — in a single LanceDB `merge_insert`
+    /// transaction. Replaces the old delete-then-insert round-trip, which
+    /// left a window where a crash/cancel between the two ops destroyed the
+    /// row with no replacement (the one true data-loss class in this layer).
+    /// All three RMW callers (`insert_with_dedup` merge, `update`,
+    /// `update_full_public`) preserve the existing id, so the id-keyed merge
+    /// updates the row in place rather than duplicating it.
+    async fn upsert(&self, fact: &Memory) -> Result<()> {
+        let batch = memories_to_record_batch(std::slice::from_ref(fact))?;
+        let schema = batch.schema();
+        let batches: Box<dyn RecordBatchReader + Send> =
+            Box::new(RecordBatchIterator::new(std::iter::once(Ok(batch)), schema));
+
+        let mut builder = self.table.merge_insert(&["id"]);
+        builder.when_matched_update_all(None);
+        builder.when_not_matched_insert_all();
+        builder
+            .execute(batches)
+            .await
+            .context("upserting memory row (merge_insert on id)")?;
+        Ok(())
     }
 
     /// Insert one or more facts. Returns the number of rows written.
@@ -510,11 +547,17 @@ impl MemoryStore {
             return Ok(InsertOutcome::Added(fact));
         }
 
+        // Serialize the find→merge→write sequence. Without the lock, two
+        // concurrent adds of the same (content, type) could both miss the
+        // existing row and each insert a fresh copy.
+        let _guard = self.write_lock.lock().await;
+
         if let Some(existing) = self.find_exact_content(&fact.content, fact.r#type).await? {
             let previous_id = existing.id.clone();
             let merged = merge_fact(&existing, &fact);
-            self.delete(&previous_id).await?;
-            self.insert(std::slice::from_ref(&merged)).await?;
+            // `merged` keeps `existing.id`, so the id-keyed upsert replaces the
+            // row in place — atomic, no delete-then-insert window.
+            self.upsert(&merged).await?;
             return Ok(InsertOutcome::Merged {
                 fact: merged,
                 similarity: 1.0,
@@ -541,8 +584,18 @@ impl MemoryStore {
     /// dedup path to merge contexts/tags into the existing higher-tier
     /// row when a lower-tier write hit the same (content, type).
     pub async fn update_full_public(&self, id: &str, replacement: &Memory) -> Result<()> {
-        self.delete(id).await?;
-        self.insert(std::slice::from_ref(replacement)).await?;
+        let _guard = self.write_lock.lock().await;
+        // Every current caller passes `replacement.id == id` (the merge
+        // helpers clone the existing row), so the id-keyed upsert replaces
+        // the right row in place — atomic, no delete window.
+        self.upsert(replacement).await?;
+        // Defensive: if a future caller ever changes the id, the upsert keyed
+        // on the *new* id won't touch the old row — delete it so a stale
+        // duplicate can't leak. Insert-then-delete here means the worst case
+        // is a transient duplicate, never a lost row.
+        if replacement.id != id {
+            self.delete_one(id).await?;
+        }
         Ok(())
     }
 
@@ -772,6 +825,9 @@ impl MemoryStore {
     /// FixedSizeList vectors, timezone-tagged timestamps) is cleaner to
     /// round-trip through [`Memory`] than to express as SQL column setters.
     pub async fn update(&self, id: &str, patch: &MemoryPatch) -> Result<Option<Memory>> {
+        // Serialize the read-modify-write so a concurrent update on the same
+        // id can't clobber this patch (last-writer-wins data loss).
+        let _guard = self.write_lock.lock().await;
         let Some(mut existing) = self.get(id).await? else {
             return Ok(None);
         };
@@ -780,8 +836,9 @@ impl MemoryStore {
         // `created_at` precision (see `Memory::new`) so the value round-trips
         // through LanceDB's `Timestamp(Microsecond)` column intact.
         existing.updated_at = Some(Utc::now().trunc_subsecs(6));
-        self.delete_one(id).await?;
-        self.insert(std::slice::from_ref(&existing)).await?;
+        // `existing.id == id`, so the id-keyed upsert replaces in place —
+        // atomic, no delete-then-insert window.
+        self.upsert(&existing).await?;
         Ok(Some(existing))
     }
 

@@ -469,10 +469,11 @@ async fn add(
     let store = pick_store(&state, episodic);
     if skip_dedup {
         store.insert(std::slice::from_ref(&fact)).await?;
-        return Ok(ok(json!({
+        let body = json!({
             "action": "added",
             "fact": fact_public(&fact),
-        })));
+        });
+        return Ok(ok(apply_replace_ids(&state, &replace_ids, body).await));
     }
 
     // Cross-tier dedup. The single-table `insert_with_dedup` below only
@@ -498,12 +499,13 @@ async fn add(
             // then return as if dedup'd.
             let merged = merge_with_existing(&existing, &fact);
             other.update_full_public(&existing.id, &merged).await?;
-            return Ok(ok(json!({
+            let body = json!({
                 "action": "merged",
                 "similarity": 1.0,
                 "previous_id": existing.id,
                 "fact": fact_public(&merged),
-            })));
+            });
+            return Ok(ok(apply_replace_ids(&state, &replace_ids, body).await));
         }
         // New row is at a higher tier — promote: delete the lower-tier
         // copy from the other table, then proceed with single-table insert.
@@ -511,44 +513,54 @@ async fn add(
     }
 
     let outcome = store.insert_with_dedup(fact).await?;
+    let body = apply_replace_ids(&state, &replace_ids, outcome_public(&outcome)).await;
+    Ok(ok(body))
+}
 
-    // Atomic contradiction resolution: caller may pass a `replace_ids`
-    // list (the losers the user picked against via AskUser). Delete each
-    // across both tables — caller doesn't need to know tier. Failures
-    // are surfaced in the response but don't abort the add; the insert
-    // is the load-bearing operation.
-    let (replaced, replaced_failed) = if replace_ids.is_empty() {
-        (Vec::new(), Vec::new())
-    } else {
-        let mut ok_ids = Vec::new();
-        let mut fail_ids = Vec::new();
-        for id in &replace_ids {
-            let mut removed = false;
-            for store in [Arc::clone(&state.store), Arc::clone(&state.episodic)] {
-                if store.delete(id).await.unwrap_or(false) {
-                    removed = true;
-                    break;
-                }
-            }
-            if removed {
-                ok_ids.push(id.clone());
-            } else {
-                fail_ids.push(id.clone());
+/// Apply the caller's `replace_ids` deletion sweep across both tables and
+/// fold the outcome into `body`.
+///
+/// `replace_ids` are the losers the user picked against via AskUser; they
+/// are deleted regardless of which tier they live in (the caller doesn't
+/// track tier). Failures are surfaced (`replaced_failed`) but never abort
+/// the add — the insert is the load-bearing operation.
+///
+/// This runs on **every** add return path (added / merged / promoted). It
+/// used to be inline before only the final return, so an AskUser-resolved
+/// conflict whose winner happened to dedup-merge into an existing row would
+/// silently keep all the losers. Hoisting it into a shared helper closes
+/// that gap.
+async fn apply_replace_ids(
+    state: &SharedState,
+    replace_ids: &[String],
+    mut body: serde_json::Value,
+) -> serde_json::Value {
+    if replace_ids.is_empty() {
+        return body;
+    }
+    let mut replaced = Vec::new();
+    let mut replaced_failed = Vec::new();
+    for id in replace_ids {
+        let mut removed = false;
+        for store in [Arc::clone(&state.store), Arc::clone(&state.episodic)] {
+            if store.delete(id).await.unwrap_or(false) {
+                removed = true;
+                break;
             }
         }
-        (ok_ids, fail_ids)
-    };
-
-    let mut body = outcome_public(&outcome);
-    if !replace_ids.is_empty() {
-        if let Some(obj) = body.as_object_mut() {
-            obj.insert("replaced".to_string(), json!(replaced));
-            if !replaced_failed.is_empty() {
-                obj.insert("replaced_failed".to_string(), json!(replaced_failed));
-            }
+        if removed {
+            replaced.push(id.clone());
+        } else {
+            replaced_failed.push(id.clone());
         }
     }
-    Ok(ok(body))
+    if let Some(obj) = body.as_object_mut() {
+        obj.insert("replaced".to_string(), json!(replaced));
+        if !replaced_failed.is_empty() {
+            obj.insert("replaced_failed".to_string(), json!(replaced_failed));
+        }
+    }
+    body
 }
 
 /// Tier rank for the "higher wins on cross-tier dedup" rule.
