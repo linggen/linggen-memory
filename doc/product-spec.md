@@ -27,11 +27,23 @@ Intentionally *not* for: team-wide shared knowledge bases, production-scale docu
 ## Principles
 
 1. **Every fact must have a retrieval trigger.** If you can't imagine when a future session would recall it, don't store it.
-2. **Markdown is the identity layer.** Universal facts about the user live in plain markdown files that any tool can read. LanceDB is the activity / fact layer — richer, queryable, but never the only copy.
+2. **Tiers carry durability.** Universal facts about the person are `tier=core` rows, always loaded at session start; durable long-term facts are `tier=semantic`; uncertain per-turn capture is `tier=episodic` staging. No markdown identity files — core lives as rows.
 3. **Semantic search by default.** Everything stored gets embedded; retrieval is vector-similarity + metadata filter.
 4. **CLI is the primary interface.** Any model in any tool can call `ling-mem` via Bash. Tool-namespace dispatch in Linggen is sugar on top.
 5. **Humans can read and edit memory.** The skill's webpage is a row browser + editor that talks to `ling-mem` on the user's behalf; nightly markdown export feeds git/backup.
 6. **Forgetting is a first-class operation.** `archive`, `delete`, `forget` are as important as `add`.
+
+## The three tiers
+
+Every row has a `tier` that sets how durable it is and when it loads:
+
+| Tier | What | Lifecycle |
+|:--|:--|:--|
+| **core** | Narrow universals about the person — name, role, location, timezone, languages, family / pets | Always loaded into the prompt at session start. Kept tight. |
+| **semantic** (default) | Everything else durable — long-term goals, cross-project preferences, decisions and their reasoning, tech gotchas | Retrieved on demand by similarity. |
+| **episodic** | Per-turn working capture — append anything that *might* matter, no search-first | Separate staging table. The **dream** pass promotes worthy rows to core/semantic and evicts the rest past a TTL. |
+
+The `dream` mission is the consolidation pass: it dedupes episodic capture, promotes what earns a place, and lets the rest expire. It replaced the old every-N-turns encoder subagent.
 
 ## Shape of a fact
 

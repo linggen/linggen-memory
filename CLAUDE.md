@@ -45,8 +45,7 @@ No workspace, no sub-crates. Anything new goes in `src/<module>/`.
 
 **Out of scope (lives in `../linggen/`):**
 - Linggen core's `provides:` field and Memory_* tool dispatch
-- `~/.linggen/core/identity.md` + `style.md` markdown scaffolding
-- Migration from the old 5-file markdown memory
+- Core-prompt injection (the engine loads `tier=core` rows at session start — there is no `identity.md`/`style.md` markdown substrate; that cutover shipped)
 - Spec docs for the Linggen-memory integration contract (`linggen/doc/memory-spec.md`)
 
 ## Working rules

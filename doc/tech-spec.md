@@ -74,7 +74,7 @@ LanceDB table name: `semantic` (curated long-term memory; holds both `tier=core`
 
 **Embedding dimension: 1024** (Arrow `FixedSizeList<Float32, 1024>`), determined by the default embedding model (below).
 
-**Not in v0.1** — add with migration when needed: `last_referenced`, `access_count`, `supersedes`, `confidence`, `pinned`, explicit `user_id`.
+**Not in v0.1** — add with migration when needed: `last_referenced`, `access_count`, `confidence`, `pinned`, explicit `user_id`. (`supersedes` was considered and dropped — conflict resolution is the live `replace_ids` atomic add+delete primitive instead.)
 
 ## Canonical `type` values
 

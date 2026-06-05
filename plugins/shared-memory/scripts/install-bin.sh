@@ -6,7 +6,7 @@
 # on first plugin use, and standalone via the linggen.dev wrapper for hosts
 # without a plugin model (OpenClaw, Linggen native).
 #
-#   --version <spec>   release to install (default: $VERSION env or v0.7.2)
+#   --version <spec>   release to install (default: $VERSION env or v1.0.0)
 #                      <spec> is an exact tag or a semver range:
 #                        vX.Y.Z   exact   — no network (default behavior)
 #                        ~X.Y     patch   — highest vX.Y.*
