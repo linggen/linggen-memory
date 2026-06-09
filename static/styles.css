@@ -99,7 +99,8 @@ input[type="text"]:disabled { opacity: 0.6; }
 
 #app {
   display: grid;
-  grid-template-rows: auto auto 1fr;
+  /* header · query-bar · filters-bar (collapses to 0 when hidden) · main */
+  grid-template-rows: auto auto auto 1fr;
   height: 100vh;
 }
 
@@ -257,6 +258,8 @@ input[type="text"]:disabled { opacity: 0.6; }
 #main {
   display: grid;
   grid-template-columns: minmax(360px, 1fr) minmax(320px, 440px);
+  /* always occupy the flexible last row, even when filters-bar is shown */
+  grid-row: -2 / -1;
   min-height: 0;
 }
 
