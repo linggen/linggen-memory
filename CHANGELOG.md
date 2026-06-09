@@ -15,6 +15,13 @@
   global ranking. No store-schema or API-surface change (additive behavior
   within the 1.0 contract). Implemented in `src/memory/hybrid.rs`; see
   `doc/tech-spec.md` §Search.
+- **`hybrid_score` on search results.** Search responses now include a
+  `hybrid_score` (normalized RRF, `[0,1]`, top hit = 1.0) alongside the raw
+  cosine `score`. The console displays `hybrid_score` because it is monotonic
+  with the row order — a keyword hit RRF floated to the top no longer shows a
+  lower number than the rows beneath it (cosine, which isn't monotonic with
+  hybrid order, moves to the badge tooltip). `score` (cosine) is unchanged
+  for the recall hook / CLI / cross-host comparisons.
 
 ### Fixed
 

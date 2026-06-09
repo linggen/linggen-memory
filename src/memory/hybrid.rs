@@ -140,12 +140,19 @@ fn rank_by(keys: &[f32], keep: impl Fn(usize) -> bool) -> std::collections::Hash
 /// - `min_score` is the cosine floor (`None` = no floor). A row below the
 ///   floor is still admitted if it is a lexical hit (`bm25 > 0`).
 /// - Result is truncated to `limit`.
+///
+/// Each hit is `(memory, cosine, rrf)`: the **cosine** is the familiar
+/// dense-similarity score (display/floor/cross-host comparison); the **rrf**
+/// is the raw Reciprocal Rank Fusion value that determined the ordering —
+/// the presentation layer normalizes it into the `hybrid_score` shown in the
+/// console so the displayed number is monotonic with the row order (a raw
+/// cosine is not, since a keyword hit can outrank a higher-cosine row).
 pub fn fuse(
     candidates: Vec<Candidate>,
     query_text: &str,
     limit: usize,
     min_score: Option<f32>,
-) -> Vec<(Memory, f32)> {
+) -> Vec<(Memory, f32, f32)> {
     if candidates.is_empty() || limit == 0 {
         return Vec::new();
     }
@@ -197,7 +204,7 @@ pub fn fuse(
         candidates.into_iter().map(|c| Some(c.memory)).collect();
     fused
         .into_iter()
-        .filter_map(|(i, _)| by_idx[i].take().map(|m| (m, cosines[i])))
+        .filter_map(|(i, rrf)| by_idx[i].take().map(|m| (m, cosines[i], rrf)))
         .collect()
 }
 
@@ -252,7 +259,7 @@ mod tests {
         // Punctuation-only query → no terms → pure cosine ordering + floor.
         let cands = vec![cand("alpha", 0.9), cand("beta", 0.7), cand("gamma", 0.3)];
         let out = fuse(cands, "!!!", 10, Some(0.5));
-        let got: Vec<&str> = out.iter().map(|(m, _)| m.content.as_str()).collect();
+        let got: Vec<&str> = out.iter().map(|(m, _, _)| m.content.as_str()).collect();
         assert_eq!(got, vec!["alpha", "beta"], "cosine order, gamma floored out");
     }
 

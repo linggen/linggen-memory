@@ -659,7 +659,20 @@ function renderRowHead(fact) {
     head.appendChild(oc);
   }
 
-  if (typeof fact.score === 'number') {
+  // Relevance badge. Search ranks by hybrid relevance (vector + BM25 fused
+  // via RRF), so we show `hybrid_score` — normalized to [0,1] with the top
+  // hit at 1.0 — because it is monotonic with the row order. The raw cosine
+  // (`score`) is NOT: a keyword hit can outrank a higher-cosine row, which
+  // would make a cosine badge look out of order. Cosine still lives in the
+  // tooltip for those who want the absolute semantic similarity.
+  if (typeof fact.hybrid_score === 'number') {
+    const score = document.createElement('span');
+    score.className = 'row-score';
+    score.textContent = fact.hybrid_score.toFixed(2);
+    const cos = typeof fact.score === 'number' ? `; cosine ${fact.score.toFixed(3)}` : '';
+    score.title = `Hybrid relevance (vector + keyword, normalized [0,1], top = 1.0${cos})`;
+    head.appendChild(score);
+  } else if (typeof fact.score === 'number') {
     const score = document.createElement('span');
     score.className = 'row-score';
     score.textContent = fact.score.toFixed(3);

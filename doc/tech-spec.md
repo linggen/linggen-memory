@@ -200,9 +200,16 @@ SQL metadata filters are applied before fusion:
 - `type` match: exact equality
 - `occurred_at` range: timestamp comparison with fallback to `created_at` via COALESCE
 
-Rows are returned ordered by fused (RRF) relevance, each carrying its
-**cosine** score as a non-stored result column — RRF governs ordering only;
-cosine remains the displayed/compared score.
+Rows are returned ordered by fused (RRF) relevance. Each result carries two
+non-stored score columns:
+
+- `score` — raw **cosine** similarity (`[0,1]`), the absolute dense-relevance
+  signal. Used by the recall hook, CLI text output, and cross-host
+  comparisons.
+- `hybrid_score` — the fused RRF value **normalized to `[0,1]`** against the
+  top hit in the result set (top = 1.0). Unlike cosine it is monotonic with
+  the row order, so the console displays it: a keyword hit that RRF floated
+  to the top no longer shows a *lower* number than the rows beneath it.
 
 ### Deletion
 

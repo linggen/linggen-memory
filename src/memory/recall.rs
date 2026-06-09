@@ -60,7 +60,7 @@ impl Recall {
     /// (BM25) rankings over the *combined* candidate pool so the RRF order is
     /// global, not per-table-then-merged. `query_text` drives BM25;
     /// `min_score` is the cosine floor, bypassed for lexical hits (see
-    /// [`crate::memory::hybrid`]). Rows carry their cosine score.
+    /// [`crate::memory::hybrid`]). Each hit is `(memory, cosine, rrf)`.
     pub async fn query(
         &self,
         query_vec: &[f32],
@@ -68,7 +68,7 @@ impl Recall {
         filters: &Filters,
         limit: usize,
         min_score: Option<f32>,
-    ) -> Result<Vec<(Memory, f32)>> {
+    ) -> Result<Vec<(Memory, f32, f32)>> {
         // Pull the full filtered candidate pool from both tables. Fusion and
         // the floor happen once over the union, not per table — so a row's
         // rank reflects the whole corpus.
@@ -142,7 +142,7 @@ mod tests {
             .query(&vec_at(0), "", &Filters::default(), 10, None)
             .await
             .unwrap();
-        let contents: Vec<_> = got.iter().map(|(m, _)| m.content.as_str()).collect();
+        let contents: Vec<_> = got.iter().map(|(m, _, _)| m.content.as_str()).collect();
         assert!(contents.contains(&"semantic hit"));
         assert!(contents.contains(&"episodic hit"));
     }

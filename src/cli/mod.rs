@@ -912,14 +912,23 @@ async fn cmd_search_recall(recall: &Recall, args: SearchArgs, format: OutputForm
 /// Emit scored search hits, attaching the cosine similarity to each row.
 /// JSON output adds a `score` field; text output prefixes the score so
 /// users can eyeball relevance without parsing JSON.
-fn emit_scored_facts(scored: &[(crate::memory::Memory, f32)], format: OutputFormat) -> Result<()> {
+fn emit_scored_facts(
+    scored: &[(crate::memory::Memory, f32, f32)],
+    format: OutputFormat,
+) -> Result<()> {
+    // Per-result-set RRF normalization → hybrid_score in [0,1] (top = 1.0),
+    // matching the console's presentation. The text view still leads with the
+    // raw cosine `score` for at-a-glance similarity.
+    let max_rrf = scored.iter().map(|(_, _, rrf)| *rrf).fold(0.0_f32, f32::max);
     match format {
         OutputFormat::Json => {
-            for (f, score) in scored {
+            for (f, score, rrf) in scored {
                 let mut v = serde_json::to_value(f)
                     .context("serializing fact to JSON for scored search output")?;
                 if let Some(obj) = v.as_object_mut() {
                     obj.insert("score".into(), serde_json::json!(score));
+                    let hybrid = if max_rrf > 0.0 { rrf / max_rrf } else { 0.0 };
+                    obj.insert("hybrid_score".into(), serde_json::json!(hybrid));
                 }
                 let line = serde_json::to_string(&v)
                     .context("encoding scored fact JSON")?;
@@ -927,7 +936,7 @@ fn emit_scored_facts(scored: &[(crate::memory::Memory, f32)], format: OutputForm
             }
         }
         OutputFormat::Text => {
-            for (f, score) in scored {
+            for (f, score, _) in scored {
                 println!(
                     "{:.2} {} [{}] {}",
                     score,

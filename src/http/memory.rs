@@ -108,15 +108,32 @@ fn facts_public(facts: &[Memory]) -> Vec<Value> {
     facts.iter().map(fact_public).collect()
 }
 
-/// Like [`fact_public`] but adds the `score` field so search responses
-/// expose the cosine similarity of each row against the query.
-fn scored_facts_public(scored: &[(Memory, f32)]) -> Vec<Value> {
+/// Like [`fact_public`] but adds the relevance fields for search responses.
+/// Each input hit is `(memory, cosine, rrf)`:
+///
+/// - `score` — the raw **cosine** similarity (`[0,1]`), the absolute
+///   dense-relevance signal. Kept for the recall hook, CLI, and cross-host
+///   comparisons that already read it.
+/// - `hybrid_score` — the fused RRF value **normalized to `[0,1]`** against
+///   the strongest hit in this result set. This is the number the console
+///   displays: unlike cosine it is monotonic with the row order, so a
+///   keyword hit that RRF floated to the top no longer shows a lower number
+///   than the rows beneath it. Normalization is per-result-set (top = 1.0),
+///   i.e. relevance *within these results*.
+fn scored_facts_public(scored: &[(Memory, f32, f32)]) -> Vec<Value> {
+    // Normalize against the largest RRF in the set so the top hit reads 1.0.
+    let max_rrf = scored
+        .iter()
+        .map(|(_, _, rrf)| *rrf)
+        .fold(0.0_f32, f32::max);
     scored
         .iter()
-        .map(|(f, score)| {
+        .map(|(f, cosine, rrf)| {
             let mut v = fact_public(f);
             if let Some(obj) = v.as_object_mut() {
-                obj.insert("score".into(), json!(score));
+                obj.insert("score".into(), json!(cosine));
+                let hybrid = if max_rrf > 0.0 { rrf / max_rrf } else { 0.0 };
+                obj.insert("hybrid_score".into(), json!(hybrid));
             }
             v
         })

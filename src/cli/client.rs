@@ -472,27 +472,32 @@ fn emit_fact_array(data: &Value, format: OutputFormat) -> Result<()> {
     super::emit_facts(&facts, format)
 }
 
-/// Emit a search response — each row carries a `score` field which we
-/// strip before deserializing the Memory, then attach back when printing.
-/// JSON output: re-add `score`. Text output: prefix with `0.NN`.
+/// Emit a search response from the daemon. The daemon already attaches the
+/// relevance fields — `score` (cosine) and `hybrid_score` (normalized RRF) —
+/// so we emit its rows verbatim rather than reconstructing and re-scoring
+/// them (which would re-normalize an already-normalized hybrid_score). JSON:
+/// one row per line, untouched. Text: lead with the cosine `score`.
 fn emit_scored_fact_array(data: &Value, format: OutputFormat) -> Result<()> {
     let arr = data
         .as_array()
         .ok_or_else(|| anyhow!("expected array, got {data}"))?;
-    let mut scored: Vec<(Memory, f32)> = Vec::with_capacity(arr.len());
-    for v in arr {
-        let mut row = v.clone();
-        let score = row
-            .as_object_mut()
-            .and_then(|o| o.remove("score"))
-            .and_then(|s| s.as_f64())
-            .map(|f| f as f32)
-            .unwrap_or(0.0);
-        let fact: Memory = serde_json::from_value(row)
-            .context("parsing fact from daemon response")?;
-        scored.push((fact, score));
+    match format {
+        OutputFormat::Json => {
+            for v in arr {
+                writeln_ndjson(v)?;
+            }
+        }
+        OutputFormat::Text => {
+            for v in arr {
+                let score = v.get("score").and_then(|s| s.as_f64()).unwrap_or(0.0) as f32;
+                let id = v.get("id").and_then(|s| s.as_str()).unwrap_or("");
+                let typ = v.get("type").and_then(|s| s.as_str()).unwrap_or("");
+                let content = v.get("content").and_then(|s| s.as_str()).unwrap_or("");
+                println!("{:.2} {} [{}] {}", score, id, typ, super::truncate(content, 120));
+            }
+        }
     }
-    super::emit_scored_facts(&scored, format)
+    Ok(())
 }
 
 fn writeln_ndjson<T: serde::Serialize>(value: &T) -> Result<()> {
