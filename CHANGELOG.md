@@ -1,5 +1,30 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **Hybrid search (Phase 3b): dense + lexical retrieval fused with RRF.**
+  `search` now fuses vector/cosine ranking with in-process BM25 keyword
+  ranking via Reciprocal Rank Fusion, so exact-keyword queries rank
+  correctly instead of being lost under the cosine recall floor. The
+  `min_score` floor stays a cosine gate but is bypassed for genuine lexical
+  hits, and is applied within the fusion step. Rows are returned in
+  fused-relevance order, each still carrying its cosine score. The cross-table
+  (`both`) recall path fuses over the combined semantic+episodic pool for a
+  global ranking. No store-schema or API-surface change (additive behavior
+  within the 1.0 contract). Implemented in `src/memory/hybrid.rs`; see
+  `doc/tech-spec.md` §Search.
+
+### Fixed
+
+- **Console search no longer returns empty for terse queries.** The console
+  now requests `min_score: 0` (human inspection should always show every
+  match ranked, never an empty list) and renders the `all` view via one
+  cross-table call so the server's fused order is preserved. Previously a
+  bare query like "dog" embedded with low cosine to every row and fell under
+  the 0.6 recall floor, hiding a clearly-matching memory.
+
 ## [1.0.1] - 2026-06-03 — episodic gate + per-turn capture nudge
 
 Patch release — behavior/prompt iteration within the frozen 1.0 contract (no

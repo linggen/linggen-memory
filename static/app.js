@@ -318,10 +318,14 @@ function tagStorage(rows, episodic) {
 async function fetchRowsForView(endpoint, basePayload) {
   const isSearch = endpoint.endsWith('/search');
 
-  // Search endpoint: tag-scoped per-table calls. /api/memory/search ignores
-  // the `episodic` flag (always cross-table by default); we use the new
-  // `table` parameter to fetch each table exclusively when the user has
-  // picked a tab, so episodic rows don't appear twice in the merge.
+  // Search endpoint. A tab view ('semantic' / 'episodic') pins to one table
+  // via the `table` param so its rows don't double-fetch. The 'all' view
+  // makes ONE cross-table (`table=both`, the default) call: the daemon fuses
+  // dense + lexical (BM25) rankings via RRF and dedups across both tables,
+  // returning rows in global hybrid-relevance order. We must NOT re-sort
+  // client-side — sorting by the cosine `score` would undo the RRF order
+  // (a keyword hit with low cosine would sink) and the server already
+  // collapsed cross-table dups. Storage label comes from each row's tier.
   if (isSearch) {
     if (state.view !== 'all') {
       const isEp = state.view === 'episodic';
@@ -331,14 +335,8 @@ async function fetchRowsForView(endpoint, basePayload) {
       });
       return tagStorage(rows, isEp);
     }
-    const [sem, ep] = await Promise.all([
-      api(endpoint, { ...basePayload, table: 'semantic' }).then(r => tagStorage(r, false)),
-      api(endpoint, { ...basePayload, table: 'episodic' }).then(r => tagStorage(r, true)),
-    ]);
-    const merged = [...sem, ...ep];
-    merged.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
-    const limit = basePayload.limit || merged.length;
-    return merged.slice(0, limit);
+    const rows = await api(endpoint, basePayload);
+    return tagStorageFromTier(rows);
   }
 
   // List endpoint contract changed in `39e100b` — the daemon now spans

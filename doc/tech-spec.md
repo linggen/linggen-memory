@@ -171,13 +171,38 @@ A second table `episodic` lives in the same `memory.lancedb` connection, identic
 
 ### Search
 
-Vector similarity via LanceDB's native nearest-neighbor, filtered in SQL against metadata columns. Filters:
+**Hybrid retrieval (Phase 3b)** — dense (vector/cosine) and lexical (BM25)
+rankings fused with Reciprocal Rank Fusion (RRF). Both halves run in-process
+over the filtered candidate pool: the store is flat-scanned (no ANN/FTS
+index), cosine is computed from the stored vectors, and BM25 (`k1=1.2`,
+`b=0.75`) is computed over the same rows as the lexical corpus. RRF (`k=60`)
+needs no score normalization, so the incomparable scales of cosine `[-1,1]`
+and BM25 `[0,∞)` fuse cleanly. Implemented in `src/memory/hybrid.rs`; the
+cross-table (`both`) path fuses over the combined semantic+episodic pool so
+the rank is global, not per-table-then-merged.
+
+Why in-process, not LanceDB's native FTS index: an FTS index is not updated
+on append, so a freshly-written memory would be invisible to keyword search
+until a reindex — reintroducing the "my memory isn't findable" failure.
+In-process BM25 is always current. Revisit at ~100k rows (same flat-scan
+threshold the vector path and `list` already flag).
+
+The `min_score` floor stays a **cosine** gate (default `recall_min_score`,
+0.6 — calibrated to Qwen3 cosine, not RRF), but a genuine lexical hit
+(`bm25 > 0`) bypasses it. This is the fix for terse keyword queries: a row
+like "…male dog named Yinyue…" (cosine ~0.55 to the bare query "dog", below
+the floor) is admitted because it literally matches, then floated up by RRF.
+The console passes `min_score: 0` to show every match for inspection.
+
+SQL metadata filters are applied before fusion:
 
 - `contexts` match: `contexts LIKE '%<tag>%'` OR SQL array-contains, depending on LanceDB version
 - `type` match: exact equality
 - `occurred_at` range: timestamp comparison with fallback to `created_at` via COALESCE
 
-Returns top-`limit` rows ordered by similarity score, including the score as a non-stored result column.
+Rows are returned ordered by fused (RRF) relevance, each carrying its
+**cosine** score as a non-stored result column — RRF governs ordering only;
+cosine remains the displayed/compared score.
 
 ### Deletion
 

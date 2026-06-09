@@ -26,7 +26,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 
-use crate::memory::{Filters, Memory, MemoryStore};
+use crate::memory::{Candidate, Filters, Memory, MemoryStore};
 
 /// Dual-table read path. Holds shared handles to the `semantic` and
 /// `episodic` stores and owns the merge/dedup policy.
@@ -56,39 +56,40 @@ impl Recall {
         Ok(Self::new(Arc::new(semantic), Arc::new(episodic)))
     }
 
-    /// Recall across both tables. Mirrors [`MemoryStore::search_scored`]'s
-    /// signature; `min_score` is applied per-table by the underlying call.
+    /// Hybrid recall across both tables. Fuses dense (cosine) and lexical
+    /// (BM25) rankings over the *combined* candidate pool so the RRF order is
+    /// global, not per-table-then-merged. `query_text` drives BM25;
+    /// `min_score` is the cosine floor, bypassed for lexical hits (see
+    /// [`crate::memory::hybrid`]). Rows carry their cosine score.
     pub async fn query(
         &self,
         query_vec: &[f32],
+        query_text: &str,
         filters: &Filters,
         limit: usize,
         min_score: Option<f32>,
     ) -> Result<Vec<(Memory, f32)>> {
+        // Pull the full filtered candidate pool from both tables. Fusion and
+        // the floor happen once over the union, not per table — so a row's
+        // rank reflects the whole corpus.
         let (semantic, episodic) = tokio::try_join!(
-            self.semantic
-                .search_scored(query_vec, filters, limit, min_score),
-            self.episodic
-                .search_scored(query_vec, filters, limit, min_score),
+            self.semantic.scored_candidates(query_vec, filters),
+            self.episodic.scored_candidates(query_vec, filters),
         )?;
 
-        // Semantic first so the curated copy wins an exact-content tie;
-        // episodic appended. A candidate is kept unless its content is
-        // byte-identical to one already accepted — covers cross-table and
-        // episodic-internal verbatim dups. A high-cosine *contradiction*
-        // (different content) is intentionally kept so recall surfaces it.
-        let mut merged: Vec<(Memory, f32)> = Vec::with_capacity(semantic.len() + episodic.len());
+        // Cross-table + episodic-internal dedup BEFORE fusion. Semantic
+        // first so the curated copy wins an exact-content tie; a candidate is
+        // dropped only if its content is byte-identical to one already kept.
+        // A high-cosine *contradiction* (different content) is intentionally
+        // kept so recall can surface it (Reconcile, memory-spec §2).
+        let mut pool: Vec<Candidate> = Vec::with_capacity(semantic.len() + episodic.len());
         for cand in semantic.into_iter().chain(episodic) {
-            if !merged.iter().any(|(kept, _)| is_near_dup(kept, &cand.0)) {
-                merged.push(cand);
+            if !pool.iter().any(|kept| is_near_dup(&kept.memory, &cand.memory)) {
+                pool.push(cand);
             }
         }
 
-        // Order the union by the score each row already carries (not a
-        // re-rank), then truncate the over-fetched union to `limit`.
-        merged.sort_by(|a, b| b.1.total_cmp(&a.1));
-        merged.truncate(limit);
-        Ok(merged)
+        Ok(crate::memory::hybrid::fuse(pool, query_text, limit, min_score))
     }
 }
 
@@ -138,7 +139,7 @@ mod tests {
     async fn query_spans_both_tables() {
         let (r, _d) = recall_with(vec![mem("semantic hit", 0)], vec![mem("episodic hit", 1)]).await;
         let got = r
-            .query(&vec_at(0), &Filters::default(), 10, None)
+            .query(&vec_at(0), "", &Filters::default(), 10, None)
             .await
             .unwrap();
         let contents: Vec<_> = got.iter().map(|(m, _)| m.content.as_str()).collect();
@@ -155,7 +156,7 @@ mod tests {
         )
         .await;
         let got = r
-            .query(&vec_at(3), &Filters::default(), 10, None)
+            .query(&vec_at(3), "", &Filters::default(), 10, None)
             .await
             .unwrap();
         assert_eq!(got.len(), 1, "exact-content dup across tables collapses");
@@ -176,7 +177,7 @@ mod tests {
         )
         .await;
         let got = r
-            .query(&vec_at(5), &Filters::default(), 10, None)
+            .query(&vec_at(5), "", &Filters::default(), 10, None)
             .await
             .unwrap();
         assert_eq!(got.len(), 2, "a contradiction must surface both rows");
@@ -190,7 +191,7 @@ mod tests {
         )
         .await;
         let got = r
-            .query(&vec_at(0), &Filters::default(), 3, None)
+            .query(&vec_at(0), "", &Filters::default(), 3, None)
             .await
             .unwrap();
         assert_eq!(got.len(), 3, "distinct union truncated to limit");

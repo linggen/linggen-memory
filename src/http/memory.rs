@@ -753,23 +753,27 @@ async fn search(
         None => Some(crate::http::config::load(&state.data_dir).await.recall_min_score),
     };
 
+    // Hybrid retrieval: dense (cosine) fused with lexical (BM25) via RRF, so
+    // exact-keyword queries rank correctly and aren't lost under the cosine
+    // floor. `min_score` stays a cosine gate but is bypassed for lexical
+    // hits, applied inside the fuse step (see crate::memory::hybrid).
     let results = match req.table {
         SearchTable::Both => {
             state
                 .recall
-                .query(&vector, &filters, req.limit, min_score)
+                .query(&vector, &req.query, &filters, req.limit, min_score)
                 .await?
         }
         SearchTable::Semantic => {
             state
                 .store
-                .search_scored(&vector, &filters, req.limit, min_score)
+                .hybrid_scored(&vector, &req.query, &filters, req.limit, min_score)
                 .await?
         }
         SearchTable::Episodic => {
             state
                 .episodic
-                .search_scored(&vector, &filters, req.limit, min_score)
+                .hybrid_scored(&vector, &req.query, &filters, req.limit, min_score)
                 .await?
         }
     };

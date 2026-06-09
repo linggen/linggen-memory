@@ -880,8 +880,9 @@ async fn cmd_search(store: &MemoryStore, args: SearchArgs, format: OutputFormat)
         crate::embed::Embedder::new().context("initializing embedder for search query")?;
     let vec = embedder.embed_query(&args.query)?;
     let results = store
-        .search_scored(
+        .hybrid_scored(
             &vec,
+            &args.query,
             &args.filters.into_filters(),
             args.limit,
             args.min_score,
@@ -899,6 +900,7 @@ async fn cmd_search_recall(recall: &Recall, args: SearchArgs, format: OutputForm
     let results = recall
         .query(
             &vec,
+            &args.query,
             &args.filters.into_filters(),
             args.limit,
             args.min_score,

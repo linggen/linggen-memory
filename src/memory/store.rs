@@ -757,6 +757,67 @@ impl MemoryStore {
         Ok(scored)
     }
 
+    /// Fetch the full filtered row set and pair each with its cosine
+    /// similarity to `query_vec` — the candidate pool for hybrid retrieval.
+    ///
+    /// Unlike [`Self::search_scored`] this does **not** push a top-K limit
+    /// into LanceDB: BM25 (the lexical half of hybrid search, computed by the
+    /// caller) needs the whole corpus for its document-frequency / average-
+    /// length statistics, and a keyword-only match must remain a candidate
+    /// even when its cosine would rank it well outside the vector top-K.
+    /// Rows with a null vector get cosine `0.0` (they can still be lexical
+    /// hits). Same flat-scan posture as [`Self::list`]; revisit past ~100k
+    /// rows.
+    pub async fn scored_candidates(
+        &self,
+        query_vec: &[f32],
+        filters: &Filters,
+    ) -> Result<Vec<super::Candidate>> {
+        if query_vec.len() != super::schema::VECTOR_DIM as usize {
+            return Err(anyhow!(
+                "query vector has len {} but schema dim is {}",
+                query_vec.len(),
+                super::schema::VECTOR_DIM
+            ));
+        }
+
+        let mut q = self.table.query();
+        if let Some(sql) = filters.to_sql() {
+            q = q.only_if(sql);
+        }
+        let mut facts = self.collect_query(q).await?;
+        apply_origin_filter(&mut facts, filters.origin);
+
+        Ok(facts
+            .into_iter()
+            .map(|f| {
+                let cosine = f
+                    .vector
+                    .as_ref()
+                    .map(|v| cosine_similarity(query_vec, v))
+                    .unwrap_or(0.0);
+                super::Candidate { memory: f, cosine }
+            })
+            .collect())
+    }
+
+    /// Hybrid (dense + lexical) search over this one table. Fetches the
+    /// candidate pool ([`Self::scored_candidates`]) and fuses the cosine and
+    /// BM25 rankings via RRF (see [`super::hybrid::fuse`]). Returns up to
+    /// `limit` rows ordered by fused relevance, each carrying its cosine
+    /// score; `min_score` is the cosine floor, bypassed for lexical hits.
+    pub async fn hybrid_scored(
+        &self,
+        query_vec: &[f32],
+        query_text: &str,
+        filters: &Filters,
+        limit: usize,
+        min_score: Option<f32>,
+    ) -> Result<Vec<(Memory, f32)>> {
+        let candidates = self.scored_candidates(query_vec, filters).await?;
+        Ok(super::hybrid::fuse(candidates, query_text, limit, min_score))
+    }
+
     /// Non-semantic browse. Returns up to `limit` facts matching `filters`,
     /// skipping the first `offset` in sort order.
     ///
