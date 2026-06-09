@@ -4,24 +4,25 @@
 
 ### Added
 
-- **Hybrid search (Phase 3b): dense + lexical retrieval fused with RRF.**
-  `search` now fuses vector/cosine ranking with in-process BM25 keyword
-  ranking via Reciprocal Rank Fusion, so exact-keyword queries rank
-  correctly instead of being lost under the cosine recall floor. The
-  `min_score` floor stays a cosine gate but is bypassed for genuine lexical
-  hits, and is applied within the fusion step. Rows are returned in
-  fused-relevance order, each still carrying its cosine score. The cross-table
-  (`both`) recall path fuses over the combined semantic+episodic pool for a
-  global ranking. No store-schema or API-surface change (additive behavior
-  within the 1.0 contract). Implemented in `src/memory/hybrid.rs`; see
-  `doc/tech-spec.md` §Search.
-- **`hybrid_score` on search results.** Search responses now include a
-  `hybrid_score` (normalized RRF, `[0,1]`, top hit = 1.0) alongside the raw
-  cosine `score`. The console displays `hybrid_score` because it is monotonic
-  with the row order — a keyword hit RRF floated to the top no longer shows a
-  lower number than the rows beneath it (cosine, which isn't monotonic with
-  hybrid order, moves to the badge tooltip). `score` (cosine) is unchanged
-  for the recall hook / CLI / cross-host comparisons.
+- **Hybrid search (Phase 3b): semantic relevance lifted by keyword matches.**
+  `search` now scores each row as `cosine + an IDF-weighted keyword boost`,
+  clamped to `[0,1]` (in-process, no LanceDB FTS index). Exact-keyword
+  queries rank correctly instead of being lost under the cosine recall floor,
+  while the score stays honest: a rare, high-signal word ("yinyue") boosts
+  strongly, a common word ("name") barely moves the score, and an unrelated
+  query never produces a fake top result. `min_score` now gates this hybrid
+  score, so a keyword hit whose cosine alone falls under the floor is admitted
+  via its boost. The cross-table (`both`) recall path scores over the combined
+  semantic+episodic pool for a global ranking. No store-schema or API-surface
+  change (additive within the 1.0 contract). Implemented in
+  `src/memory/hybrid.rs`; see `doc/tech-spec.md` §Search.
+- **`hybrid_score` on search results.** Search responses include a
+  `hybrid_score` (`[0,1]`) alongside the raw cosine `score`. The console
+  displays `hybrid_score` because it is what the rows are ordered by — so it
+  is monotonic with rank — and it is absolute, so an unrelated query shows a
+  low number rather than a misleading 1.0. Cosine moves to the badge tooltip.
+  `score` (cosine) is unchanged for the recall hook / CLI / cross-host
+  comparisons.
 
 ### Fixed
 

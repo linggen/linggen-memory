@@ -1,71 +1,72 @@
-//! Hybrid retrieval: fuse dense (vector / cosine) and lexical (BM25)
-//! rankings so a query gets the best of both — semantic matches *and*
-//! exact-keyword matches.
+//! Hybrid retrieval: rank by **semantic similarity lifted by keyword
+//! matches**, so a query gets dense (cosine) relevance *plus* an
+//! exact-keyword boost — without the keyword side ever inventing relevance
+//! that isn't there.
 //!
-//! ## Why
+//! ## The score
 //!
-//! Pure vector search has no exact-keyword guarantee. A bare query like
-//! `"dog"` embeds to a point whose cosine to a long, multi-topic passage
-//! ("…male dog named Yinyue … the cat Xiaoman … mascot …") is diluted
-//! below that of shorter, unrelated rows — so the row that literally
-//! contains the word can rank *below* rows that don't, or fall under the
-//! recall floor entirely. BM25 fixes exactly this: a literal term match
-//! scores high regardless of passage length or topic spread.
+//! ```text
+//! hybrid = clamp01( cosine + keyword_boost )
+//! keyword_boost = W · (Σ idf of matched query terms) / (Σ idf of all query terms)
+//! ```
 //!
-//! ## How (Phase 3b)
+//! - **cosine** is the absolute dense-relevance signal (`[0,1]` in practice
+//!   for Qwen3). It anchors the score: an unrelated row stays low.
+//! - **keyword_boost** ∈ `[0, W]` is the IDF-weighted *fraction* of the
+//!   query's words the row contains. Rare, high-signal words ("yinyue")
+//!   dominate the weighting; a common word ("name", present in most rows)
+//!   has near-zero IDF and so adds almost nothing. A row matching every
+//!   query term gets the full `W`; a row matching nothing gets `0`.
 //!
-//! Each table is fetched in full (the store already runs flat — no ANN
-//! index — at this scale; see [`store::MemoryStore::scored_candidates`]),
-//! cosine is computed per row, and BM25 is computed over the same candidate
-//! set as the lexical corpus. The two rankings are fused with **Reciprocal
-//! Rank Fusion** (RRF) — rank-based, so it needs no score normalization and
-//! is robust to the incomparable scales of cosine (`[-1, 1]`) and BM25
-//! (`[0, ∞)`).
+//! Both the **ordering** and the **displayed number** are this one value, so
+//! the score is monotonic with rank *and* honest:
 //!
-//! ## Floor with lexical override
+//! - A keyword hit with mediocre cosine is lifted above non-matching rows
+//!   (the "dog" / "yinyue" case) — fixing pure-keyword queries.
+//! - An unrelated query never shows a fake `1.0`: with low cosine and no
+//!   real keyword match the top row scores low. (The old RRF approach
+//!   normalized to the result-set max, so its top was *always* 1.0 even when
+//!   nothing matched — that is what this replaces.)
+//! - A match on only a common word barely moves the score, so it can't
+//!   inflate an otherwise-irrelevant row.
 //!
-//! The `min_score` recall floor stays a **cosine** gate (its 0.6 default is
-//! calibrated to Qwen3 cosine, not to RRF), but a row that is a genuine
-//! lexical hit (`bm25 > 0`) bypasses it. That is the whole point: the "dog"
-//! row (cosine ~0.55, below the 0.6 floor) is admitted because it literally
-//! matches, then floated up by RRF.
+//! ## Floor
 //!
-//! The score each row *carries out* is still its **cosine** — familiar
-//! `[0, 1]`, what the console column and recall-hook display already show,
-//! and what cross-table merges compare. RRF governs *ordering only*; it is
-//! intentionally not surfaced as the row score.
+//! `min_score` gates the **hybrid** score (not raw cosine). The default
+//! (`recall_min_score`, 0.6) thus admits a keyword hit whose cosine alone
+//! would fall under it — because the boost lifts it over the line — while
+//! still dropping low-cosine rows with no real keyword match. The console
+//! passes `min_score: 0` to show every match for inspection.
 //!
-//! Why in-process and not LanceDB's native FTS index: an FTS index is not
-//! updated on append, so a freshly-written memory would be invisible to
-//! keyword search until a reindex/optimize — reintroducing the very
-//! "my memory isn't findable" bug this fixes. In-process BM25 over the live
-//! rows is always current. Revisit if the store outgrows flat scans
-//! (~100k rows), same threshold the vector path and `list` already flag.
+//! ## Why in-process
+//!
+//! Both halves run over the live, flat-scanned candidate pool (the store has
+//! no ANN/FTS index at this scale). Not LanceDB's native FTS: an FTS index
+//! is not updated on append, so a freshly-written memory would be
+//! unfindable by keyword until a reindex — the very bug this fixes. Revisit
+//! at ~100k rows (same threshold the vector path and `list` flag).
 
 use super::types::Memory;
 
-/// Okapi BM25 term-frequency saturation. Standard default.
-const BM25_K1: f32 = 1.2;
-/// Okapi BM25 length-normalization strength. Standard default.
-const BM25_B: f32 = 0.75;
-/// Reciprocal Rank Fusion constant. 60 is the value from the original RRF
-/// paper and the de-facto default; it damps the contribution of any single
-/// ranker's top spot so a row strong in *both* lists wins over one that is
-/// merely #1 in a single list.
-const RRF_K: f32 = 60.0;
+/// Maximum lift a perfect lexical match (every query term present, weighted
+/// by IDF) adds on top of cosine. Tuned so a real keyword hit clears the
+/// recall floor and ranks above non-matches, while a match on only a common
+/// (low-IDF) word adds almost nothing. The score is clamped to `[0,1]`, so
+/// only a strong semantic match *and* a full keyword match reaches 1.0.
+const KEYWORD_BOOST: f32 = 0.3;
 
 /// A search candidate: a stored row plus its cosine similarity to the query
 /// (already computed by the store from the row's vector; `0.0` for rows
-/// with a null vector, which can still be admitted as lexical hits).
+/// with a null vector, which can still gain a keyword boost).
 pub struct Candidate {
     pub memory: Memory,
     pub cosine: f32,
 }
 
 /// Lowercase, Unicode-aware word tokenizer. Splits on any non-alphanumeric
-/// boundary and drops empties. No stemming or stopword list — BM25's IDF
-/// already downweights terms common across the corpus, and the store is
-/// small enough that the extra machinery is not worth the surprise.
+/// boundary and drops empties. No stemming or stopword list — IDF weighting
+/// already neutralizes common words, and the store is small enough that the
+/// extra machinery is not worth the surprise.
 fn tokenize(text: &str) -> Vec<String> {
     text.split(|c: char| !c.is_alphanumeric())
         .filter(|t| !t.is_empty())
@@ -73,80 +74,68 @@ fn tokenize(text: &str) -> Vec<String> {
         .collect()
 }
 
-/// BM25 score of every document against `query_terms`, using `docs` as the
-/// corpus (so IDF and average length reflect exactly the rows being
-/// searched). Returns one score per doc, in input order; a doc with no
-/// query-term overlap scores `0.0`.
-fn bm25_scores(query_terms: &[String], docs: &[Vec<String>]) -> Vec<f32> {
+/// Inverse document frequency with `+1` smoothing — always positive, and a
+/// term present in every doc lands near `0` (so common words barely count).
+fn idf(df: usize, n: usize) -> f32 {
+    (1.0 + (n as f32 - df as f32 + 0.5) / (df as f32 + 0.5)).ln()
+}
+
+/// IDF-weighted keyword boost per doc, scaled to `[0, KEYWORD_BOOST]`.
+///
+/// For each unique query term that actually occurs in the corpus (`df > 0`),
+/// weight it by its IDF; a doc's boost is `W · (matched IDF mass / total IDF
+/// mass)`. So matching the rare, meaningful word counts for most of the
+/// boost and matching only a common word counts for almost none. Presence-
+/// based: term frequency within a doc doesn't change the lift.
+fn keyword_boosts(query_terms: &[String], docs: &[Vec<String>]) -> Vec<f32> {
     let n = docs.len();
-    if n == 0 || query_terms.is_empty() {
-        return vec![0.0; n];
+    if n == 0 {
+        return Vec::new();
     }
 
-    let avgdl = docs.iter().map(|d| d.len()).sum::<usize>() as f32 / n as f32;
-    let avgdl = if avgdl == 0.0 { 1.0 } else { avgdl };
-
-    // Dedup query terms: a term repeated in the query shouldn't double-count.
+    // Unique query terms, then keep only those that occur in ≥1 doc and pair
+    // each with its IDF weight. A term in no doc is unmatchable and must not
+    // dilute the denominator.
     let mut terms: Vec<&String> = query_terms.iter().collect();
     terms.sort();
     terms.dedup();
-
-    // Document frequency per (unique) query term.
-    let df: Vec<usize> = terms
-        .iter()
-        .map(|t| docs.iter().filter(|d| d.contains(*t)).count())
+    let weighted: Vec<(&String, f32)> = terms
+        .into_iter()
+        .filter_map(|t| {
+            let df = docs.iter().filter(|d| d.contains(t)).count();
+            (df > 0).then(|| (t, idf(df, n)))
+        })
         .collect();
+
+    let idf_total: f32 = weighted.iter().map(|(_, w)| *w).sum();
+    if idf_total <= 0.0 {
+        return vec![0.0; n];
+    }
 
     docs.iter()
         .map(|doc| {
-            let dl = doc.len() as f32;
-            terms
+            let matched: f32 = weighted
                 .iter()
-                .enumerate()
-                .map(|(i, term)| {
-                    let df_t = df[i];
-                    if df_t == 0 {
-                        return 0.0;
-                    }
-                    let tf = doc.iter().filter(|w| *w == *term).count() as f32;
-                    if tf == 0.0 {
-                        return 0.0;
-                    }
-                    // IDF with +1 smoothing — always positive, so a term
-                    // present in every doc contributes a small amount
-                    // rather than going negative.
-                    let idf = (1.0 + (n as f32 - df_t as f32 + 0.5) / (df_t as f32 + 0.5)).ln();
-                    let denom = tf + BM25_K1 * (1.0 - BM25_B + BM25_B * dl / avgdl);
-                    idf * (tf * (BM25_K1 + 1.0)) / denom
-                })
-                .sum()
+                .filter(|(t, _)| doc.contains(*t))
+                .map(|(_, w)| *w)
+                .sum();
+            KEYWORD_BOOST * (matched / idf_total)
         })
         .collect()
 }
 
-/// Map each index to its 0-based rank under `desc_key` (highest key = rank
-/// 0). Indices not passing `keep` are omitted from the ranking entirely.
-fn rank_by(keys: &[f32], keep: impl Fn(usize) -> bool) -> std::collections::HashMap<usize, usize> {
-    let mut idx: Vec<usize> = (0..keys.len()).filter(|&i| keep(i)).collect();
-    idx.sort_by(|&a, &b| keys[b].total_cmp(&keys[a]));
-    idx.into_iter().enumerate().map(|(rank, i)| (i, rank)).collect()
-}
-
-/// Fuse the vector and lexical rankings over `candidates` and return the
-/// admitted rows ordered by RRF, each paired with its **cosine** score.
+/// Score and rank `candidates`, returning the admitted rows ordered by
+/// hybrid relevance.
 ///
-/// - `query_text` is tokenized for BM25; if it yields no terms the result
-///   degrades gracefully to pure-cosine ordering with the floor applied.
-/// - `min_score` is the cosine floor (`None` = no floor). A row below the
-///   floor is still admitted if it is a lexical hit (`bm25 > 0`).
+/// - `query_text` is tokenized for the keyword boost; with no terms (or no
+///   corpus matches) the result degrades to pure-cosine ordering.
+/// - `min_score` gates the **hybrid** score (`None` = no floor).
 /// - Result is truncated to `limit`.
 ///
-/// Each hit is `(memory, cosine, rrf)`: the **cosine** is the familiar
-/// dense-similarity score (display/floor/cross-host comparison); the **rrf**
-/// is the raw Reciprocal Rank Fusion value that determined the ordering —
-/// the presentation layer normalizes it into the `hybrid_score` shown in the
-/// console so the displayed number is monotonic with the row order (a raw
-/// cosine is not, since a keyword hit can outrank a higher-cosine row).
+/// Each hit is `(memory, cosine, hybrid)`: `cosine` is the raw dense
+/// similarity (kept for the recall hook / CLI / cross-host comparison);
+/// `hybrid` is the blended `[0,1]` relevance the console displays and the
+/// rows are ordered by.
 pub fn fuse(
     candidates: Vec<Candidate>,
     query_text: &str,
@@ -163,48 +152,29 @@ pub fn fuse(
         .iter()
         .map(|c| tokenize(&c.memory.content))
         .collect();
-    let bm25 = bm25_scores(&query_terms, &docs);
+    let boosts = keyword_boosts(&query_terms, &docs);
 
-    // Rank each retriever. Vector ranks every candidate (cosine always
-    // defined); lexical ranks only true hits (bm25 > 0).
-    let vec_rank = rank_by(&cosines, |_| true);
-    let lex_rank = rank_by(&bm25, |i| bm25[i] > 0.0);
-
-    let mut fused: Vec<(usize, f32)> = (0..candidates.len())
-        .filter(|&i| {
-            // Admission: pass the cosine floor, OR be a lexical hit.
-            match min_score {
-                Some(floor) => cosines[i] >= floor || lex_rank.contains_key(&i),
-                None => true,
-            }
-        })
+    let mut scored: Vec<(usize, f32, f32)> = (0..candidates.len())
         .map(|i| {
-            let mut score = 0.0;
-            if let Some(r) = vec_rank.get(&i) {
-                score += 1.0 / (RRF_K + *r as f32);
-            }
-            if let Some(r) = lex_rank.get(&i) {
-                score += 1.0 / (RRF_K + *r as f32);
-            }
-            (i, score)
+            let hybrid = (cosines[i] + boosts[i]).clamp(0.0, 1.0);
+            (i, cosines[i], hybrid)
+        })
+        .filter(|(_, _, hybrid)| match min_score {
+            Some(floor) => *hybrid >= floor,
+            None => true,
         })
         .collect();
 
-    // Order by RRF; tie-break by cosine so identical-rank rows stay stable
-    // and intuitive.
-    fused.sort_by(|a, b| {
-        b.1.total_cmp(&a.1)
-            .then_with(|| cosines[b.0].total_cmp(&cosines[a.0]))
-    });
-    fused.truncate(limit);
+    // Order by hybrid; tie-break by cosine so equal-hybrid rows stay stable.
+    scored.sort_by(|a, b| b.2.total_cmp(&a.2).then(b.1.total_cmp(&a.1)));
+    scored.truncate(limit);
 
-    // Reclaim the owned Memory values in fused order. Build an index→Memory
-    // map by draining once, then emit in order.
+    // Reclaim the owned Memory values in ranked order.
     let mut by_idx: Vec<Option<Memory>> =
         candidates.into_iter().map(|c| Some(c.memory)).collect();
-    fused
+    scored
         .into_iter()
-        .filter_map(|(i, rrf)| by_idx[i].take().map(|m| (m, cosines[i], rrf)))
+        .filter_map(|(i, cosine, hybrid)| by_idx[i].take().map(|m| (m, cosine, hybrid)))
         .collect()
 }
 
@@ -236,16 +206,18 @@ mod tests {
             cand("user has a male dog named Yinyue, separate from the cat", 0.55),
         ];
         let out = fuse(cands, "dog", 10, Some(0.6));
-        assert_eq!(out.len(), 1, "only the lexical hit clears the floor");
+        assert_eq!(out.len(), 1, "only the boosted keyword hit clears the floor");
         assert!(out[0].0.content.contains("dog"), "the dog row ranks first");
+        assert!(out[0].2 > 0.6, "its hybrid score is lifted over the floor");
     }
 
     #[test]
-    fn floor_admits_lexical_hit_below_threshold() {
-        // cosine 0.55 < floor 0.6, but it's the keyword match → admitted.
+    fn floor_admits_lexical_hit_below_cosine_threshold() {
+        // cosine 0.55 < floor 0.6, but the keyword boost lifts hybrid over it.
         let out = fuse(vec![cand("my dog Yinyue", 0.55)], "dog", 10, Some(0.6));
         assert_eq!(out.len(), 1);
-        assert_eq!(out[0].1, 0.55, "carried score stays cosine, not RRF");
+        assert_eq!(out[0].1, 0.55, "carried cosine is unchanged");
+        assert!(out[0].2 >= 0.6, "hybrid (cosine + boost) clears the floor");
     }
 
     #[test]
@@ -255,23 +227,40 @@ mod tests {
     }
 
     #[test]
+    fn unrelated_query_does_not_score_top_as_one() {
+        // The bug the user caught: with the old RRF max-normalization the top
+        // row was always 1.0. Now an unmatched query just shows raw cosine.
+        let cands = vec![cand("foo bar", 0.30), cand("baz qux", 0.22)];
+        let out = fuse(cands, "zzz", 10, None);
+        assert_eq!(out[0].0.content, "foo bar", "highest cosine first");
+        assert!(out[0].2 < 0.5, "no fake 1.0 for an unrelated query");
+        assert_eq!(out[0].2, 0.30, "hybrid == cosine when nothing matches");
+    }
+
+    #[test]
+    fn common_term_adds_little_boost() {
+        // Query "yinyue name": "name" is in every row (low IDF), "yinyue" in
+        // one (high IDF). The row with the rare word must win clearly; a
+        // row matching only the common word barely moves.
+        let mut cands = vec![cand("yinyue is the dog name", 0.50)];
+        for _ in 0..4 {
+            cands.push(cand("some other memory with a name", 0.50));
+        }
+        let out = fuse(cands, "yinyue name", 10, None);
+        assert!(out[0].0.content.contains("yinyue"), "rare-word row ranks first");
+        assert!(out[0].2 > 0.7, "rare-word match earns most of the boost");
+        assert!(
+            out[1].2 < 0.6,
+            "common-word-only match barely lifts above its cosine"
+        );
+    }
+
+    #[test]
     fn empty_query_terms_degrade_to_cosine_order() {
         // Punctuation-only query → no terms → pure cosine ordering + floor.
         let cands = vec![cand("alpha", 0.9), cand("beta", 0.7), cand("gamma", 0.3)];
         let out = fuse(cands, "!!!", 10, Some(0.5));
         let got: Vec<&str> = out.iter().map(|(m, _, _)| m.content.as_str()).collect();
         assert_eq!(got, vec!["alpha", "beta"], "cosine order, gamma floored out");
-    }
-
-    #[test]
-    fn both_lists_boost_a_row() {
-        // A row strong in BOTH cosine and lexical should win over one strong
-        // in only the vector list.
-        let cands = vec![
-            cand("dog dog dog", 0.80),                 // top lexical + high cosine
-            cand("unrelated but high cosine", 0.82),   // top cosine, no keyword
-        ];
-        let out = fuse(cands, "dog", 10, None);
-        assert_eq!(out[0].0.content, "dog dog dog", "dual-list row wins via RRF");
     }
 }

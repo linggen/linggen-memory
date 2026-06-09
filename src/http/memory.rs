@@ -109,30 +109,23 @@ fn facts_public(facts: &[Memory]) -> Vec<Value> {
 }
 
 /// Like [`fact_public`] but adds the relevance fields for search responses.
-/// Each input hit is `(memory, cosine, rrf)`:
+/// Each input hit is `(memory, cosine, hybrid)`:
 ///
 /// - `score` — the raw **cosine** similarity (`[0,1]`), the absolute
 ///   dense-relevance signal. Kept for the recall hook, CLI, and cross-host
 ///   comparisons that already read it.
-/// - `hybrid_score` — the fused RRF value **normalized to `[0,1]`** against
-///   the strongest hit in this result set. This is the number the console
-///   displays: unlike cosine it is monotonic with the row order, so a
-///   keyword hit that RRF floated to the top no longer shows a lower number
-///   than the rows beneath it. Normalization is per-result-set (top = 1.0),
-///   i.e. relevance *within these results*.
+/// - `hybrid_score` — the blended relevance (`cosine` + IDF-weighted keyword
+///   boost, clamped to `[0,1]`; see [`crate::memory::hybrid`]). This is the
+///   number the console displays: it is what the rows are ordered by, so it
+///   is monotonic with rank, and it is absolute — an unrelated query does
+///   not get a fake 1.0.
 fn scored_facts_public(scored: &[(Memory, f32, f32)]) -> Vec<Value> {
-    // Normalize against the largest RRF in the set so the top hit reads 1.0.
-    let max_rrf = scored
-        .iter()
-        .map(|(_, _, rrf)| *rrf)
-        .fold(0.0_f32, f32::max);
     scored
         .iter()
-        .map(|(f, cosine, rrf)| {
+        .map(|(f, cosine, hybrid)| {
             let mut v = fact_public(f);
             if let Some(obj) = v.as_object_mut() {
                 obj.insert("score".into(), json!(cosine));
-                let hybrid = if max_rrf > 0.0 { rrf / max_rrf } else { 0.0 };
                 obj.insert("hybrid_score".into(), json!(hybrid));
             }
             v
@@ -770,10 +763,10 @@ async fn search(
         None => Some(crate::http::config::load(&state.data_dir).await.recall_min_score),
     };
 
-    // Hybrid retrieval: dense (cosine) fused with lexical (BM25) via RRF, so
-    // exact-keyword queries rank correctly and aren't lost under the cosine
-    // floor. `min_score` stays a cosine gate but is bypassed for lexical
-    // hits, applied inside the fuse step (see crate::memory::hybrid).
+    // Hybrid retrieval: each row scored as cosine + an IDF-weighted keyword
+    // boost, so exact-keyword queries rank correctly without inventing
+    // relevance for unrelated rows. `min_score` gates the hybrid score,
+    // applied inside the fuse step (see crate::memory::hybrid).
     let results = match req.table {
         SearchTable::Both => {
             state

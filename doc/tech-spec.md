@@ -171,45 +171,61 @@ A second table `episodic` lives in the same `memory.lancedb` connection, identic
 
 ### Search
 
-**Hybrid retrieval (Phase 3b)** — dense (vector/cosine) and lexical (BM25)
-rankings fused with Reciprocal Rank Fusion (RRF). Both halves run in-process
-over the filtered candidate pool: the store is flat-scanned (no ANN/FTS
-index), cosine is computed from the stored vectors, and BM25 (`k1=1.2`,
-`b=0.75`) is computed over the same rows as the lexical corpus. RRF (`k=60`)
-needs no score normalization, so the incomparable scales of cosine `[-1,1]`
-and BM25 `[0,∞)` fuse cleanly. Implemented in `src/memory/hybrid.rs`; the
-cross-table (`both`) path fuses over the combined semantic+episodic pool so
-the rank is global, not per-table-then-merged.
+**Hybrid retrieval (Phase 3b)** — each row is scored as **semantic
+similarity lifted by an exact-keyword boost**:
+
+```
+hybrid = clamp01( cosine + keyword_boost )
+keyword_boost = W · (Σ idf of matched query terms) / (Σ idf of all query terms),  W = 0.3
+```
+
+Both halves run in-process over the filtered candidate pool: the store is
+flat-scanned (no ANN/FTS index), cosine comes from the stored vectors, and
+the keyword boost is computed over the same rows as the lexical corpus
+(IDF with `+1` smoothing, presence-based, Unicode word tokenizer).
+`keyword_boost ∈ [0, W]` is the IDF-weighted *fraction* of the query's words
+a row contains — a rare word ("yinyue") dominates the weighting, a common
+word ("name", in most rows) has near-zero IDF and barely lifts the score.
+Implemented in `src/memory/hybrid.rs`; the cross-table (`both`) path scores
+over the combined semantic+episodic pool so the ranking is global, not
+per-table-then-merged.
+
+This is deliberately *not* Reciprocal Rank Fusion. RRF ranks by position
+only — it has no notion of absolute relevance, so normalizing it makes the
+top row always read ~1.0 even for an unrelated query, and it discards the
+IDF weighting that keeps common words from inflating matches. The additive
+cosine+boost blend keeps an absolute, honest score (and is monotonic with
+the row order by construction).
 
 Why in-process, not LanceDB's native FTS index: an FTS index is not updated
 on append, so a freshly-written memory would be invisible to keyword search
 until a reindex — reintroducing the "my memory isn't findable" failure.
-In-process BM25 is always current. Revisit at ~100k rows (same flat-scan
+In-process scoring is always current. Revisit at ~100k rows (same flat-scan
 threshold the vector path and `list` already flag).
 
-The `min_score` floor stays a **cosine** gate (default `recall_min_score`,
-0.6 — calibrated to Qwen3 cosine, not RRF), but a genuine lexical hit
-(`bm25 > 0`) bypasses it. This is the fix for terse keyword queries: a row
-like "…male dog named Yinyue…" (cosine ~0.55 to the bare query "dog", below
-the floor) is admitted because it literally matches, then floated up by RRF.
-The console passes `min_score: 0` to show every match for inspection.
+`min_score` gates the **hybrid** score (default `recall_min_score`, 0.6).
+A keyword hit whose cosine alone falls under the floor is admitted because
+the boost lifts it over the line — e.g. "…male dog named Yinyue…" (cosine
+~0.55 to the bare query "dog") clears 0.6 once boosted — while low-cosine
+rows with no real keyword match stay filtered. The console passes
+`min_score: 0` to show every match for inspection.
 
-SQL metadata filters are applied before fusion:
+SQL metadata filters are applied before scoring:
 
 - `contexts` match: `contexts LIKE '%<tag>%'` OR SQL array-contains, depending on LanceDB version
 - `type` match: exact equality
 - `occurred_at` range: timestamp comparison with fallback to `created_at` via COALESCE
 
-Rows are returned ordered by fused (RRF) relevance. Each result carries two
+Rows are returned ordered by hybrid relevance. Each result carries two
 non-stored score columns:
 
 - `score` — raw **cosine** similarity (`[0,1]`), the absolute dense-relevance
   signal. Used by the recall hook, CLI text output, and cross-host
   comparisons.
-- `hybrid_score` — the fused RRF value **normalized to `[0,1]`** against the
-  top hit in the result set (top = 1.0). Unlike cosine it is monotonic with
-  the row order, so the console displays it: a keyword hit that RRF floated
-  to the top no longer shows a *lower* number than the rows beneath it.
+- `hybrid_score` — the blended `cosine + keyword_boost` (`[0,1]`). It is what
+  the rows are ordered by (so it is monotonic with rank) and it is absolute
+  (an unrelated query shows a low number, not a misleading 1.0). The console
+  displays this; cosine moves to the badge tooltip.
 
 ### Deletion
 

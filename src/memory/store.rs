@@ -802,10 +802,10 @@ impl MemoryStore {
     }
 
     /// Hybrid (dense + lexical) search over this one table. Fetches the
-    /// candidate pool ([`Self::scored_candidates`]) and fuses the cosine and
-    /// BM25 rankings via RRF (see [`super::hybrid::fuse`]). Returns up to
-    /// `limit` `(memory, cosine, rrf)` hits ordered by fused relevance;
-    /// `min_score` is the cosine floor, bypassed for lexical hits.
+    /// candidate pool ([`Self::scored_candidates`]) and scores each row as
+    /// cosine + an IDF-weighted keyword boost (see [`super::hybrid::fuse`]).
+    /// Returns up to `limit` `(memory, cosine, hybrid)` hits ordered by the
+    /// hybrid score; `min_score` gates that hybrid score.
     pub async fn hybrid_scored(
         &self,
         query_vec: &[f32],

@@ -56,11 +56,11 @@ impl Recall {
         Ok(Self::new(Arc::new(semantic), Arc::new(episodic)))
     }
 
-    /// Hybrid recall across both tables. Fuses dense (cosine) and lexical
-    /// (BM25) rankings over the *combined* candidate pool so the RRF order is
-    /// global, not per-table-then-merged. `query_text` drives BM25;
-    /// `min_score` is the cosine floor, bypassed for lexical hits (see
-    /// [`crate::memory::hybrid`]). Each hit is `(memory, cosine, rrf)`.
+    /// Hybrid recall across both tables. Scores each row as cosine + an
+    /// IDF-weighted keyword boost over the *combined* candidate pool, so the
+    /// ranking is global, not per-table-then-merged. `query_text` drives the
+    /// keyword boost; `min_score` gates the hybrid score (see
+    /// [`crate::memory::hybrid`]). Each hit is `(memory, cosine, hybrid)`.
     pub async fn query(
         &self,
         query_vec: &[f32],
