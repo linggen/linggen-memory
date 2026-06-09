@@ -406,6 +406,13 @@ async function reload() {
           query: state.text,
           ...filterPayload(),
           limit: SEARCH_LIMIT,
+          // Console search is for human inspection: show every match ranked
+          // by relevance, never an empty list. An explicit min_score of 0
+          // overrides the daemon's recall floor (which terse queries like
+          // "dog" fall under — every row scores below it and you get
+          // nothing). The recall hook / engine auto-recall still use the
+          // floor; only the console opts out.
+          min_score: 0,
         })
       : await fetchRowsForView('/api/memory/list', {
           ...filterPayload(),
@@ -2018,7 +2025,17 @@ document.getElementById('query').addEventListener('keydown', (e) => {
   const input = document.getElementById('query');
   const clear = document.getElementById('query-clear');
   const syncClear = () => { clear.hidden = input.value.length === 0; };
-  input.addEventListener('input', syncClear);
+  input.addEventListener('input', () => {
+    syncClear();
+    // Emptying the box manually (not via × / Enter) must also exit search
+    // mode — otherwise `state.text` stays stale and a later view-tab click
+    // re-runs the old search. Only fires on the empty→committed mismatch,
+    // so typing a fresh query doesn't reload on every keystroke.
+    if (input.value.trim() === '' && state.text !== '') {
+      state.text = '';
+      reload();
+    }
+  });
   clear.addEventListener('click', () => {
     input.value = '';
     state.text = '';
