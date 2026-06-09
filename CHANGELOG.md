@@ -1,6 +1,10 @@
 # Changelog
 
-## [Unreleased]
+## [1.1.0] - 2026-06-09 — hybrid search + batched import + atomic upsert
+
+Minor release: additive API surface (`/api/memory/add_batch` endpoint,
+`hybrid_score` search field) over the frozen 1.0 contract — store schema
+(`STORE_SCHEMA_VERSION` 1) and existing endpoints unchanged.
 
 ### Added
 
@@ -23,9 +27,19 @@
   low number rather than a misleading 1.0. Cosine moves to the badge tooltip.
   `score` (cosine) is unchanged for the recall hook / CLI / cross-host
   comparisons.
+- **Batched bulk import** via a new `POST /api/memory/add_batch` endpoint.
+  `ling-mem add --stdin` now ships the whole import in one request — one
+  serialized embed pass and one LanceDB commit per table — instead of one
+  POST (and one table version) per row, which degraded super-linearly and
+  could trip the client timeout / OOM on large imports.
 
 ### Fixed
 
+- **Atomic upsert + write serialization.** Read-modify-write mutations
+  (dedup merge, update) now go through a single `merge_insert` keyed on `id`
+  and are serialized per table, closing the data-loss window where a
+  crash/cancel between the old delete-then-insert pair destroyed a row with
+  no replacement.
 - **Console search no longer returns empty for terse queries.** The console
   now requests `min_score: 0` (human inspection should always show every
   match ranked, never an empty list) and renders the `all` view via one
