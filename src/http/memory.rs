@@ -127,6 +127,7 @@ fn scored_facts_public(scored: &[(Memory, f32)]) -> Vec<Value> {
 pub fn router() -> Router<SharedState> {
     Router::new()
         .route("/api/memory/add", post(add))
+        .route("/api/memory/add_batch", post(add_batch))
         .route("/api/memory/get", post(get))
         .route("/api/memory/search", post(search))
         .route("/api/memory/list", post(list))
@@ -181,6 +182,21 @@ pub struct AddRequest {
     /// `replaced_failed` but never abort the insert.
     #[serde(default)]
     pub replace_ids: Vec<String>,
+}
+
+/// Bulk insert. Each element is a plain [`AddRequest`]; the whole batch is
+/// embedded in one serialized forward-pass sequence and written with a
+/// single LanceDB commit per table. This is the `ling-mem add --stdin`
+/// path: one HTTP call for the entire import instead of one POST (and one
+/// commit, one version) per row — which is what made large imports degrade
+/// super-linearly and eventually trip the client timeout.
+///
+/// Bulk semantics match the direct-store `cmd_add` stdin path: always plain
+/// insert (no dedup), `replace_ids` is not honored here (it's a single-row
+/// conflict-resolution helper).
+#[derive(Debug, Deserialize)]
+pub struct AddBatchRequest {
+    pub facts: Vec<AddRequest>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -515,6 +531,69 @@ async fn add(
     let outcome = store.insert_with_dedup(fact).await?;
     let body = apply_replace_ids(&state, &replace_ids, outcome_public(&outcome)).await;
     Ok(ok(body))
+}
+
+/// Bulk insert N rows in one call: build every row, batch-embed all
+/// contents (one gate acquisition), then commit each table's rows with a
+/// single `MemoryStore::insert` (one LanceDB version per table, not per
+/// row). Empty-content rows are skipped rather than failing the batch.
+async fn add_batch(
+    State(state): State<SharedState>,
+    Json(req): Json<AddBatchRequest>,
+) -> Result<Response, ApiError> {
+    // Partition by target table up front so each table commits exactly once.
+    let mut semantic: Vec<Memory> = Vec::new();
+    let mut episodic: Vec<Memory> = Vec::new();
+    for r in req.facts {
+        if r.content.trim().is_empty() {
+            continue; // skip blanks; don't abort the whole import for one
+        }
+        let mut fact = Memory::new(
+            r.content,
+            r.r#type.unwrap_or(MemoryType::Fact),
+            r.from.unwrap_or_default(),
+        );
+        fact.contexts = r.contexts;
+        fact.tags = r.tags;
+        fact.outcome = r.outcome;
+        fact.cwd = r.cwd;
+        fact.occurred_at = r.occurred_at;
+        fact.source_session = r.source_session;
+        fact.host = r.host;
+        if r.episodic {
+            fact.tier = Tier::Episodic;
+            episodic.push(fact);
+        } else {
+            semantic.push(fact);
+        }
+    }
+
+    let mut added = Vec::new();
+    for (mut rows, is_episodic) in [(semantic, false), (episodic, true)] {
+        if rows.is_empty() {
+            continue;
+        }
+        // One serialized batch embed for the whole group (chunked to the
+        // embedder's MAX_EMBED_BATCH internally), then one commit.
+        let texts: Vec<String> = rows.iter().map(|f| f.content.clone()).collect();
+        let vectors = state
+            .embedder
+            .clone()
+            .embed_passages(texts)
+            .await
+            .map_err(ApiError::internal)?;
+        for (f, v) in rows.iter_mut().zip(vectors) {
+            f.vector = Some(v);
+        }
+        pick_store(&state, is_episodic).insert(&rows).await?;
+        added.extend(rows.iter().map(fact_public));
+    }
+
+    Ok(ok(json!({
+        "action": "added",
+        "count": added.len(),
+        "facts": added,
+    })))
 }
 
 /// Apply the caller's `replace_ids` deletion sweep across both tables and

@@ -40,7 +40,7 @@ K_VALUES = (5, 10, 20)
 BENCH_PORT = 19888
 
 
-def run_ling(cmd, data_dir, *, input_text=None, timeout=300):
+def run_ling(cmd, data_dir, *, input_text=None, timeout=1200):
     env = {**os.environ, "LING_MEM_NO_TELEMETRY": "1",
            "LINGGEN_DATA_DIR": str(data_dir)}
     p = subprocess.run(["ling-mem", "--data-dir", str(data_dir), *cmd],

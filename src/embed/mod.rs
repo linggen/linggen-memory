@@ -97,6 +97,22 @@ impl Embedder {
             .context("embed worker join failed")?
     }
 
+    /// Embed many stored passages in one serialized, off-thread call.
+    /// HTTP handlers use this for bulk inserts (`/api/memory/add_batch`) so
+    /// a whole `add --stdin` import is one gate acquisition + one forward-
+    /// pass sequence instead of N independent `embed_passage` calls.
+    /// Order is preserved; internally chunked to [`MAX_EMBED_BATCH`].
+    pub async fn embed_passages(self: Arc<Self>, texts: Vec<String>) -> Result<Vec<Vec<f32>>> {
+        if texts.is_empty() {
+            return Ok(Vec::new());
+        }
+        let _guard = self.gate.lock().await;
+        let me = Arc::clone(&self);
+        tokio::task::spawn_blocking(move || me.embed_many(&texts))
+            .await
+            .context("embed worker join failed")?
+    }
+
     /// Embed one search query, serialized and run on the blocking pool.
     /// HTTP handlers must use this (never the sync [`Self::embed_query`]).
     pub async fn embed_query_serialized(self: Arc<Self>, text: String) -> Result<Vec<f32>> {

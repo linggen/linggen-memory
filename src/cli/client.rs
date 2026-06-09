@@ -35,6 +35,12 @@ const PROBE_TIMEOUT: Duration = Duration::from_millis(500);
 /// a few seconds on cold start.
 const OP_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Bulk-import budget. `add --stdin` now ships the whole batch in one
+/// request, so the single call embeds + commits every row — far more work
+/// than a single add. A generous ceiling keeps a large import from tripping
+/// the 30s `OP_TIMEOUT`; the work is bounded (one commit) so it won't wedge.
+const BULK_TIMEOUT: Duration = Duration::from_secs(600);
+
 /// Probe the daemon: read its pidfile, confirm the pid is alive, then
 /// confirm `/api/health` returns 200. Returns the base URL on success.
 ///
@@ -89,8 +95,19 @@ pub(crate) async fn try_running_or_start(
 
 /// POST `body` to `<base>/<path>` and unwrap the standard envelope.
 async fn post(base: &str, path: &str, body: &Value) -> Result<Value> {
+    post_with_timeout(base, path, body, OP_TIMEOUT).await
+}
+
+/// POST with an explicit client timeout. Bulk imports use a longer budget
+/// than the default [`OP_TIMEOUT`] because one request now does all the work.
+async fn post_with_timeout(
+    base: &str,
+    path: &str,
+    body: &Value,
+    timeout: Duration,
+) -> Result<Value> {
     let client = reqwest::Client::builder()
-        .timeout(OP_TIMEOUT)
+        .timeout(timeout)
         .build()
         .context("building HTTP client")?;
     let url = format!("{base}{path}");
@@ -155,7 +172,7 @@ pub(crate) async fn add(base: &str, args: AddArgs, format: OutputFormat) -> Resu
 
 async fn add_stdin(base: &str, format: OutputFormat) -> Result<()> {
     let stdin = std::io::stdin();
-    let mut emitted = 0usize;
+    let mut facts: Vec<Value> = Vec::new();
     for (i, line) in stdin.lines().enumerate() {
         let line = line.with_context(|| format!("reading stdin line {}", i + 1))?;
         if line.trim().is_empty() {
@@ -173,12 +190,35 @@ async fn add_stdin(base: &str, format: OutputFormat) -> Result<()> {
             // Bulk imports always skip dedup (matches direct-mode semantics).
             obj.insert("skip_dedup".into(), Value::Bool(true));
         }
-        let data = post(base, "/api/memory/add", &fact).await?;
-        emit_add_outcome(&data, format)?;
-        emitted += 1;
+        facts.push(fact);
     }
-    if emitted == 0 && matches!(format, OutputFormat::Text) {
-        eprintln!("(no facts on stdin)");
+    if facts.is_empty() {
+        if matches!(format, OutputFormat::Text) {
+            eprintln!("(no facts on stdin)");
+        }
+        return Ok(());
+    }
+
+    // One batched request → one commit per table on the daemon side. This
+    // replaces the old per-row POST loop (one HTTP call + one LanceDB
+    // version per row), which made large imports degrade super-linearly and
+    // eventually trip `OP_TIMEOUT`.
+    let body = json!({ "facts": facts });
+    let data = post_with_timeout(base, "/api/memory/add_batch", &body, BULK_TIMEOUT).await?;
+
+    match format {
+        // Preserve the previous NDJSON-per-row output contract.
+        OutputFormat::Json => {
+            if let Some(arr) = data.get("facts").and_then(|v| v.as_array()) {
+                for f in arr {
+                    emit_add_outcome(&json!({ "action": "added", "fact": f }), format)?;
+                }
+            }
+        }
+        OutputFormat::Text => {
+            let count = data.get("count").and_then(|v| v.as_u64()).unwrap_or(0);
+            println!("added {count} facts");
+        }
     }
     Ok(())
 }
