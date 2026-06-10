@@ -201,9 +201,11 @@ rows did not delete and leave them in the list. Do not retry automatically.
 | empty (no data) | response 0 rows, no filters    | illustration-less message: "Your memory is empty. Run a curation from the dashboard, or click **+ Add**." |
 | empty (filtered)| response 0 rows, chips present | "No facts match. [Clear filters]"                         |
 | daemon-down     | `/api/health` fails ×2         | full-width red banner at top with retry; list greyed out  |
-| request error   | non-`/api/health` 4xx/5xx      | toast (top-right, 5s, dismissible) + inline red in detail for save failures |
+| request error   | non-`/api/health` 4xx/5xx      | error banner in the list area: envelope `error` string + `code`. One surface for load, load-more, save, and delete failures |
 
-Toast content: `error` string from the envelope + `code` in monospace badge.
+No toast system — the list-area banner is the single error render path
+(deliberate for v0.1: one surface, no notification stack). A failed save
+replaces the list with the banner; `↻` or rerunning the query restores it.
 
 ## Keyboard
 
@@ -259,7 +261,7 @@ Used for the row card's left border and the type chip's background tint.
 
 All POSTs use `Content-Type: application/json`. Responses are unwrapped
 by a `callApi(path, body)` helper: on `{ok:false}`, throw an `ApiError`
-with `{message, code}`; handlers decide toast vs inline.
+with `{message, code}`; handlers route failures to the list-area error banner.
 
 ## Real-time / refresh
 
