@@ -116,7 +116,9 @@ If the configured model output dimension doesn't match the table's `FixedSizeLis
 | `update <id>` | Modify fields | `--content`, `--add-context`, `--remove-context`, `--add-tag`, `--remove-tag`, `--type`, `--outcome` |
 | `delete <id>` | Hard delete | `--yes` to skip confirmation |
 | `forget` | Bulk delete by filter | `--context`, `--type`, `--older-than`; requires `--yes` |
-| `evict` | Delete episodic rows older than a cutoff | `--before <rfc3339>` |
+
+(`evict` was removed in v0.7.1 — past-TTL episodic eviction is
+`forget --older-than <dur> --episodic --yes`.)
 
 In-scope but not listed above (daemon lifecycle): `serve`, `start`, `stop`,
 `restart`, `status`. These run the axum HTTP server that hosts both the
@@ -138,7 +140,7 @@ reads); revisit with a DB-side sort beyond that.
 ### I/O contract
 
 - **Default stdout:** NDJSON — one JSON object per line for list-like results; single object for single-row results.
-- **Human stdout:** `--format=text` or `--format=table` renders friendly output.
+- **Human stdout:** `--format=text` renders friendly output.
 - **Stderr:** JSON errors — `{"error":"...","code":"NOT_FOUND"}` — with non-zero exit code.
 - **Bulk input:** `add` and `update` accept NDJSON on stdin when no positional content is given (one fact per line, fields match the serde JSON shape).
 - **Verbosity:** `--quiet` suppresses progress; `-v` prints debug context to stderr.
@@ -235,7 +237,7 @@ Hard delete only in v0.1. LanceDB's `delete_by_id` semantics + table rewrite if 
 
 Pinned in `Cargo.toml`:
 
-- `lancedb = "0.27"` paired with `arrow = "56"` (matching triple for `arrow-array` / `arrow-schema`). This combination pulls in `lance = "4.x"`, which resolves the recursion-limit issue that older lance versions tripped on rustc 1.94.
+- `lancedb = "0.29"` paired with `arrow = "58"` (matching triple for `arrow-array` / `arrow-schema`). This combination pulls in `lance = "6.x"`. (Earlier pins: 0.27/56 resolved the recursion-limit issue older lance versions tripped on rustc 1.94; 0.29/58 landed with the 2026-05-15 OOM fix.)
 - `tokio` full features.
 - `thiserror` 2.x (upgraded from the archived 1.x).
 - `clap` 4.x derive.

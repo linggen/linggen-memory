@@ -70,20 +70,21 @@ The `Greater` branch is what protects against multi-channel version skew on one
 host (e.g. CC plugin's binary vs Codex plugin's binary opening the same store) —
 the older binary refuses rather than writing old-shape rows into a newer store.
 
-The two existing checks fold in: `ensure_late_schema_additions` becomes a
-registered migration; `check_schema_dim` (embedding-model/dim change) is a
-non-migratable break → `Greater`/refuse with export guidance.
+The two existing checks stay alongside the guard: `ensure_late_schema_additions`
+keeps running idempotently on every open (additive nullable columns don't need
+a version bump); `check_schema_dim` (embedding-model/dim change) is a
+non-migratable break — a future one ships as a MAJOR with a refused open.
 
 ## Migration registry
 
-```rust
-struct Migration { from: u32, to: u32, run: fn(&Table) -> Result<()> }
-// applied in sequence until on_disk == CURRENT; each step idempotent
-[
-  Migration { from: 0, to: 1, run: add_nullable_host_column },  // formalizes today's ad-hoc add
-  // future steps appended here
-]
-```
+`schema_version::run_migrations(from)` is the dispatch point, invoked by
+`store.rs::open_named` for any `Compat::Migrate` store before stamping. The
+registry is **empty at the v1 baseline**: fine-grained additive column changes
+(e.g. the nullable `host` column) stay in `ensure_late_schema_additions`,
+which runs idempotently on every open. When `STORE_SCHEMA_VERSION` bumps, the
+step migrating the previous version must be registered in `run_migrations` —
+reaching it without one is a release bug and errors instead of stamping an
+unmigrated store.
 
 ## Discipline: what a version bump means (the semver contract)
 
@@ -127,11 +128,13 @@ future website "store compatible?" indicator.
 
 ## Code touchpoints
 
-- **new** `src/memory/schema_version.rs` — constants, sidecar read/write, Arrow
-  metadata stamp, `enum Compat { Current, Migrate(u32), TooOld, TooNew }`,
-  `check_and_migrate()`, the migration registry.
-- `src/memory/store.rs::open_named` (~L406) — invoke the guard after
-  `open_table`; fold in `ensure_late_schema_additions` + `check_schema_dim`.
+- `src/memory/schema_version.rs` — constants, sidecar read/write,
+  `enum Compat { Current, Migrate, Adopt, TooOld, TooNew }`, `classify()`,
+  `refuse_message()`, `run_migrations()` (empty registry at the v1 baseline).
+- `src/memory/store.rs::open_named` — classify + refuse before connecting;
+  `run_migrations` for `Migrate` stores, then `stamp_current` after a
+  successful open. `ensure_late_schema_additions` + `check_schema_dim` stay
+  as separate per-open checks.
 - `src/cli` — `export` / `import` subcommands; `--schema-version`; extend
   `status` JSON with `store_schema` + `binary_schema`.
 - (optional) `src/update` — `upgrade` compares candidate `min_readable` vs
