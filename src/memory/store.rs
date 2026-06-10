@@ -1789,20 +1789,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn dedup_without_vector_falls_back_to_plain_insert() {
+    async fn dedup_without_vector_merges_into_existing_row() {
         let (store, _dir) = fresh_store().await;
 
         let mut existing = make_fact("anything", MemoryType::Fact);
         existing.vector = Some(unit_vec_at(0));
+        let existing_id = existing.id.clone();
         store.insert(&[existing]).await.unwrap();
 
-        // No-vector candidate skips dedup entirely (not searchable later;
-        // bulk import uses plain insert) — inserted even though content
-        // matches an existing row.
+        // A no-vector candidate dedups like any other (the exact-content
+        // lookup is pure SQL) — and the merge keeps the existing row's
+        // vector, since equal-length content never replaces it.
         let candidate = make_fact("anything", MemoryType::Fact);
-        let outcome = store.insert_with_dedup(candidate.clone()).await.unwrap();
-        assert!(matches!(outcome, InsertOutcome::Added(_)));
-        assert_eq!(store.count().await.unwrap(), 2);
+        let outcome = store.insert_with_dedup(candidate).await.unwrap();
+        let InsertOutcome::Merged { fact, .. } = outcome else {
+            panic!("expected Merged, got {outcome:?}");
+        };
+        assert_eq!(fact.id, existing_id);
+        assert!(fact.vector.is_some());
+        assert_eq!(store.count().await.unwrap(), 1);
     }
 
 }
