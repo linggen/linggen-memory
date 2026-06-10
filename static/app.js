@@ -1882,6 +1882,13 @@ async function buildSettingsCard() {
     const json = await resp.json();
     cfg = { ...cfg, ...(json?.data ?? {}) };
   } catch { /* defaults */ }
+  // Coerce before interpolating into the innerHTML template below — a
+  // non-numeric config value must not be able to break out of the
+  // value="" attribute.
+  const ttl = Number(cfg.episodic_ttl_days);
+  cfg.episodic_ttl_days = Number.isFinite(ttl) ? ttl : 7;
+  const score = Number(cfg.recall_min_score);
+  cfg.recall_min_score = Number.isFinite(score) ? score : 0.6;
   card.innerHTML = `
     <header>
       <h2 id="settings-title">Settings</h2>
