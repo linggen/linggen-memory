@@ -98,6 +98,22 @@ pub fn classify(data_dir: &Path) -> Compat {
     }
 }
 
+/// Run the registered migrations from `from` up to [`STORE_SCHEMA_VERSION`].
+///
+/// The registry is empty at the v1 baseline (fine-grained additive column
+/// changes live in `ensure_late_schema_additions`, which runs on every open).
+/// When `STORE_SCHEMA_VERSION` bumps, the step migrating the previous version
+/// must be registered here — reaching this function without one is a release
+/// bug, and erroring beats stamping a store the binary never migrated.
+pub fn run_migrations(from: u32) -> Result<()> {
+    Err(anyhow::anyhow!(
+        "store schema v{from} needs migration to v{STORE_SCHEMA_VERSION}, but this \
+         build registers no migration step for it — this is a ling-mem release bug. \
+         Escape hatch: `ling-mem export memory.jsonl`, reset the store, then \
+         `ling-mem import memory.jsonl`."
+    ))
+}
+
 /// For a refuse case ([`Compat::TooNew`] / [`Compat::TooOld`]), the actionable
 /// error message. `None` for openable cases.
 pub fn refuse_message(c: Compat, lancedb_dir: &Path) -> Option<String> {

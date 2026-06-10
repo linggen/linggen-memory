@@ -465,6 +465,13 @@ impl MemoryStore {
                 .with_context(|| format!("creating `{table_name}` table"))?
         };
 
+        // A store from an older (still-readable) schema generation must run
+        // its registered migrations before being stamped current — stamping
+        // without migrating would mark an unmigrated store as up to date.
+        if let super::schema_version::Compat::Migrate { from } = compat {
+            super::schema_version::run_migrations(from)?;
+        }
+
         // Record the store schema version that opened this store. Idempotent —
         // writes only when the sidecar differs (so patch/minor binaries sharing
         // a STORE_SCHEMA_VERSION never churn it). For an adopted legacy store,
