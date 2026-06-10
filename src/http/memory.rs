@@ -978,10 +978,11 @@ async fn forget(
         && filters.tier.is_none()
         && filters.since.is_none()
         && filters.until.is_none()
+        && filters.source_session.is_none()
     {
         return Err(ApiError::bad_request(
             "forget refuses an empty filter — supply at least one of \
-             contexts, type, tier, from, outcome, since, until",
+             contexts, type, tier, from, outcome, since, until, source_session",
         ));
     }
     let store = pick_store(&state, req.episodic);
