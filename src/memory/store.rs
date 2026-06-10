@@ -539,14 +539,10 @@ impl MemoryStore {
     /// fact?" is LLM judgment — the Reconcile contract
     /// (`linggen/doc/memory-spec.md` §2), not this mechanical path.
     ///
-    /// A vector-less candidate falls back to a plain insert (the no-vector
-    /// path is not searchable later anyway; bulk import uses `insert`).
+    /// Vector-less candidates take the same path: the exact-content lookup
+    /// is pure SQL, and an exact match has equal-length content, so
+    /// [`merge_fact`] never replaces the existing row's vector with `None`.
     pub async fn insert_with_dedup(&self, fact: Memory) -> Result<InsertOutcome> {
-        if fact.vector.is_none() {
-            self.insert(std::slice::from_ref(&fact)).await?;
-            return Ok(InsertOutcome::Added(fact));
-        }
-
         // Serialize the find→merge→write sequence. Without the lock, two
         // concurrent adds of the same (content, type) could both miss the
         // existing row and each insert a fresh copy.
