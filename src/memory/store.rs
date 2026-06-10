@@ -132,7 +132,7 @@ fn apply_origin_filter(facts: &mut Vec<Memory>, origin: Option<Origin>) {
 /// doesn't use this.
 #[derive(Debug, Clone, Copy, Default)]
 pub enum SortOrder {
-    /// Newest first (by `effective_timestamp`).
+    /// Newest first (by `activity_timestamp`, i.e. `updated_at ?? created_at`).
     #[default]
     Newest,
     /// Oldest first.
@@ -992,7 +992,7 @@ impl MemoryStore {
             q = q.only_if(sql);
         }
         let mut facts = self.collect_query(q).await?;
-        facts.sort_by(|a, b| b.effective_timestamp().cmp(&a.effective_timestamp()));
+        facts.sort_by(|a, b| b.activity_timestamp().cmp(&a.activity_timestamp()));
         Ok(facts)
     }
 
