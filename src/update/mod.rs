@@ -299,6 +299,16 @@ fn version_lt(current: &str, latest: &str) -> bool {
     false
 }
 
+/// Leading major component of a version string (same lenient parse as
+/// [`version_lt`]): `"1.2.3"` → 1, `"2.0.0-rc.1"` → 2.
+fn major_of(v: &str) -> u64 {
+    v.chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect::<String>()
+        .parse()
+        .unwrap_or(0)
+}
+
 /// Outcome of an `apply` call — rendered as JSON to stdout.
 #[derive(Debug, Serialize)]
 pub struct UpdateOutcome {
@@ -339,6 +349,20 @@ pub async fn apply(opts: ApplyOptions<'_>) -> Result<UpdateOutcome> {
             restarted: false,
             note: Some("already on latest version".to_string()),
         });
+    }
+
+    // A major bump can carry a non-migratable store-schema change (that is
+    // the release policy — see doc/schema-versioning.md). The new binary's
+    // open-time guard protects the data either way, but a blind swap would
+    // strand the user on a binary that refuses their store. Make the jump
+    // explicit.
+    if major_of(&latest) != major_of(&current) && !opts.force {
+        return Err(anyhow!(
+            "refusing to cross a major version ({current} → {latest}): the store \
+             schema may be incompatible. Run `ling-mem export memory.jsonl` first, \
+             then re-run with --force; if the new binary refuses the store, reset \
+             it and `ling-mem import memory.jsonl`."
+        ));
     }
 
     let slug = platform_slug().ok_or_else(|| anyhow!("unsupported platform"))?;
@@ -759,6 +783,14 @@ mod tests {
         // Acceptable because release.sh only ever tags plain vX.Y.Z.
         assert!(!version_lt("0.3.0", "0.3.0-rc.1"));
         assert!(version_lt("0.2.9", "0.3.0-rc.1"));
+    }
+
+    #[test]
+    fn major_of_parses_leading_component() {
+        assert_eq!(major_of("1.2.3"), 1);
+        assert_eq!(major_of("2.0.0-rc.1"), 2);
+        assert_eq!(major_of("0.7.2"), 0);
+        assert_eq!(major_of("garbage"), 0);
     }
 
     #[test]
