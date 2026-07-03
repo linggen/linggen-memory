@@ -81,10 +81,13 @@ change when you switch agents.
 |:---|:---|
 | Search | `ling-mem search "..." [--context ...] [--limit N]` |
 | Get    | `ling-mem get <id>` |
-| List   | `ling-mem list [--type ...] [--limit N] ...` |
+| List   | `ling-mem list [--type ...] [--day YYYY-MM-DD] [--limit N] ...` |
 | Add    | `ling-mem add "..." --type <t> --from <user\|agent\|derived> [--context ...] [--tag ...]` |
 | Update | `ling-mem edit <id> [--content ...] [--context ...] [--tag ...]` (or the back-compat alias `ling-mem update <id> ...`) |
 | Delete | `ling-mem delete <id> --yes` |
+| Days   | `ling-mem days [--pending]` — per-day dream state (pending / remembered / forgotten); `--pending` = the dream worklist, oldest first |
+| Stamp  | `ling-mem remember-day <date> --judged N --promoted K` — mark a day judged after a remember pass |
+| Sweep  | `ling-mem sweep [--dry-run]` — the forget stage: evict judged episodic rows past TTL; never touches un-judged rows |
 
 **Always pipe CLI list/search/get output through `jq -c 'del(.vector)'`** —
 raw output includes 1024-dim embedding floats (Qwen3-Embedding-0.6B) that blow up context.
@@ -99,7 +102,7 @@ ling-mem search "node 22 quirk" --limit 5 --format json | jq -c 'del(.vector)'
 |:---|:---|:---|
 | **Core** | Rows with `tier=core` in the `semantic` table | Narrow universals about the **person** — name, role, location, timezone, languages, pets / family. Always-loaded set; the host injects them at session start. Keep tight. |
 | **Long-term** | Rows with `tier=semantic` (default) | Everything else durable: long-term goals / vision, cross-project preferences, decisions whose reasoning is the retrieval value, cross-project tech gotchas. Retrieved on demand. |
-| **Episodic** | The `episodic` staging table | **Per-turn working capture** — append uncertain-durability signal here each turn (fast, append-only, no search-first): `ling-mem add "<content>" --episodic`. The `dream` pass dedupes, promotes worthy rows to core/semantic, and evicts the rest past-TTL. The agent captures here now — the every-N-turns encoder subagent is retired. |
+| **Episodic** | The `episodic` staging table | **Per-turn working capture** — append uncertain-durability signal here each turn (fast, append-only, no search-first): `ling-mem add "<content>" --episodic`. Episodic is the user's **short-term memory**: the dream pass *remembers* each day (promotes durable rows to core/semantic, deletes nothing), and the *forget sweep* (`ling-mem sweep`) ages out judged rows after the TTL. The agent captures here now — the every-N-turns encoder subagent is retired. |
 
 Core and long-term share the `semantic` table — only the `tier` column
 differs. Episodic lives in its own table at
@@ -264,7 +267,7 @@ mode's references.
 
 | Mode | Detection cue (look at the first user message) | What to load |
 |:---|:---|:---|
-| **Dream** | Message says `/shared-memory dream [window]` or `Run hippocampus`. Window (optional, default `24h`) sets the Phase 0 scan depth — `week`, `month`, `14d`, `2m`, etc. User-triggered. | `Read references/dream-flow.md`, `references/extractor-prompt.md`, and `references/routing-rules.md`. |
+| **Dream** | Message says `/shared-memory dream` (all pending days) or `/shared-memory dream <YYYY-MM-DD>` (one day). User-triggered — or wired to the host's own scheduler for a nightly pass. | `Read references/dream-flow.md` (the canonical remember/forget runbook) and `references/routing-rules.md`. Load `extractor-prompt.md` only for a harvest (gap-day session backfill). |
 | **Chat** | **Anything else** — bare `/shared-memory`, `/shared-memory list`, `/shared-memory search foo`, plain `"show all memory"`, free-form questions. | Body of this SKILL.md is the entry. `Read references/routing-rules.md` only when making save / dedup decisions. |
 
 **Chat mode is the default.** When in doubt, you are in chat mode.
@@ -280,7 +283,8 @@ first.
 
 | Verb | Action |
 |:---|:---|
-| `dream [window]` | **Full pass.** Runs the zero-LLM scan walk (`scripts/scan.sh <window>`, Phase 0) → reads `.scan-output.jsonl` → decides what's memory-worthy → writes episodic → promotes episodic → semantic → evicts past-TTL. `window` defaults to `24h`; accepts `today`/`24h`, `week`, `month`, `<n>d`/`<n>w`/`<n>m`/`<n>y` (e.g. `14d`, `2m`). Also called *hippocampus*. See `references/dream-flow.md`. |
+| `dream` | **Remember all pending days, oldest first, then sweep.** Worklist via `ling-mem days --pending`; per day: list its episodic rows → cluster → promote durable signal to semantic → `ling-mem remember-day` stamp. Never deletes; the final `ling-mem sweep` ages out judged rows past TTL. See `references/dream-flow.md`. |
+| `dream <YYYY-MM-DD>` | **Remember one day.** Same procedure, one day. If the day has no rows at all (a gap day), harvest first: scan that day's sessions (`scripts/scan.sh <date>`), encode candidates into episodic, then remember them. |
 | `add "<content>" [--type ...] [--tier core] [--context ...]` | Insert a new memory row. Defaults to `--tier semantic`. |
 | `search "<query>" [--limit N] [--context ...]` | Semantic search across `semantic` + `episodic`. |
 | `list [--type ...] [--tier ...] [--limit N]` | Paginated listing. |

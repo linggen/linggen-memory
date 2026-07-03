@@ -43,7 +43,7 @@ const INSTRUCTIONS: &str = r#"ling-mem provides durable cross-session memory for
 
 - **core** — narrow universals about the *person*: name, role, location, timezone, languages, family / pets. Always-loaded at session start. Keep tight.
 - **semantic** (default) — durable long-term facts retrieved on demand: long-term goals / vision, cross-project preferences, decisions whose reasoning is the value, cross-project tech gotchas. Most writes land here.
-- **episodic** — per-turn working capture (your steady-state lane). Append anything that *might* matter — **including project-scoped milestones, decisions + reasoning, and run learnings**. Fast, append-only, **no search-first**. The dream mission promotes worthy rows to semantic/core and evicts the rest past-TTL. This is the lane now that the every-N-turns encoder subagent is retired.
+- **episodic** — per-turn working capture (your steady-state lane). Append anything that *might* matter — **including project-scoped milestones, decisions + reasoning, and run learnings**. Fast, append-only, **no search-first**. Episodic is short-term memory: the nightly dream pass *remembers* each day (promotes durable rows to semantic/core, deletes nothing), and the forget sweep ages out judged rows after the TTL. This is the lane now that the every-N-turns encoder subagent is retired.
 
 # When to SEARCH (before answering)
 
@@ -174,7 +174,8 @@ fn tool_defs() -> Vec<Value> {
                 "properties": {
                     "contexts": {"type": "array", "items": {"type": "string"}},
                     "tier":     {"type": "string", "enum": ["core", "semantic", "episodic"]},
-                    "past_ttl": {"type": "boolean", "description": "Return only rows past the configured episodic TTL. Implies tier=episodic. Used by the dream consolidator."},
+                    "past_ttl": {"type": "boolean", "description": "Return only rows past the configured episodic TTL. Implies tier=episodic."},
+                    "day":      {"type": "string", "description": "One local calendar day, YYYY-MM-DD — the remember stage lists a single day's worklist with this."},
                     "sort":     {"type": "string", "enum": ["newest", "oldest"]},
                     "limit":    {"type": "integer"},
                     "offset":   {"type": "integer"}
@@ -198,7 +199,7 @@ fn tool_defs() -> Vec<Value> {
                 "properties": {
                     "content":  {"type": "string", "description": "The fact text the model will see when this row is recalled."},
                     "type":     {"type": "string", "enum": ["fact", "preference", "decision", "tried", "fixed", "learned", "built"]},
-                    "tier":     {"type": "string", "enum": ["core", "semantic", "episodic"], "description": "Destination tier. `episodic` = per-turn working capture (fast, append-only, no search-first; the dream pass promotes/evicts) — the default lane for uncertain-durability signal. `semantic` = curated durable facts (search-first). `core` = tiny always-injected universals about the person (search-first)."},
+                    "tier":     {"type": "string", "enum": ["core", "semantic", "episodic"], "description": "Destination tier. `episodic` = per-turn working capture (fast, append-only, no search-first; the dream pass remembers each day and the sweep forgets judged rows past TTL) — the default lane for uncertain-durability signal. `semantic` = curated durable facts (search-first). `core` = tiny always-injected universals about the person (search-first)."},
                     "contexts": {"type": "array", "items": {"type": "string"}},
                     "host":     {"type": "string", "description": "Identify the calling host (e.g. claude-code, codex, cursor). Stamped on the row for cross-host attribution. Optional."}
                 },
