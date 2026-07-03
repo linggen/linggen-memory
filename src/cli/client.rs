@@ -330,6 +330,77 @@ pub(crate) async fn forget(base: &str, args: ForgetArgs, format: OutputFormat) -
     }
 }
 
+pub(crate) async fn days(
+    base: &str,
+    args: crate::cli::DaysArgs,
+    format: OutputFormat,
+) -> Result<()> {
+    let mut body = json!({ "pending_only": args.pending });
+    if let Some(f) = args.from {
+        body["from"] = Value::String(f);
+    }
+    if let Some(t) = args.to {
+        body["to"] = Value::String(t);
+    }
+    let data = post(base, "/api/memory/days", &body).await?;
+    match format {
+        OutputFormat::Json => writeln_ndjson(&data),
+        OutputFormat::Text => {
+            let days = data.get("days").and_then(|v| v.as_array());
+            let Some(days) = days.filter(|d| !d.is_empty()) else {
+                println!("no days with memory data");
+                return Ok(());
+            };
+            for d in days {
+                let date = d.get("date").and_then(|v| v.as_str()).unwrap_or("?");
+                let state = d.get("state").and_then(|v| v.as_str()).unwrap_or("?");
+                let rows = d.get("rows").and_then(|v| v.as_u64()).unwrap_or(0);
+                let unjudged = d.get("unjudged").and_then(|v| v.as_u64()).unwrap_or(0);
+                let promoted = d.get("promoted").and_then(|v| v.as_u64()).unwrap_or(0);
+                println!(
+                    "{date}  {state:<10} rows={rows} unjudged={unjudged} promoted={promoted}"
+                );
+            }
+            Ok(())
+        }
+    }
+}
+
+pub(crate) async fn remember_day(
+    base: &str,
+    args: crate::cli::RememberDayArgs,
+    format: OutputFormat,
+) -> Result<()> {
+    let body = json!({
+        "date": args.date,
+        "judged": args.judged,
+        "promoted": args.promoted,
+        "harvested": args.harvested,
+    });
+    let data = post(base, "/api/memory/remember_day", &body).await?;
+    match format {
+        OutputFormat::Json => writeln_ndjson(&data),
+        OutputFormat::Text => {
+            let date = data.get("date").and_then(|v| v.as_str()).unwrap_or("?");
+            println!("remembered {date} (judged +{}, promoted +{})", args.judged, args.promoted);
+            Ok(())
+        }
+    }
+}
+
+pub(crate) async fn sweep(base: &str, dry_run: bool, format: OutputFormat) -> Result<()> {
+    let data = post(base, "/api/memory/sweep", &json!({ "dry_run": dry_run })).await?;
+    match format {
+        OutputFormat::Json => writeln_ndjson(&data),
+        OutputFormat::Text => {
+            let removed = data.get("removed").and_then(|v| v.as_u64()).unwrap_or(0);
+            let prefix = if dry_run { "would forget" } else { "forgot" };
+            println!("{prefix} {removed} episodic row(s)");
+            Ok(())
+        }
+    }
+}
+
 // ── Body builders ───────────────────────────────────────────────────────────
 
 #[allow(clippy::too_many_arguments)]
@@ -415,6 +486,11 @@ fn filter_body(filters: &FilterArgs) -> Value {
     // shipper omitted it.
     if let Some(t) = filters.tier {
         body["tier"] = Value::String(cli_tier_str(t).to_string());
+    }
+    // `--day` resolves server-side (the daemon owns local-day semantics),
+    // so forward it verbatim rather than pre-computing since/until here.
+    if let Some(d) = &filters.day {
+        body["day"] = Value::String(d.clone());
     }
     body
 }

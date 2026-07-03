@@ -214,6 +214,41 @@ fn tool_defs() -> Vec<Value> {
                 "required": ["id"]
             }
         }),
+        json!({
+            "name": "memory_days",
+            "description": "Per-day dream-state rollup: each day's episodic row counts + pipeline state (today / staging / pending / remembered / forgotten). Use pending_only to get the dream worklist — days awaiting a remember pass, oldest first.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "pending_only": {"type": "boolean", "description": "Only days awaiting a remember pass."},
+                    "from": {"type": "string", "description": "Inclusive YYYY-MM-DD lower bound."},
+                    "to":   {"type": "string", "description": "Inclusive YYYY-MM-DD upper bound."}
+                }
+            }
+        }),
+        json!({
+            "name": "memory_remember_day",
+            "description": "Stamp a day remembered after judging its episodic rows (promote the durable ones first via memory_add, then stamp). Counts accumulate. Only past local days can be stamped.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "date":     {"type": "string", "description": "Local calendar day, YYYY-MM-DD."},
+                    "judged":   {"type": "integer", "description": "Rows judged in this pass."},
+                    "promoted": {"type": "integer", "description": "Rows promoted to semantic in this pass."}
+                },
+                "required": ["date"]
+            }
+        }),
+        json!({
+            "name": "memory_sweep",
+            "description": "Forget sweep — mechanically evict episodic rows that are past TTL, belong to a remembered day, and were judged (created before the day's remembered_at). Never deletes un-judged rows; safe to call anytime.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "dry_run": {"type": "boolean", "description": "Report what would be evicted without deleting."}
+                }
+            }
+        }),
     ]
 }
 
@@ -241,11 +276,14 @@ async fn handle_tools_call(state: &SharedState, params: Value) -> Result<Value, 
 /// Map MCP tool name → daemon endpoint suffix.
 fn tool_name_to_verb(name: &str) -> Option<&'static str> {
     match name {
-        "memory_search" => Some("search"),
-        "memory_list"   => Some("list"),
-        "memory_get"    => Some("get"),
-        "memory_add"    => Some("add"),
-        "memory_delete" => Some("delete"),
+        "memory_search"       => Some("search"),
+        "memory_list"         => Some("list"),
+        "memory_get"          => Some("get"),
+        "memory_add"          => Some("add"),
+        "memory_delete"       => Some("delete"),
+        "memory_days"         => Some("days"),
+        "memory_remember_day" => Some("remember_day"),
+        "memory_sweep"        => Some("sweep"),
         _ => None,
     }
 }

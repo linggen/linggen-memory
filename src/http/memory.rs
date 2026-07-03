@@ -266,11 +266,38 @@ pub struct FilterDTO {
     /// existing caller (dashboard, CLI list, etc.) unchanged.
     #[serde(default)]
     pub past_ttl: bool,
+    /// One **local calendar day**, `YYYY-MM-DD` — sugar over
+    /// `since`/`until` covering exactly that day. The dream pipeline's
+    /// remember stage lists one day's worklist with this. Explicit
+    /// `since`/`until` win; `day` only fills what's unset.
+    #[serde(default)]
+    pub day: Option<String>,
 }
 
 impl FilterDTO {
-    fn into_filters(self) -> Filters {
-        Filters {
+    /// Fold the `day` sugar into `since`/`until`. Called by every
+    /// handler before `into_filters` — a bad day string is a 400, not a
+    /// silently-ignored filter.
+    fn resolve_day(&mut self) -> Result<(), ApiError> {
+        let Some(day) = self.day.take() else {
+            return Ok(());
+        };
+        let date = chrono::NaiveDate::parse_from_str(day.trim(), "%Y-%m-%d").map_err(|_| {
+            ApiError::bad_request(format!("invalid day {day:?}: expected YYYY-MM-DD"))
+        })?;
+        let (start, end) = super::days::local_day_bounds(date);
+        if self.since.is_none() {
+            self.since = Some(start);
+        }
+        if self.until.is_none() {
+            self.until = Some(end);
+        }
+        Ok(())
+    }
+
+    fn into_filters(mut self) -> Result<Filters, ApiError> {
+        self.resolve_day()?;
+        Ok(Filters {
             contexts: self.contexts,
             types: self.r#type.into_iter().collect(),
             origin: self.from,
@@ -279,7 +306,7 @@ impl FilterDTO {
             until: self.until,
             tier: self.tier,
             source_session: self.source_session,
-        }
+        })
     }
 }
 
@@ -752,7 +779,7 @@ async fn search(
         .embed_query_serialized(req.query.clone())
         .await
         .map_err(ApiError::internal)?;
-    let filters = req.filters.into_filters();
+    let filters = req.filters.into_filters()?;
 
     // Store-wide recall floor: when the client omits `min_score`, apply the
     // daemon's configured `recall_min_score` so every host shares one recall
@@ -805,7 +832,7 @@ async fn list(
             - chrono::Duration::days(cfg.episodic_ttl_days as i64);
         req.filters.until = Some(cutoff);
     }
-    let filters = req.filters.into_filters();
+    let filters = req.filters.into_filters()?;
     let sort = req.sort.into();
     let mut combined = Vec::new();
     // For each in-scope store, pull `limit + offset` rows so the post-
@@ -837,7 +864,7 @@ async fn count(
     State(state): State<SharedState>,
     Json(req): Json<CountRequest>,
 ) -> Result<Response, ApiError> {
-    let filters = req.filters.into_filters();
+    let filters = req.filters.into_filters()?;
     let stores = stores_for_read(&state, req.episodic);
 
     // Sum row counts across in-scope stores (metadata-only LanceDB call).
@@ -968,7 +995,7 @@ async fn forget(
     State(state): State<SharedState>,
     Json(req): Json<ForgetRequest>,
 ) -> Result<Response, ApiError> {
-    let filters = req.filters.into_filters();
+    let filters = req.filters.into_filters()?;
     // Refuse empty filters — bulk delete must be intentional. Matches the
     // CLI's refusal when no filter flags are passed.
     if filters.contexts.is_empty()

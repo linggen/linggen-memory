@@ -96,6 +96,27 @@ pub enum Command {
     /// used to be a separate `evict` verb.
     Forget(ForgetArgs),
 
+    /// Per-day dream-state rollup: each day's episodic row counts +
+    /// pipeline state (today / staging / pending / remembered /
+    /// forgotten). `--pending` narrows to days awaiting a remember pass,
+    /// oldest first — the dream worklist. Requires the daemon.
+    Days(DaysArgs),
+
+    /// Stamp a day as remembered after a remember pass judged its rows.
+    /// Called by the agent that ran the pass (Linggen mission / skill
+    /// page / CC host agent). Requires the daemon.
+    RememberDay(RememberDayArgs),
+
+    /// Forget sweep — the dream pipeline's mechanical third stage: evict
+    /// episodic rows that are past TTL, belong to a remembered day, and
+    /// were judged (created before the day's `remembered_at`). Never
+    /// touches un-judged rows. Requires the daemon.
+    Sweep {
+        /// Report what would be evicted without deleting anything.
+        #[arg(long)]
+        dry_run: bool,
+    },
+
     // Session-scanning utilities (`collect` + `extract`) used to live here.
     // They moved to `skills/memory/scripts/` as bash helpers — the daemon is
     // a pure data service; reading session files isn't its concern.
@@ -347,6 +368,45 @@ pub struct FilterArgs {
     /// passed, the stricter (older) cutoff wins.
     #[arg(long, value_name = "DURATION", value_parser = parse_duration_to_cutoff)]
     pub older_than: Option<DateTime<Utc>>,
+
+    /// One local calendar day, `YYYY-MM-DD` — sugar over
+    /// `--since`/`--until` covering exactly that day. The remember stage
+    /// lists a single day's worklist with this. Explicit bounds win.
+    #[arg(long, value_name = "YYYY-MM-DD")]
+    pub day: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct DaysArgs {
+    /// Only days awaiting a remember pass, oldest first.
+    #[arg(long)]
+    pub pending: bool,
+
+    /// Inclusive lower bound, `YYYY-MM-DD`.
+    #[arg(long, value_name = "YYYY-MM-DD")]
+    pub from: Option<String>,
+
+    /// Inclusive upper bound, `YYYY-MM-DD`.
+    #[arg(long, value_name = "YYYY-MM-DD")]
+    pub to: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct RememberDayArgs {
+    /// Local calendar day that was judged, `YYYY-MM-DD`.
+    pub date: String,
+
+    /// Rows judged in this pass (accumulates onto the day's total).
+    #[arg(long, default_value_t = 0)]
+    pub judged: u32,
+
+    /// Rows promoted to semantic in this pass (accumulates).
+    #[arg(long, default_value_t = 0)]
+    pub promoted: u32,
+
+    /// Also stamp `harvested_at` (a harvest pass covered this day).
+    #[arg(long)]
+    pub harvested: bool,
 }
 
 #[derive(Debug, Args)]
@@ -498,24 +558,34 @@ impl From<CliSort> for SortOrder {
 }
 
 impl FilterArgs {
-    fn into_filters(self) -> Filters {
+    fn into_filters(self) -> Result<Filters> {
         // `--older-than 30d` is sugar for `--until <now-30d>`. If both
         // are passed, pick the stricter (older) cutoff so the result
         // is the intersection of both predicates.
-        let until = match (self.until, self.older_than) {
+        let mut until = match (self.until, self.older_than) {
             (Some(a), Some(b)) => Some(if a < b { a } else { b }),
             (a, b) => a.or(b),
         };
-        Filters {
+        let mut since = self.since;
+        // `--day` is sugar over since/until covering one local calendar
+        // day. Explicit bounds win; day only fills what's unset.
+        if let Some(day) = &self.day {
+            let date = chrono::NaiveDate::parse_from_str(day.trim(), "%Y-%m-%d")
+                .map_err(|_| anyhow!("invalid --day {day:?}: expected YYYY-MM-DD"))?;
+            let (start, end) = crate::http::days::local_day_bounds(date);
+            since = since.or(Some(start));
+            until = until.or(Some(end));
+        }
+        Ok(Filters {
             contexts: self.contexts,
             types: self.types.into_iter().map(Into::into).collect(),
             origin: self.from.map(Into::into),
             outcome: self.outcome.map(Into::into),
-            since: self.since,
+            since,
             until,
             tier: self.tier.map(Into::into),
             source_session: None,
-        }
+        })
     }
 }
 
@@ -683,6 +753,11 @@ pub async fn run(cli: Cli) -> Result<()> {
                     client::delete(&base_url, &id, yes, format).await
                 }
                 Command::Forget(args) => client::forget(&base_url, args, format).await,
+                Command::Days(args) => client::days(&base_url, args, format).await,
+                Command::RememberDay(args) => {
+                    client::remember_day(&base_url, args, format).await
+                }
+                Command::Sweep { dry_run } => client::sweep(&base_url, dry_run, format).await,
                 Command::Serve { .. }
                 | Command::Start { .. }
                 | Command::Stop
@@ -717,6 +792,12 @@ pub async fn run(cli: Cli) -> Result<()> {
         Command::Edit(args) => cmd_update(&store, args, format).await,
         Command::Delete { id, yes } => cmd_delete(&store, &id, yes, format).await,
         Command::Forget(args) => cmd_forget(&store, args, format).await,
+        // Dream-state ops live behind the daemon (it owns `.days.json`);
+        // there is deliberately no direct-store fallback — two writers to
+        // the sidecar would race.
+        Command::Days(_) | Command::RememberDay(_) | Command::Sweep { .. } => Err(anyhow!(
+            "this command requires the daemon — start it with `ling-mem start`"
+        )),
         Command::Serve { .. }
         | Command::Start { .. }
         | Command::Stop
@@ -883,7 +964,7 @@ async fn cmd_search(store: &MemoryStore, args: SearchArgs, format: OutputFormat)
         .hybrid_scored(
             &vec,
             &args.query,
-            &args.filters.into_filters(),
+            &args.filters.into_filters()?,
             args.limit,
             args.min_score,
         )
@@ -901,7 +982,7 @@ async fn cmd_search_recall(recall: &Recall, args: SearchArgs, format: OutputForm
         .query(
             &vec,
             &args.query,
-            &args.filters.into_filters(),
+            &args.filters.into_filters()?,
             args.limit,
             args.min_score,
         )
@@ -976,7 +1057,7 @@ fn embed_missing(facts: &mut [crate::memory::Memory]) -> Result<()> {
 }
 
 async fn cmd_list(store: &MemoryStore, args: ListArgs, format: OutputFormat) -> Result<()> {
-    let filters = args.filters.into_filters();
+    let filters = args.filters.into_filters()?;
     let results = store
         .list(&filters, args.sort.into(), args.limit, args.offset)
         .await?;
@@ -1038,7 +1119,7 @@ async fn cmd_forget(store: &MemoryStore, args: ForgetArgs, format: OutputFormat)
             "refusing to forget without --yes (bulk delete requires explicit confirmation)"
         ));
     }
-    let filters = args.filters.into_filters();
+    let filters = args.filters.into_filters()?;
     let removed = store.forget(&filters).await?;
     match format {
         OutputFormat::Json => writeln_ndjson(&serde_json::json!({ "removed": removed })),
@@ -1306,8 +1387,9 @@ mod tests {
             since: None,
             until: None,
             older_than: None,
+            day: None,
         };
-        let filters = fa.into_filters();
+        let filters = fa.into_filters().unwrap();
         assert_eq!(filters.contexts, vec!["code/linggen".to_string()]);
         assert_eq!(filters.types.len(), 2);
         assert_eq!(filters.tier, Some(Tier::Core));
@@ -1319,7 +1401,7 @@ mod tests {
     fn filter_args_default_tier_is_none() {
         // Omitting `--tier` leaves the filter unconstrained — `into_filters`
         // must not coerce a default tier (that would hide semantic rows).
-        let filters = FilterArgs::default().into_filters();
+        let filters = FilterArgs::default().into_filters().unwrap();
         assert_eq!(filters.tier, None);
     }
 }

@@ -13,6 +13,7 @@
 //! `static/`. See `doc/ui-spec.md`.
 
 mod config;
+pub(crate) mod days;
 pub mod envelope;
 mod health;
 mod mcp;
@@ -38,10 +39,14 @@ use state::SharedState;
 pub fn build_router(state: SharedState, telemetry: Telemetry) -> Router {
     Router::new()
         .route("/api/health", get(health::handler))
-        .merge(memory::router().layer(middleware::from_fn_with_state(
-            telemetry,
-            command_telemetry_layer,
-        )))
+        .merge(
+            memory::router()
+                .merge(days::router())
+                .layer(middleware::from_fn_with_state(
+                    telemetry,
+                    command_telemetry_layer,
+                )),
+        )
         .merge(mcp::router())
         .merge(config::router())
         .merge(ui::router())
