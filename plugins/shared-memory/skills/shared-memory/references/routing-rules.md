@@ -108,17 +108,21 @@ dates, equipment, the people and animals around them.
 | Single architectural opinion (*"we should decouple X"*) | Rot-prone | Skip. Memory does not author project files; user-curated `AGENTS.md` is the right home if anywhere. |
 | The user's API key / password / git remote with embedded PAT | **Never store secrets at any layer** | Skip the credential. Memory does not write the gotcha to a project file either — the user hand-edits if they want it there. |
 
-Rule of thumb: if the entry reads as *"true about this person in any
-context"*, it's right. If it reads as *"what they worked on this week"*
-or *"how this specific project works"*, **drop it**. Memory does not
-write to project files; the user authors those by hand.
+Rule of thumb — **for core/long-term writes**: if the entry reads as
+*"true about this person in any context"*, it's right. If it reads as
+*"what they worked on this week"* or *"how this specific project
+works"*, it doesn't belong in the long-term tier — but project-scoped
+milestones, decisions + reasoning, and run learnings still go to
+**episodic staging** (see SKILL.md); the dream pass judges promotion.
+Only secrets and file-re-derivable content are dropped outright.
+Memory does not write to project files; the user authors those by hand.
 
 ## Maintenance — fix when you see it; ask when unsure
 
-The agent — whether in live chat, dream, or the per-turn encoder
-subagent — is **always near a user**. Memory hygiene is a hard floor:
-when you see drift, fix it in the same pass. Don't accumulate it. The
-only split is whether you ask first or act silently.
+Memory hygiene is a hard floor for every memory pass — live chat or a
+dream run: when you see drift, fix it in the same pass. Don't
+accumulate it. The only split is whether you ask first or act silently
+(a headless dream run can't ask — it defers).
 
 ### Mechanical maintenance — fire-and-forget
 
@@ -130,7 +134,7 @@ Pure rule application. No LLM judgment, no asking.
 | Exact-content dedup at write (binary `insert_with_dedup` rejects identical content) | Binary | Pure equality check |
 | Cross-tier exact-content dedup on `add` (HTTP path) | Daemon | Equality check + tier-rank merge |
 | Extend `contexts[]` / `tags[]` from new evidence | Anywhere | Array union |
-| Retire past-TTL episodic via the `dream` worklist (promote / delete) | `dream` | Engine-selected worklist, terminal decision per row |
+| Evict past-TTL episodic on remembered days (`sweep`) | `dream` | Mechanical forget — only touches rows a remember pass already judged |
 
 ### Semantic maintenance — silent when confident, AskUser when not
 

@@ -21,10 +21,10 @@ use crate::http::state::SharedState;
 /// default and the existing config files round-trip cleanly.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
-    /// How long an episodic row survives before the dream consolidator
-    /// is allowed to terminally promote-or-delete it. The CLI's
-    /// `evict --before <ts>` takes the resolved instant; this is the
-    /// human-facing knob the console / dream skill reads.
+    /// Short-term retention length: how long an episodic row lives
+    /// before the forget sweep may evict it — and only on days a
+    /// remember pass has already judged (`remembered_at` stamped).
+    /// This is the human-facing knob the console / dream skill reads.
     #[serde(default = "default_episodic_ttl_days")]
     pub episodic_ttl_days: u32,
 

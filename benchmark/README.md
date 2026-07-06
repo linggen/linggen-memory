@@ -66,6 +66,6 @@ Aggregates per question type and overall.
 
 ## Caveats
 
-- The runner measures `ling-mem`'s **default search mode** (hybrid: vector + metadata). To benchmark BM25-only or vector-only separately, ling-mem needs a `--mode` flag on `search` (not implemented yet).
+- The runner measures `ling-mem`'s **default search mode** (hybrid: cosine + IDF-weighted keyword boost). To benchmark keyword-only or vector-only separately, ling-mem needs a `--mode` flag on `search` (not implemented yet).
 - Numbers are tied to the embedding model `ling-mem` ships with at the version under test. Always record the version in the filename and in `LONGMEMEVAL.md`.
-- Granularity here is **session-as-fact** (one row per haystack session, ~5 KB each). This matches the apples-to-apples comparison with agentmemory and MemPalace. ling-mem's actual usage pattern is shorter atomic facts; if you want a "natural-granularity" number, build a separate Option-B runner that adds each turn as its own fact.
+- Granularity is **turn** (LongMemEval `GRANULARITY=turn`): one fact per turn, sub-chunked to stay under ling-mem's 512-token embedding cap. A session-as-blob index would measure the cap, not retrieval — matching how ling-mem actually stores short atomic facts.

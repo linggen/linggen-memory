@@ -6,8 +6,8 @@
 
 - **Dataset**: [`xiaowu0162/longmemeval-cleaned`](https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned), split `longmemeval_s_cleaned`
 - **Metric**: `recall_any@K` — does *any* gold session appear in top-K retrieved?
-- **Granularity**: one fact per haystack session (Option A, apples-to-apples with agentmemory)
-- **Mode**: `ling-mem search` default (hybrid: vector + metadata)
+- **Granularity**: one fact per turn (LongMemEval `GRANULARITY=turn`; sub-chunked under the 512-token embedding cap)
+- **Mode**: `ling-mem search` default (hybrid: cosine + IDF-weighted keyword boost)
 - **No LLM in the loop** — pure retrieval eval, no answer generation, no judge
 
 ## Reproducing
