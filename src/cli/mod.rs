@@ -107,6 +107,15 @@ pub enum Command {
     /// page / CC host agent). Requires the daemon.
     RememberDay(RememberDayArgs),
 
+    /// Stamp a day scanned (`harvested_at` only): a scan pass covered
+    /// this day's session logs. Does not touch `remembered_at` — the
+    /// staged rows go pending and a dream pass judges them. Requires
+    /// the daemon.
+    HarvestDay {
+        /// Local calendar day, `YYYY-MM-DD`.
+        date: String,
+    },
+
     /// Forget sweep — the dream pipeline's mechanical third stage: evict
     /// episodic rows that are past TTL, belong to a remembered day, and
     /// were judged (created before the day's `remembered_at`). Never
@@ -763,6 +772,9 @@ pub async fn run(cli: Cli) -> Result<()> {
                     client::remember_day(&base_url, args, format).await
                 }
                 Command::Sweep { dry_run } => client::sweep(&base_url, dry_run, format).await,
+                Command::HarvestDay { date } => {
+                    client::harvest_day(&base_url, &date, format).await
+                }
                 Command::Stats => client::stats(&base_url, format).await,
                 Command::Serve { .. }
                 | Command::Start { .. }
@@ -801,11 +813,13 @@ pub async fn run(cli: Cli) -> Result<()> {
         // Dream-state ops live behind the daemon (it owns `.days.json`);
         // there is deliberately no direct-store fallback — two writers to
         // the sidecar would race.
-        Command::Days(_) | Command::RememberDay(_) | Command::Sweep { .. } | Command::Stats => {
-            Err(anyhow!(
-                "this command requires the daemon — start it with `ling-mem start`"
-            ))
-        }
+        Command::Days(_)
+        | Command::RememberDay(_)
+        | Command::HarvestDay { .. }
+        | Command::Sweep { .. }
+        | Command::Stats => Err(anyhow!(
+            "this command requires the daemon — start it with `ling-mem start`"
+        )),
         Command::Serve { .. }
         | Command::Start { .. }
         | Command::Stop

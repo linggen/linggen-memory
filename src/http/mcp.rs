@@ -284,6 +284,7 @@ fn tool_name_to_verb(name: &str) -> Option<&'static str> {
         "memory_delete"       => Some("delete"),
         "memory_days"         => Some("days"),
         "memory_remember_day" => Some("remember_day"),
+        "memory_harvest_day"  => Some("harvest_day"),
         "memory_sweep"        => Some("sweep"),
         _ => None,
     }

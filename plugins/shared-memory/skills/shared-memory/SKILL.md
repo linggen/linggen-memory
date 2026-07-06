@@ -267,7 +267,8 @@ mode's references.
 
 | Mode | Detection cue (look at the first user message) | What to load |
 |:---|:---|:---|
-| **Dream** | Message says `/shared-memory dream` (all pending days) or `/shared-memory dream <YYYY-MM-DD>` (one day). User-triggered — or wired to the host's own scheduler for a nightly pass. | `Read references/dream-flow.md` (the canonical remember/forget runbook) and `references/routing-rules.md`. Load `extractor-prompt.md` only for a harvest (gap-day session backfill). |
+| **Dream** | Message says `/shared-memory dream` (all pending days) or `/shared-memory dream <YYYY-MM-DD>` (one day). User-triggered — or wired to the host's own scheduler for a nightly pass. | `Read references/dream-flow.md` (the canonical remember/forget runbook) and `references/routing-rules.md`. |
+| **Scan** | Message says `/shared-memory scan <YYYY-MM-DD>` — stage that day's session logs (backfill), see the verb table. | `Read references/dream-flow.md` (its Scan section) and `references/extractor-prompt.md` (what to stage). |
 | **Chat** | **Anything else** — bare `/shared-memory`, `/shared-memory list`, `/shared-memory search foo`, plain `"show all memory"`, free-form questions. | Body of this SKILL.md is the entry. `Read references/routing-rules.md` only when making save / dedup decisions. |
 
 **Chat mode is the default.** When in doubt, you are in chat mode.
@@ -284,7 +285,8 @@ first.
 | Verb | Action |
 |:---|:---|
 | `dream` | **Remember all pending days, oldest first, then sweep.** Worklist via `ling-mem days --pending`; per day: list its episodic rows → cluster → promote durable signal to semantic → `ling-mem remember-day` stamp. Never deletes; the final `ling-mem sweep` ages out judged rows past TTL. See `references/dream-flow.md`. |
-| `dream <YYYY-MM-DD>` | **Remember one day.** Same procedure, one day. If the day has no rows at all (a gap day), harvest first: scan that day's sessions (`scripts/scan.sh <date>`), encode candidates into episodic, then remember them. |
+| `dream <YYYY-MM-DD>` | **Remember one day.** Same procedure, one day. |
+| `scan <YYYY-MM-DD>` | **Stage one day's session logs (backfill).** Run `scripts/scan.sh <date>`; `list --day <date>` the day's existing rows and skip any scanned session whose id is already among their `source_session`s (that's what makes re-scanning safe); encode the remaining keepers into episodic with the day's `occurred_at`; stamp with `ling-mem harvest-day <date>` (scan stamp only — the day goes pending and dream judges it later). Nothing new: still stamp, report `CLEAN`. |
 | `add "<content>" [--type ...] [--tier core] [--context ...]` | Insert a new memory row. Defaults to `--tier semantic`. |
 | `search "<query>" [--limit N] [--context ...]` | Semantic search across `semantic` + `episodic`. |
 | `list [--type ...] [--tier ...] [--limit N]` | Paginated listing. |

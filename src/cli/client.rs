@@ -401,6 +401,17 @@ pub(crate) async fn sweep(base: &str, dry_run: bool, format: OutputFormat) -> Re
     }
 }
 
+pub(crate) async fn harvest_day(base: &str, date: &str, format: OutputFormat) -> Result<()> {
+    let data = post(base, "/api/memory/harvest_day", &json!({ "date": date })).await?;
+    match format {
+        OutputFormat::Json => writeln_ndjson(&data),
+        OutputFormat::Text => {
+            println!("stamped {date} scanned");
+            Ok(())
+        }
+    }
+}
+
 pub(crate) async fn stats(base: &str, format: OutputFormat) -> Result<()> {
     let data = post(base, "/api/memory/stats", &json!({})).await?;
     match format {

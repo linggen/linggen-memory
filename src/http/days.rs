@@ -42,6 +42,7 @@ pub fn router() -> Router<SharedState> {
     Router::new()
         .route("/api/memory/days", post(days))
         .route("/api/memory/remember_day", post(remember_day))
+        .route("/api/memory/harvest_day", post(harvest_day))
         .route("/api/memory/sweep", post(sweep))
 }
 
@@ -313,6 +314,40 @@ async fn remember_day(
     if req.harvested {
         rec.harvested_at = Some(Utc::now());
     }
+    let body = json!({ "date": key, "record": rec });
+    save(&state.data_dir, &days_state)
+        .await
+        .map_err(|e| ApiError::internal(anyhow::anyhow!(e)))?;
+    Ok(ok(body))
+}
+
+// ── harvest_day (scan stamp) ────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct HarvestDayRequest {
+    /// Local calendar day, `YYYY-MM-DD`.
+    pub date: String,
+}
+
+/// Stamp `harvested_at` only — a scan (session backfill) covered this
+/// day. Deliberately does NOT touch `remembered_at`: scanning stages
+/// rows; the day then goes pending and a dream pass judges it.
+async fn harvest_day(
+    State(state): State<SharedState>,
+    Json(req): Json<HarvestDayRequest>,
+) -> Result<Response, ApiError> {
+    let date = parse_day(&req.date)?;
+    let today = today_local();
+    let key = date.format("%Y-%m-%d").to_string();
+    if key >= today {
+        return Err(ApiError::bad_request(format!(
+            "day {key} is not over yet — only past local days can be scanned"
+        )));
+    }
+
+    let mut days_state = load(&state.data_dir).await;
+    let rec = days_state.days.entry(key.clone()).or_default();
+    rec.harvested_at = Some(Utc::now());
     let body = json!({ "date": key, "record": rec });
     save(&state.data_dir, &days_state)
         .await

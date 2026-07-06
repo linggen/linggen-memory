@@ -1,14 +1,17 @@
 # Dream flow — remember + forget (canonical runbook)
 
-The dream pipeline has three stages — **harvest → remember → forget**.
-This file is the canonical procedure every trigger runs:
+Two user-facing functions: **scan** (stage a day's session logs) and
+**dream** (= remember + forget). This file is the canonical procedure
+every trigger runs:
 
-- **Linggen nightly mission** — the built-in `dream` mission under the
-  `memory` agent (synced from this runbook at release).
-- **This skill session** — `/shared-memory dream [...]` in chat, the
-  dashboard's Dream button, or a calendar day-click.
-- **Claude Code / Codex / OpenClaw** — the host agent runs the same
-  steps via the `ling-mem` CLI (or the `memory_*` MCP tools).
+- **Linggen** — the built-in `dream` mission under the `memory` agent
+  runs every dream: the nightly cron, the memory app's Run-dream
+  button, and the calendar day buttons (day-scoped trigger). The
+  skill session runs only **scan** (`/shared-memory scan <date>`) and
+  explicit chat requests.
+- **Claude Code / Codex / OpenClaw** — no mission runtime; the host
+  agent runs the same steps via the `ling-mem` CLI (or the `memory_*`
+  MCP tools).
 
 Day-granular: the unit of work is one **local calendar day** of
 episodic staging. Pending days drain **oldest first**.
@@ -17,11 +20,13 @@ episodic staging. Pending days drain **oldest first**.
 
 On **Linggen**, use the built-in `Memory_query` / `Memory_write` tools
 (Chat-tier, ungated — zero permission prompts across a pass full of
-writes): verbs `days`, `list` (+`day`), `add`, `remember_day`, `sweep`.
+writes): verbs `days`, `list` (+`day`), `add`, `remember_day`,
+`harvest_day` (the scan stamp), `sweep`.
 On **other hosts**, the CLI is 1:1: `ling-mem days [--pending]`,
 `ling-mem list --tier episodic --day <date>`, `ling-mem add`,
-`ling-mem remember-day <date>`, `ling-mem sweep`. Always pipe CLI
-list/search output through `jq -c 'del(.vector)'`.
+`ling-mem remember-day <date>`, `ling-mem harvest-day <date>`,
+`ling-mem sweep`. Always pipe CLI list/search output through
+`jq -c 'del(.vector)'`.
 
 State lives in the daemon (`.days.json` sidecar + the two tables) —
 the old `.dream-state.json` / `.dream-history.jsonl` files are retired;
@@ -58,14 +63,30 @@ never write them.
 ## `dream <YYYY-MM-DD>` — remember one day
 
 - Day has episodic rows → **Remember one day** below, then one sweep.
-- Day has **no rows at all** (gap day) → **Harvest** first: run
-  `Bash bash ~/.linggen/skills/shared-memory/scripts/scan.sh <date>`
-  (zero-LLM session walk → `.scan-output.jsonl`), judge candidates per
-  `extractor-prompt.md` + `routing-rules.md`, write keepers to
-  episodic with `occurred_at` set to the session time — then remember
-  them, stamping with the harvested flag
-  (`ling-mem remember-day <date> --harvested ...`).
+- Day has **no rows at all** → nothing to dream; suggest a scan if the
+  user worked that day.
 - Today / future dates are not dreamable — say so and stop.
+
+## `scan <YYYY-MM-DD>` — stage one day's session logs
+
+Backfill staging, always user-triggered, idempotent:
+
+1. Run `Bash bash ~/.linggen/skills/shared-memory/scripts/scan.sh <date>`
+   (zero-LLM session walk → `.scan-output.jsonl`).
+2. **Skip covered sessions.** `list` the day's existing rows
+   (`tier=episodic` + that `day`, and note promoted twins may live in
+   semantic) and collect their `source_session` ids. Drop every
+   scanned session already in that set — live capture or a prior scan
+   contributed it. This is what makes re-scanning safe on
+   partially-captured days.
+3. Judge the remaining candidates per `extractor-prompt.md` +
+   `routing-rules.md`; write keepers to episodic with `occurred_at`
+   set to the session time.
+4. Stamp scanned — `harvest_day` verb (CLI:
+   `ling-mem harvest-day <date>`). This does **not** mark the day
+   remembered: new rows make it *pending*, and the next dream (nightly
+   or the day's dream button) judges them. Nothing new staged → still
+   stamp, report `CLEAN`.
 
 ## Remember one day
 
