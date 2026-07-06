@@ -19,6 +19,7 @@ mod health;
 mod mcp;
 mod memory;
 pub mod state;
+mod stats;
 mod ui;
 
 use crate::telemetry::Telemetry;
@@ -42,6 +43,7 @@ pub fn build_router(state: SharedState, telemetry: Telemetry) -> Router {
         .merge(
             memory::router()
                 .merge(days::router())
+                .merge(stats::router())
                 .layer(middleware::from_fn_with_state(
                     telemetry,
                     command_telemetry_layer,

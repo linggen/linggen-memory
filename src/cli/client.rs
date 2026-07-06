@@ -401,6 +401,48 @@ pub(crate) async fn sweep(base: &str, dry_run: bool, format: OutputFormat) -> Re
     }
 }
 
+pub(crate) async fn stats(base: &str, format: OutputFormat) -> Result<()> {
+    let data = post(base, "/api/memory/stats", &json!({})).await?;
+    match format {
+        OutputFormat::Json => writeln_ndjson(&data),
+        OutputFormat::Text => {
+            let n = |path: &[&str]| -> u64 {
+                let mut v = &data;
+                for k in path {
+                    v = v.get(k).unwrap_or(&serde_json::Value::Null);
+                }
+                v.as_u64().unwrap_or(0)
+            };
+            println!(
+                "{} rows (core {} · long-term {} · short-term {})",
+                n(&["total"]),
+                n(&["per_tier", "core"]),
+                n(&["per_tier", "semantic"]),
+                n(&["per_tier", "episodic"]),
+            );
+            println!(
+                "disk {:.1} MB (semantic {:.1} · episodic {:.1})",
+                n(&["disk_bytes", "total"]) as f64 / 1e6,
+                n(&["disk_bytes", "semantic"]) as f64 / 1e6,
+                n(&["disk_bytes", "episodic"]) as f64 / 1e6,
+            );
+            let last = data
+                .get("last_remembered_at")
+                .and_then(|v| v.as_str())
+                .unwrap_or("never");
+            println!(
+                "last dream {} · {} days remembered · ttl {}d · schema v{} · {}",
+                last,
+                n(&["remembered_days"]),
+                n(&["ttl_days"]),
+                n(&["schema_version"]),
+                data.get("embedding_model").and_then(|v| v.as_str()).unwrap_or("?"),
+            );
+            Ok(())
+        }
+    }
+}
+
 // ── Body builders ───────────────────────────────────────────────────────────
 
 #[allow(clippy::too_many_arguments)]

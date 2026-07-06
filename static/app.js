@@ -63,6 +63,41 @@ async function pollHealth() {
   }
 }
 
+// ── Stats strip ───────────────────────────────────────────────────────────
+//
+// One line under the header from `POST /api/memory/stats` — per-tier
+// counts, disk footprint, last dream. Same numbers the memory app and
+// the mission report render; the daemon is the single source.
+
+function fmtBytes(b) {
+  if (b >= 1e9) return `${(b / 1e9).toFixed(1)} GB`;
+  if (b >= 1e6) return `${(b / 1e6).toFixed(1)} MB`;
+  return `${Math.round(b / 1e3)} KB`;
+}
+
+function fmtAgo(iso) {
+  if (!iso) return 'never';
+  const h = (Date.now() - Date.parse(iso)) / 3.6e6;
+  if (h < 1) return `${Math.max(1, Math.round(h * 60))}m ago`;
+  if (h < 48) return `${Math.round(h)}h ago`;
+  return `${Math.round(h / 24)}d ago`;
+}
+
+async function pollStats() {
+  const el = document.getElementById('stats-strip');
+  if (!el) return;
+  try {
+    const s = await api('/api/memory/stats');
+    el.textContent =
+      `${s.total} rows — core ${s.per_tier.core} · long-term ${s.per_tier.semantic}` +
+      ` · short-term ${s.per_tier.episodic} — ${fmtBytes(s.disk_bytes.total)} on disk` +
+      ` — last dream ${fmtAgo(s.last_remembered_at)} · ttl ${s.ttl_days}d`;
+    el.hidden = false;
+  } catch {
+    el.hidden = true;
+  }
+}
+
 // ── Query parser ──────────────────────────────────────────────────────────
 //
 // Strict grammar — unknown fields or malformed values fall through to
@@ -2105,6 +2140,8 @@ document.getElementById('view-tabs').addEventListener('click', (e) => {
 
 pollHealth();
 setInterval(pollHealth, HEALTH_POLL_MS);
+pollStats();
+setInterval(pollStats, HEALTH_POLL_MS * 4);
 
 renderFiltersBar();
 renderViewBar();

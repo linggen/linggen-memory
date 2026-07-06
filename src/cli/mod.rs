@@ -117,6 +117,11 @@ pub enum Command {
         dry_run: bool,
     },
 
+    /// Store-state summary: per-tier row counts, disk footprint, last
+    /// dream, TTL, schema + embedding model. The same numbers the
+    /// console and the memory app render. Requires the daemon.
+    Stats,
+
     // Session-scanning utilities (`collect` + `extract`) used to live here.
     // They moved to `skills/memory/scripts/` as bash helpers — the daemon is
     // a pure data service; reading session files isn't its concern.
@@ -758,6 +763,7 @@ pub async fn run(cli: Cli) -> Result<()> {
                     client::remember_day(&base_url, args, format).await
                 }
                 Command::Sweep { dry_run } => client::sweep(&base_url, dry_run, format).await,
+                Command::Stats => client::stats(&base_url, format).await,
                 Command::Serve { .. }
                 | Command::Start { .. }
                 | Command::Stop
@@ -795,9 +801,11 @@ pub async fn run(cli: Cli) -> Result<()> {
         // Dream-state ops live behind the daemon (it owns `.days.json`);
         // there is deliberately no direct-store fallback — two writers to
         // the sidecar would race.
-        Command::Days(_) | Command::RememberDay(_) | Command::Sweep { .. } => Err(anyhow!(
-            "this command requires the daemon — start it with `ling-mem start`"
-        )),
+        Command::Days(_) | Command::RememberDay(_) | Command::Sweep { .. } | Command::Stats => {
+            Err(anyhow!(
+                "this command requires the daemon — start it with `ling-mem start`"
+            ))
+        }
         Command::Serve { .. }
         | Command::Start { .. }
         | Command::Stop

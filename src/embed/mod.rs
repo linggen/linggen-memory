@@ -33,7 +33,7 @@ use fastembed::Qwen3TextEmbedding;
 
 use crate::memory::VECTOR_DIM;
 
-const MODEL_REPO: &str = "Qwen/Qwen3-Embedding-0.6B";
+pub const MODEL_REPO: &str = "Qwen/Qwen3-Embedding-0.6B";
 const MAX_SEQ_LEN: usize = 512;
 const QUERY_PREFIX: &str = "query: ";
 const PASSAGE_PREFIX: &str = "passage: ";

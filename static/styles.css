@@ -120,6 +120,14 @@ input[type="text"]:disabled { opacity: 0.6; }
 }
 #header .sub { color: var(--text-dim); font-weight: 400; }
 
+#stats-strip {
+  padding: 6px 20px;
+  font-size: 12px;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--border);
+  letter-spacing: 0.1px;
+}
+
 #status {
   font-size: 12px;
   color: var(--text-dim);
