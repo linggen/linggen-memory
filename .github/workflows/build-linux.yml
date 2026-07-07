@@ -6,6 +6,11 @@ name: build-linux
 # tarballs + .sha256 twins matching scripts/release.sh's package_tarball
 # (binary + README + LICENSE at the tarball root, filename-relative sha).
 
+# contents:write lets the default GITHUB_TOKEN upload release assets
+# (the default token is read-only → HTTP 403 on gh release upload).
+permissions:
+  contents: write
+
 on:
   workflow_dispatch:
     inputs:
