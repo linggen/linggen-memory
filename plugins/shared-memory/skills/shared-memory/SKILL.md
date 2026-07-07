@@ -90,6 +90,8 @@ change when you switch agents.
 | Sweep  | `ling-mem sweep [--dry-run]` — the forget stage: evict judged episodic rows past TTL; never touches un-judged rows |
 | Chains | `ling-mem chains [--kind cited\|marker] [--derived-only] [--limit N] [--offset N]` — condense scan: stale same-subject chains in long-term memory (read-only; judgment is yours) |
 
+**Anchor relative time in every saved row** — substitute today's date in before writing (e.g. if today is 2026-07-07: "turned 3 last month" → "turned 3 in 2026-06, as of 2026-07-07"); relative words rot silently.
+
 **Always pipe CLI list/search/get output through `jq -c 'del(.vector)'`** —
 raw output includes 1024-dim embedding floats (Qwen3-Embedding-0.6B) that blow up context.
 

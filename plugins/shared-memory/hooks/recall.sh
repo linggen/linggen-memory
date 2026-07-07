@@ -86,7 +86,7 @@ hit_count="$(printf '%s\n' "$hits" | grep -c .)"
 # live in the session-start MCP instructions; this is only the per-turn reminder.
 cat <<'CAPTURE'
 
-Memory capture: before finishing this turn, recognize anything worth remembering and write it at the right tier per the memory protocol (core/semantic = search-first; episodic = incidental). Nothing worth keeping? Skip silently.
+Memory capture: before finishing this turn, recognize anything worth remembering and write it at the right tier per the memory protocol (core/semantic = search-first; episodic = incidental); anchor relative time to absolute dates ("last month" → "2026-06"). Nothing worth keeping? Skip silently.
 CAPTURE
 # Session stamp: pass source_session on every add so a later scan of this
 # day's logs skips sessions that already contributed (idempotent backfill).
