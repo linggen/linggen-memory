@@ -204,6 +204,7 @@ fn tool_defs() -> Vec<Value> {
                     "tier":     {"type": "string", "enum": ["core", "semantic", "episodic"], "description": "Destination tier. `episodic` = per-turn working capture (fast, append-only, no search-first; the dream pass remembers each day and the sweep forgets judged rows past TTL) — the default lane for uncertain-durability signal. `semantic` = curated durable facts (search-first). `core` = tiny always-injected universals about the person (search-first)."},
                     "contexts": {"type": "array", "items": {"type": "string"}},
                     "host":     {"type": "string", "description": "Identify the calling host (e.g. claude-code, codex, cursor). Stamped on the row for cross-host attribution. Optional."},
+                    "source_session": {"type": "string", "description": "Session id that authored this content — pass your host session id on live captures (the recall hook prints it each turn). Makes scan's skip-by-session idempotency real: scanned sessions that already contributed rows are skipped."},
                     "replace_ids": {"type": "array", "items": {"type": "string"}, "description": "Row ids this new row replaces — the daemon inserts the row and deletes every listed loser atomically. Use for merges of your own derived notes and for AskUser-resolved conflicts; never separate add + delete calls."}
                 },
                 "required": ["content"]

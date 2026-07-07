@@ -12,6 +12,7 @@ command -v ling-mem >/dev/null 2>&1 || exit 0
 input="$(cat)"
 prompt="$(printf '%s' "$input" | jq -r '.prompt // empty' 2>/dev/null || true)"
 cwd="$(printf '%s' "$input"   | jq -r '.cwd    // empty' 2>/dev/null || true)"
+sid="$(printf '%s' "$input"   | jq -r '.session_id // empty' 2>/dev/null || true)"
 
 [ "${#prompt}" -lt 8 ] && exit 0
 
@@ -87,6 +88,11 @@ cat <<'CAPTURE'
 
 Memory capture: before finishing this turn, recognize anything worth remembering and write it at the right tier per the memory protocol (core/semantic = search-first; episodic = incidental). Nothing worth keeping? Skip silently.
 CAPTURE
+# Session stamp: pass source_session on every add so a later scan of this
+# day's logs skips sessions that already contributed (idempotent backfill).
+if [ -n "$sid" ]; then
+  printf 'On every memory_add, pass source_session:"%s" (this session).\n' "$sid"
+fi
 
 if [ "$hit_count" -gt 1 ]; then
   # Mirrors linggen/src/engine/prompt/core_block.rs:RECONCILE_FOOTER.
