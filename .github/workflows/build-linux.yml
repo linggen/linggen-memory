@@ -34,10 +34,12 @@ jobs:
         with:
           ref: ${{ inputs.ref }}
 
+      # Dep list mirrors scripts/Dockerfile.linux (protoc is required by
+      # lance-encoding's build script).
       - name: System deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y libssl-dev pkg-config cmake libclang-dev
+          sudo apt-get install -y libssl-dev pkg-config cmake libclang-dev protobuf-compiler
 
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
