@@ -155,6 +155,7 @@ pub(crate) async fn add(base: &str, args: AddArgs, format: OutputFormat) -> Resu
     let body = build_add_body(
         content,
         args.r#type,
+        args.tier,
         args.contexts,
         args.tags,
         args.from,
@@ -522,6 +523,7 @@ pub(crate) async fn stats(base: &str, format: OutputFormat) -> Result<()> {
 fn build_add_body(
     content: String,
     r#type: CliMemoryType,
+    tier: crate::cli::CliTier,
     contexts: Vec<String>,
     tags: Vec<String>,
     from: CliOrigin,
@@ -532,9 +534,13 @@ fn build_add_body(
     skip_dedup: bool,
     host: Option<String>,
 ) -> Value {
+    // `tier` was silently dropped on this path before the AddRequest
+    // gained the field — `ling-mem add --tier core` with the daemon up
+    // wrote a semantic row.
     let mut body = json!({
         "content": content,
         "type": cli_memory_type_str(r#type),
+        "tier": cli_tier_str(tier),
         "from": cli_origin_str(from),
         "skip_dedup": skip_dedup,
     });

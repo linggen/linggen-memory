@@ -179,6 +179,14 @@ pub struct AddRequest {
     /// LanceDB-via-CLI roundtrip from inside the engine).
     #[serde(default)]
     pub episodic: bool,
+    /// Destination tier within the semantic table: `core` (always-on
+    /// identity set) or `semantic` (default). `episodic` here is a
+    /// dispatch-boundary alias for the `episodic` flag above (hosts pass
+    /// `tier=episodic`; the engine converts, but direct callers may not).
+    /// Before this field existed, `tier` in the body was silently
+    /// dropped — `tier=core` over HTTP/MCP never worked.
+    #[serde(default, deserialize_with = "deserialize_optional_lenient")]
+    pub tier: Option<Tier>,
     /// Bypass dedup: insert as a new row even if a near-duplicate exists.
     /// Accepts `skip_dedup` (canonical) or `force` (alias).
     #[serde(default, alias = "force")]
@@ -488,7 +496,9 @@ async fn add(
     }
 
     let skip_dedup = req.skip_dedup;
-    let episodic = req.episodic;
+    // `tier=episodic` in the body is equivalent to `episodic: true` —
+    // both route to the staging table.
+    let episodic = req.episodic || req.tier == Some(crate::memory::Tier::Episodic);
     let replace_ids = req.replace_ids.clone();
     let mut fact = Memory::new(
         req.content,
@@ -507,6 +517,9 @@ async fn add(
         // callers filtering by tier alone don't see lies. Overrides any
         // stale Core / Semantic carried in from a generic Memory::new().
         fact.tier = crate::memory::Tier::Episodic;
+    } else if let Some(tier) = req.tier {
+        // Core vs semantic within the semantic table.
+        fact.tier = tier;
     }
 
     // Embed the content so the row is immediately searchable. Serialized +
