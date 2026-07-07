@@ -90,13 +90,10 @@ CAPTURE
 
 if [ "$hit_count" -gt 1 ]; then
   # Mirrors linggen/src/engine/prompt/core_block.rs:RECONCILE_FOOTER.
-  # Adapted: ling-mem MCP exposes memory_delete / memory_add as discrete
-  # verbs; replace_ids is on the daemon's HTTP /api/memory/add but not yet
-  # in the MCP tool schema, so for conflicts use ordered memory_add (winner)
-  # then memory_delete (losers) — write before delete keeps the worst-case
-  # window safe.
+  # Adapted to the ling-mem MCP verbs (memory_add / memory_delete;
+  # replace_ids is in the MCP memory_add schema — one atomic call).
   cat <<'NOTE'
 
-Note: If duplicates or conflicting rows appear above AND the user's current turn is unrelated to memory itself (incidental recall hit), resolve them on the side — memory_delete for exact dups; for conflicts, AskUser, then memory_add the winner followed by memory_delete on each loser (write before delete). If the user IS explicitly steering memory ("clean up", "remember X", "what's in memory", "ignore the hits"), follow their instruction and do NOT side-quest into dedup. Either way, keep memory in good shape.
+Note: If duplicates or conflicting rows appear above AND the user's current turn is unrelated to memory itself (incidental recall hit), resolve them on the side — merge authority follows voice: memory_delete for exact dups; rows that are all your own notes (from=derived — built/fixed/tried/learned) merge freely into one current-truth row via memory_add with replace_ids listing the losers (atomic insert + delete), no AskUser; if any row is in the user's voice (from=user — preference/decision/identity), AskUser first, then the same memory_add with replace_ids (never separate add + delete). If the user IS explicitly steering memory ("clean up", "remember X", "what's in memory", "ignore the hits"), follow their instruction and do NOT side-quest into dedup. Either way, keep memory in good shape.
 NOTE
 fi

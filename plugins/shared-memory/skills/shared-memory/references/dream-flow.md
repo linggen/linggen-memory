@@ -45,8 +45,9 @@ never write them.
   removed the twin during the add), `removed:false`, an empty list —
   all normal. Never retry, never re-verify.
 - **Status lines, not prose:** `DAY <date> rows=<n>` → `PROMOTE <id>
-  "<gist>"` per promotion → `DAY <date> done judged=<n> promoted=<k>`
-  → `SWEEP removed=<n>` → one final totals sentence. Never print a
+  "<gist>"` per promotion (`MERGE <new-id> replaces=<k> "<gist>"` per
+  derived merge) → `DAY <date> done judged=<n> promoted=<k>` →
+  `SWEEP removed=<n>` → one final totals sentence. Never print a
   status line for a call you didn't make.
 
 ## `dream` (no argument) — remember all pending days
@@ -102,23 +103,36 @@ Backfill staging, always user-triggered, idempotent:
    capture restates facts across turns). Judge clusters, not
    restatements — one promotion per cluster, best-phrased
    representative; the rest simply age out later.
-4. **Judge each cluster** — promote or skip:
+4. **Judge each cluster** — promote, merge, or skip:
    - **Promote** durable signal (user biography, cross-project
-     preference, decision-with-reasoning, re-hit gotcha, shipped
-     milestone, run learning): `add` with the row's content
-     **verbatim**, its `type`/`from`/`contexts`, `occurred_at` carried
-     forward (else `created_at`), `source_session` if present. Never
-     pass `id`/`replace_ids`. Omit tier (defaults semantic);
-     `tier=core` only for a narrow universal about the person.
-     Search-first: a quick semantic `search` on the gist — but a hit
-     with `tier=episodic` never counts as "already in semantic".
+     preference, decision-with-reasoning, re-hit gotcha, state change
+     like a shipped milestone, run learning): `add` with the row's
+     content **verbatim**, its `type`/`from`/`contexts`, `occurred_at`
+     carried forward (else `created_at`), `source_session` if present.
+     Never pass `id`. Omit tier (defaults semantic); `tier=core` only
+     for a narrow universal about the person. Search-first: a quick
+     semantic `search` on the gist — but a hit with `tier=episodic`
+     never counts as "already in semantic". **The promote bar — state
+     + lessons, never events.** Test: strip the date and the commit
+     hash — still useful in three months? Per-event rows ("committed
+     X", "pushed Y") fail: skip, or fold into the state row they
+     evidence.
+   - **Merge (own notes only).** If the pre-promote search surfaced
+     older `semantic` rows on the same subject that are agent notes
+     (`from=derived` — built/fixed/tried/learned) and the new row
+     completes or obsoletes them ("impl not started" → "shipped"),
+     write ONE current-truth row with `replace_ids` listing those
+     semantic losers (MCP/HTTP — atomic; CLI: add the winner first,
+     then delete each loser). Never list a user-voice row
+     (`from=user`) or an episodic id.
    - **Skip** noise (activity logs, file-derivable facts,
      single-mention chatter) and already-in-semantic facts: do
      nothing — the row ages out on its own.
-   - **Never** merge distinct facts, generalize into "user always X"
-     rules, or resolve contradictions — promote the contradicting row
-     alongside the old one; recall-time reconciliation (user present)
-     picks winners.
+   - **Never** generalize into "user always X" rules, and never merge
+     or resolve rows in the **user's voice** (`from=user`) — promote
+     the contradicting row alongside the old one; recall-time
+     reconciliation (user present) picks winners. Your own derived
+     notes are the exception (Merge above).
 5. **Stamp.** `{"verb":"remember_day","date":"<date>","judged":<seen>,"promoted":<adds>}`
    (CLI: `ling-mem remember-day <date> --judged N --promoted K`).
    Never skip the stamp, even with zero promotions — it's what moves

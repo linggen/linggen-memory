@@ -101,7 +101,7 @@ ling-mem search "node 22 quirk" --limit 5 --format json | jq -c 'del(.vector)'
 | Tier | Storage | When |
 |:---|:---|:---|
 | **Core** | Rows with `tier=core` in the `semantic` table | Narrow universals about the **person** — name, role, location, timezone, languages, pets / family. Always-loaded set; the host injects them at session start. Keep tight. |
-| **Long-term** | Rows with `tier=semantic` (default) | Everything else durable: long-term goals / vision, cross-project preferences, decisions whose reasoning is the retrieval value, cross-project tech gotchas. Retrieved on demand. |
+| **Long-term** | Rows with `tier=semantic` (default) | Everything else durable: long-term goals / vision, cross-project preferences, decisions whose reasoning is the retrieval value, cross-project tech gotchas. Retrieved on demand. **State + lessons, never events** — test: strip the date and commit hash; still useful in three months? If not, episodic. |
 | **Episodic** | The `episodic` staging table | **Per-turn working capture** — append uncertain-durability signal here each turn (fast, append-only, no search-first): `ling-mem add "<content>" --episodic`. Episodic is the user's **short-term memory**: the dream pass *remembers* each day (promotes durable rows to core/semantic, deletes nothing), and the *forget sweep* (`ling-mem sweep`) ages out judged rows after the TTL. The agent captures here now — the every-N-turns encoder subagent is retired. |
 
 Core and long-term share the `semantic` table — only the `tier` column
@@ -303,19 +303,28 @@ The user is reading text in a conversation panel:
 - For hands-on row-level CRUD, point the user at the daemon-served
   data browser at `127.0.0.1:9888` (run `ling-mem start` first).
 
-## Memory hygiene — fix dups and conflicts when you see them
+## Memory hygiene — see it, solve it
 
 **Hard rule, applies everywhere (live chat, per-turn capture, dream):**
-when you encounter duplicates or conflicts during any memory operation,
-**resolve them in the same pass — don't defer**. Garbage in memory poisons
-every future retrieval; "leave it for later" is how 7 word-count rows
-accumulate.
+whoever surfaces garbage owns it in that moment — **resolve it in the
+same pass, don't defer**. There is no cleanup queue. Garbage in memory
+poisons every future retrieval; "leave it for later" is how 7
+word-count rows accumulate.
 
-| You see | If you're confident | If you're not |
-|:---|:---|:---|
-| Two rows that say the same thing (dup) | Delete the loser, keep the better-phrased one. No prompt. | Ask the user. |
-| Two rows that contradict (same subject, incompatible value) | Don't pick silently. **Always ask.** | Ask the user. |
-| Past-TTL episodic that already exists in semantic | Delete the episodic source. No prompt. | Ask the user. |
+**Merge authority follows voice.** Your own notes (`from=derived` —
+`built`/`fixed`/`tried`/`learned`) are your notebook: merge, rewrite,
+retire freely, no prompt. Rows in the user's voice (`from=user` —
+preference/decision/identity) change only with the user: ask first.
+
+| You see | Action |
+|:---|:---|
+| Exact dup (same fact, same type) | Delete the loser, keep the better-phrased row. No prompt. |
+| Superseded / chain member, all derived ("impl not started" → "shipped") | Merge into one current-truth row. No prompt. |
+| Reworded derived near-dup | Merge, keep the best phrasing. No prompt. |
+| Old pure-event row ("committed X") | Retire it — fold into the state row it evidences, if one exists. |
+| Contradiction touching a user-voice row | Don't pick silently. **Always ask.** |
+| Secret (credential, token, key) | Delete on sight, any tier. |
+| Past-TTL episodic that already exists in semantic | Delete the episodic source. No prompt. |
 
 **How to ask:** use whichever ask-user primitive your host gives you.
 
@@ -327,12 +336,14 @@ accumulate.
   via `ling-mem add "..." --type ...` followed by `ling-mem delete
   <loser-id> --yes` for each loser.
 
-When an AskUser-resolved conflict yields a winner: write the winner
-first (`ling-mem add "<winner>" --type <t> --from <f>`), then delete the
-losers (`ling-mem delete <loser-id> --yes`). The CLI doesn't expose an
-atomic replace verb; the two-step ordering (write before delete) keeps
-the worst-case window safe — a concurrent recall either sees the old
-rows or both, never an empty hole on the subject.
+When a merge (derived rows) or an AskUser-resolved conflict yields a
+winner: write the winner first (`ling-mem add "<winner>" --type <t>
+--from <f>`), then delete the losers (`ling-mem delete <loser-id>
+--yes`). The CLI doesn't expose an atomic replace verb; the two-step
+ordering (write before delete) keeps the worst-case window safe — a
+concurrent recall either sees the old rows or both, never an empty hole
+on the subject. (Over MCP/HTTP, use `replace_ids` on the add instead —
+one atomic call.)
 
 ### What "not confident" looks like
 

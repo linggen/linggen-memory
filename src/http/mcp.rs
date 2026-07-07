@@ -42,8 +42,8 @@ const INSTRUCTIONS: &str = r#"ling-mem provides durable cross-session memory for
 # The three tiers
 
 - **core** — narrow universals about the *person*: name, role, location, timezone, languages, family / pets. Always-loaded at session start. Keep tight.
-- **semantic** (default) — durable long-term facts retrieved on demand: long-term goals / vision, cross-project preferences, decisions whose reasoning is the value, cross-project tech gotchas. Most writes land here.
-- **episodic** — per-turn working capture (your steady-state lane). Append anything that *might* matter — **including project-scoped milestones, decisions + reasoning, and run learnings**. Fast, append-only, **no search-first**. Episodic is short-term memory: the nightly dream pass *remembers* each day (promotes durable rows to semantic/core, deletes nothing), and the forget sweep ages out judged rows after the TTL. This is the lane now that the every-N-turns encoder subagent is retired.
+- **semantic** (default) — durable long-term facts retrieved on demand: long-term goals / vision, cross-project preferences, decisions whose reasoning is the value, cross-project tech gotchas. **State + lessons, never events** — test: strip the date and the commit hash; still useful in three months? If not, episodic.
+- **episodic** — per-turn working capture (your steady-state lane). Append anything that *might* matter — **including project-scoped milestones, decisions + reasoning, and run learnings**. Per-event work rows ("committed X", "pushed Y") land here **always**, however salient the turn felt. Fast, append-only, **no search-first**. Episodic is short-term memory: the nightly dream pass *remembers* each day (promotes durable rows to semantic/core, deletes nothing), and the forget sweep ages out judged rows after the TTL. This is the lane now that the every-N-turns encoder subagent is retired.
 
 # When to SEARCH (before answering)
 
@@ -53,9 +53,10 @@ Call Memory_search when the user's question could connect to past preferences, d
 
 **Per-turn capture → episodic.** Each turn, append genuinely-noteworthy signal to `tier=episodic` — fast, no search-first, no confirmation. **Project-scoped is fine; episodic is staging, not user-biography.** Capture: shipped milestones, decisions + *why*, non-obvious learnings from a run/experiment. E.g. "Shipped Linggen 1.0"; "Sanji docking: dropped dock-wall cost, treat all cost-points uniformly"; "BlueBoat cruise tops out ~0.2 m/s". If a future session would be smarter for it, stage it — the dream pass dedupes and promotes.
 
-**Curated writes → core / semantic** (high confidence) follow the read-before-write rule: **Always Memory_search the candidate content before a core/semantic Memory_add.** Write-time dedup is cheaper than read-time cleanup:
-- If a near-duplicate row exists → skip the add, or Memory_delete the loser when your version is better-phrased.
-- If a conflict exists (same subject, incompatible value) → ask the user via the host's ask-user primitive, write the winner, delete the losers. Do not write on top of a conflict.
+**Curated writes → core / semantic** (high confidence) follow the read-before-write rule: **Always Memory_search the candidate content before a core/semantic Memory_add.** Write-time dedup is cheaper than read-time cleanup. Merge authority follows voice:
+- Near-duplicate exists → skip the add; if yours is better-phrased and every matching row is your own note (`from=derived` — built/fixed/tried/learned), write the merged row with `replace_ids` listing the losers (one atomic call).
+- Conflict among **your own notes only** → no ask needed: merge to one current-truth row via `replace_ids`.
+- Conflict touching the **user's voice** (`from=user` — preference/decision/identity) → ask via the host's ask-user primitive, then write the winner with `replace_ids` carrying every loser. Do not write on top of a conflict; never separate add + delete.
 
 HIGH-SIGNAL — promote straight to core/semantic (search-first), don't leave these in episodic:
 - Name + relationship ("my cat <name>", "my wife <name>") → tier=core, type=fact
@@ -75,13 +76,14 @@ Explicit imperatives — act immediately:
 - **Never, any tier:** secrets (credentials, tokens, keys); content verbatim re-derivable from a file the agent re-reads (store the *decision/learning about* it, not the file body).
 - **Keep out of core/semantic — episodic is fine:** project-internal facts, raw activity logs, single architectural calls, opinions without commitment. These stage in episodic; the dream pass decides if any earn a curated row.
 
-# Memory hygiene — hard floor
+# Memory hygiene — see it, solve it
 
-Always keep memory clean. When recall surfaces duplicates or conflicts in the natural flow of a turn, fix them in the same pass:
+Whoever surfaces garbage owns it in that moment; there is no cleanup queue. Authority follows voice:
 
-- **Duplicates** (same fact, different wording) → `Memory_delete` the loser, keep the better-phrased row. No prompt if confident.
-- **Conflicts** (same subject, incompatible value) → ask the user via the host's ask-user primitive (Claude Code: AskUserQuestion; Linggen: AskUser; Codex/OpenClaw: plain chat with numbered options). Don't pick silently.
-- After AskUser-resolved conflict: `Memory_add` the winner, then `Memory_delete` the losers.
+- **Your own notes** (`from=derived` — built/fixed/tried/learned) are your notebook: merge, rewrite, retire freely — one `Memory_add` of the current-truth row with `replace_ids` listing every loser (atomic insert + delete; never separate add then delete).
+- **The user's voice** (`from=user` — preference/decision/identity) changes only with the user: ask via the host's ask-user primitive (Claude Code: AskUserQuestion; Linggen: AskUser; Codex/OpenClaw: plain chat with numbered options), then write the winner with `replace_ids`. Can't ask / not material to the turn → append and leave both; recall keeps surfacing them until a user-present moment resolves it.
+
+Taxonomy: exact dup → delete; superseded / chain member (derived) → `replace_ids` merge; reworded derived near-dup → merge, keep the best phrasing; old pure-event row → retire, folding into a state row if one exists; user-voice contradiction → ask; secret → delete on sight.
 
 Inline reconciliation fires on **incidental** recall hits only. When the user is explicitly steering memory ("clean up", "remember X", "what's in memory", "ignore those hits"), follow their direction — do not side-quest dedup.
 
@@ -201,14 +203,15 @@ fn tool_defs() -> Vec<Value> {
                     "type":     {"type": "string", "enum": ["fact", "preference", "decision", "tried", "fixed", "learned", "built"]},
                     "tier":     {"type": "string", "enum": ["core", "semantic", "episodic"], "description": "Destination tier. `episodic` = per-turn working capture (fast, append-only, no search-first; the dream pass remembers each day and the sweep forgets judged rows past TTL) — the default lane for uncertain-durability signal. `semantic` = curated durable facts (search-first). `core` = tiny always-injected universals about the person (search-first)."},
                     "contexts": {"type": "array", "items": {"type": "string"}},
-                    "host":     {"type": "string", "description": "Identify the calling host (e.g. claude-code, codex, cursor). Stamped on the row for cross-host attribution. Optional."}
+                    "host":     {"type": "string", "description": "Identify the calling host (e.g. claude-code, codex, cursor). Stamped on the row for cross-host attribution. Optional."},
+                    "replace_ids": {"type": "array", "items": {"type": "string"}, "description": "Row ids this new row replaces — the daemon inserts the row and deletes every listed loser atomically. Use for merges of your own derived notes and for AskUser-resolved conflicts; never separate add + delete calls."}
                 },
                 "required": ["content"]
             }
         }),
         json!({
             "name": "memory_delete",
-            "description": "Hard-delete one row by id. Use only for explicit user requests to forget, or as the second half of an AskUser-resolved contradiction.",
+            "description": "Hard-delete one row by id. For explicit user forgets, exact duplicates, and secrets. For conflict or merge resolution prefer memory_add with replace_ids — one atomic call, never add + delete.",
             "inputSchema": {
                 "type": "object",
                 "properties": { "id": {"type": "string"} },
