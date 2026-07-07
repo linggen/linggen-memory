@@ -131,6 +131,14 @@ pub enum Command {
     /// console and the memory app render. Requires the daemon.
     Stats,
 
+    /// Condense scan — mechanical, read-only detection of stale
+    /// same-subject chains in long-term memory. `--kind cited` (default)
+    /// groups rows that cite another row's id verbatim; `--kind marker`
+    /// lists rows with provisional-state language plus their nearest
+    /// neighbors for LLM confirmation. Judgment and merges belong to the
+    /// caller (the condense mission / host agent). Requires the daemon.
+    Chains(ChainsArgs),
+
     // Session-scanning utilities (`collect` + `extract`) used to live here.
     // They moved to `skills/memory/scripts/` as bash helpers — the daemon is
     // a pure data service; reading session files isn't its concern.
@@ -403,6 +411,27 @@ pub struct DaysArgs {
     /// Inclusive upper bound, `YYYY-MM-DD`.
     #[arg(long, value_name = "YYYY-MM-DD")]
     pub to: Option<String>,
+}
+
+#[derive(clap::Args, Debug)]
+pub struct ChainsArgs {
+    /// `cited` = id-citation chains (auto-accept quality); `marker` =
+    /// provisional-state candidates needing confirmation.
+    #[arg(long, default_value = "cited", value_parser = ["cited", "marker"])]
+    pub kind: String,
+
+    /// Clusters per page.
+    #[arg(long, default_value_t = 10)]
+    pub limit: usize,
+
+    /// Pagination offset over the cluster list.
+    #[arg(long, default_value_t = 0)]
+    pub offset: usize,
+
+    /// Only clusters mergeable unattended — every row an agent note
+    /// (`from=derived`, `tier=semantic`). What the condense mission uses.
+    #[arg(long)]
+    pub derived_only: bool,
 }
 
 #[derive(Debug, Args)]
@@ -776,6 +805,7 @@ pub async fn run(cli: Cli) -> Result<()> {
                     client::harvest_day(&base_url, &date, format).await
                 }
                 Command::Stats => client::stats(&base_url, format).await,
+                Command::Chains(args) => client::chains(&base_url, args, format).await,
                 Command::Serve { .. }
                 | Command::Start { .. }
                 | Command::Stop
@@ -817,7 +847,8 @@ pub async fn run(cli: Cli) -> Result<()> {
         | Command::RememberDay(_)
         | Command::HarvestDay { .. }
         | Command::Sweep { .. }
-        | Command::Stats => Err(anyhow!(
+        | Command::Stats
+        | Command::Chains(_) => Err(anyhow!(
             "this command requires the daemon — start it with `ling-mem start`"
         )),
         Command::Serve { .. }

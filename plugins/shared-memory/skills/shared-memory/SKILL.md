@@ -88,6 +88,7 @@ change when you switch agents.
 | Days   | `ling-mem days [--pending]` — per-day dream state (pending / remembered / forgotten); `--pending` = the dream worklist, oldest first |
 | Stamp  | `ling-mem remember-day <date> --judged N --promoted K` — mark a day judged after a remember pass |
 | Sweep  | `ling-mem sweep [--dry-run]` — the forget stage: evict judged episodic rows past TTL; never touches un-judged rows |
+| Chains | `ling-mem chains [--kind cited\|marker] [--derived-only] [--limit N] [--offset N]` — condense scan: stale same-subject chains in long-term memory (read-only; judgment is yours) |
 
 **Always pipe CLI list/search/get output through `jq -c 'del(.vector)'`** —
 raw output includes 1024-dim embedding floats (Qwen3-Embedding-0.6B) that blow up context.
@@ -269,6 +270,7 @@ mode's references.
 |:---|:---|:---|
 | **Dream** | Message says `/shared-memory dream` (all pending days) or `/shared-memory dream <YYYY-MM-DD>` (one day). User-triggered — or wired to the host's own scheduler for a nightly pass. | `Read references/dream-flow.md` (the canonical remember/forget runbook) and `references/routing-rules.md`. |
 | **Scan** | Message says `/shared-memory scan <YYYY-MM-DD>` — stage that day's session logs (backfill), see the verb table. | `Read references/dream-flow.md` (its Scan section) and `references/extractor-prompt.md` (what to stage). |
+| **Condense** | Message says `/shared-memory condense` — collapse stale chains in long-term memory. | `Read references/condense-flow.md` (the canonical condense runbook). |
 | **Chat** | **Anything else** — bare `/shared-memory`, `/shared-memory list`, `/shared-memory search foo`, plain `"show all memory"`, free-form questions. | Body of this SKILL.md is the entry. `Read references/routing-rules.md` only when making save / dedup decisions. |
 
 **Chat mode is the default.** When in doubt, you are in chat mode.
@@ -292,6 +294,7 @@ first.
 | `list [--type ...] [--tier ...] [--limit N]` | Paginated listing. |
 | `delete <id>` | Remove a specific row by id. |
 | `update <id> --content "<new>"` | Edit a row in-place (content / contexts / tags). |
+| `condense` | **Collapse stale same-subject chains in long-term memory** — stage 4, the only pass over semantic-at-rest. Scan via `ling-mem chains --derived-only` (cited = pre-confirmed id-citation chains; `--kind marker` = provisional-state candidates to confirm); collapse each into one current-truth row (add the survivor first, then delete members). Back up first (`ling-mem export`), supervise early runs. See `references/condense-flow.md`. |
 
 ### Chat-mode rules
 

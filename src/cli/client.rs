@@ -366,6 +366,68 @@ pub(crate) async fn days(
     }
 }
 
+pub(crate) async fn chains(
+    base: &str,
+    args: crate::cli::ChainsArgs,
+    format: OutputFormat,
+) -> Result<()> {
+    let body = json!({
+        "kind": args.kind,
+        "limit": args.limit,
+        "offset": args.offset,
+        "derived_only": args.derived_only,
+    });
+    let data = post(base, "/api/memory/chains", &body).await?;
+    match format {
+        OutputFormat::Json => writeln_ndjson(&data),
+        OutputFormat::Text => {
+            let total = data.get("total").and_then(|v| v.as_u64()).unwrap_or(0);
+            let scanned = data.get("scanned").and_then(|v| v.as_u64()).unwrap_or(0);
+            let kind = data.get("kind").and_then(|v| v.as_str()).unwrap_or("?");
+            println!("{kind}: {total} cluster(s) over {scanned} rows");
+            let gist = |row: &Value| -> String {
+                let content = row.get("content").and_then(|v| v.as_str()).unwrap_or("");
+                let id = row.get("id").and_then(|v| v.as_str()).unwrap_or("?");
+                let from = row.get("from").and_then(|v| v.as_str()).unwrap_or("?");
+                let head: String = content.chars().take(70).collect();
+                format!("{id} [{from}] {head}")
+            };
+            for chain in data
+                .get("chains")
+                .and_then(|v| v.as_array())
+                .into_iter()
+                .flatten()
+            {
+                let derived = chain.get("derived_only").and_then(|v| v.as_bool()).unwrap_or(false);
+                println!("— chain (derived_only={derived})");
+                for row in chain.get("rows").and_then(|v| v.as_array()).into_iter().flatten() {
+                    println!("    {}", gist(row));
+                }
+            }
+            for cand in data
+                .get("candidates")
+                .and_then(|v| v.as_array())
+                .into_iter()
+                .flatten()
+            {
+                let marker = cand.get("marker").and_then(|v| v.as_str()).unwrap_or("?");
+                let derived = cand.get("derived_only").and_then(|v| v.as_bool()).unwrap_or(false);
+                println!("— candidate [{marker}] (derived_only={derived})");
+                if let Some(row) = cand.get("row") {
+                    println!("    {}", gist(row));
+                }
+                for n in cand.get("neighbors").and_then(|v| v.as_array()).into_iter().flatten() {
+                    let score = n.get("score").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                    if let Some(row) = n.get("row") {
+                        println!("      ~{score:.2} {}", gist(row));
+                    }
+                }
+            }
+            Ok(())
+        }
+    }
+}
+
 pub(crate) async fn remember_day(
     base: &str,
     args: crate::cli::RememberDayArgs,

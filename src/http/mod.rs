@@ -12,6 +12,7 @@
 //! bundled `index.html` and `GET /assets/*` fans out to the rest of
 //! `static/`. See `doc/ui-spec.md`.
 
+mod chains;
 mod config;
 pub(crate) mod days;
 pub mod envelope;
@@ -43,6 +44,7 @@ pub fn build_router(state: SharedState, telemetry: Telemetry) -> Router {
         .merge(
             memory::router()
                 .merge(days::router())
+                .merge(chains::router())
                 .merge(stats::router())
                 .layer(middleware::from_fn_with_state(
                     telemetry,

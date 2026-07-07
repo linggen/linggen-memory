@@ -253,6 +253,19 @@ fn tool_defs() -> Vec<Value> {
                 }
             }
         }),
+        json!({
+            "name": "memory_chains",
+            "description": "Condense scan — mechanical, read-only detection of stale same-subject chains in long-term memory. kind=cited: rows citing another row's id verbatim, grouped into chains (auto-accept quality). kind=marker: rows with provisional-state language (\"OPEN:\", \"uncommitted\", …) plus nearest-neighbor rows — confirm a real supersession before merging. Each cluster carries derived_only: merge unattended ONLY when true (the merge law); user-voice clusters need the user. Apply merges via memory_add with replace_ids.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "kind":   {"type": "string", "enum": ["cited", "marker"], "description": "cited (default) = id-citation chains; marker = provisional-state candidates."},
+                    "limit":  {"type": "integer", "description": "Clusters per page (default 10)."},
+                    "offset": {"type": "integer", "description": "Pagination offset over the cluster list."},
+                    "derived_only": {"type": "boolean", "description": "Only clusters mergeable unattended (every row from=derived, tier=semantic). Unattended condense passes MUST set true."}
+                }
+            }
+        }),
     ]
 }
 
@@ -289,6 +302,7 @@ fn tool_name_to_verb(name: &str) -> Option<&'static str> {
         "memory_remember_day" => Some("remember_day"),
         "memory_harvest_day"  => Some("harvest_day"),
         "memory_sweep"        => Some("sweep"),
+        "memory_chains"       => Some("chains"),
         _ => None,
     }
 }
