@@ -1,0 +1,74 @@
+name: build-linux
+
+# Cloud replacement for the DS242 native Linux build box (same pattern as
+# linggen's build-linux.yml). Builds `ling-mem` for linux x86_64 + aarch64
+# on GitHub-hosted runners — native per-arch, no Docker/QEMU. Produces
+# tarballs + .sha256 twins matching scripts/release.sh's package_tarball
+# (binary + README + LICENSE at the tarball root, filename-relative sha).
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "git ref to build (branch / tag / sha)"
+        required: true
+        default: "main"
+      release_tag:
+        description: "release tag to upload assets to (blank = artifacts only)"
+        required: false
+        default: ""
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-latest
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: System deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev pkg-config cmake libclang-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build ling-mem
+        run: cargo build --release
+
+      - name: Package tarball + sha256
+        run: |
+          BIN=target/release/ling-mem
+          SIZE=$(stat -c%s "$BIN")
+          [ "$SIZE" -ge 1000000 ] || (echo "ling-mem binary too small: $SIZE bytes" && exit 1)
+          NAME="ling-mem-linux-${{ matrix.arch }}.tar.gz"
+          STAGING=$(mktemp -d)
+          cp "$BIN" README.md LICENSE "$STAGING/"
+          mkdir -p out
+          (cd "$STAGING" && tar czf "$GITHUB_WORKSPACE/out/$NAME" .)
+          (cd out && sha256sum "$NAME" > "$NAME.sha256")
+          ls -lh out/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ling-mem-linux-${{ matrix.arch }}
+          path: out/ling-mem-linux-${{ matrix.arch }}.tar.gz*
+
+      - name: Upload to release
+        if: ${{ inputs.release_tag != '' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ inputs.release_tag }}" \
+            out/ling-mem-linux-${{ matrix.arch }}.tar.gz \
+            out/ling-mem-linux-${{ matrix.arch }}.tar.gz.sha256 \
+            --clobber --repo "${{ github.repository }}"
