@@ -27,11 +27,12 @@ survivors, keep the export until you trust the pass.
 ```bash
 ling-mem chains --derived-only --limit 3                  # cited chains
 ling-mem chains --kind marker --derived-only --limit 5    # marker candidates
+ling-mem chains --kind subject --derived-only --limit 2   # subject clusters (v2)
 ```
 
 (MCP: `memory_chains {"kind":"cited","derived_only":true,"limit":3}`.)
 
-Two kinds, one law:
+Three kinds, one law:
 
 - **`cited`** — rows citing another row's id verbatim, grouped into
   chains. Pre-confirmed: an id citation is proof of reference;
@@ -40,6 +41,12 @@ Two kinds, one law:
   "uncommitted", …) plus nearest-neighbor rows. Guesses: collapse only
   after confirming a neighbor is the same subject AND one row
   completes or obsoletes the other; otherwise skip.
+- **`subject`** (v2 digests) — same-subject vector clusters, 3+ rows.
+  Parallel notes on one subject, not a newest-wins chain: write one
+  focused per-subject **digest** row. Vector neighbors carry boundary
+  noise — digest the largest genuinely-one-subject subset
+  (`replace_ids` only its ids), leave outliers untouched; never one
+  mega state row.
 
 **Always pass `derived_only`** on an unattended or semi-attended pass —
 it filters to clusters that are entirely the agent's own notes
@@ -81,9 +88,9 @@ Drafting rules (same as the memory agent's):
 
 Cited chains: re-fetch at offset 0 after each batch — merged chains
 vanish from the next scan, so the front of the list is always fresh
-work; stop at `total: 0`. Marker candidates: page by offset; skipped
-candidates linger (next month re-examines them). A partial pass is
-fine — oldest-first keeps progress monotone.
+work; stop at `total: 0`. Marker candidates and subject clusters:
+page by offset; skipped ones linger (next month re-examines them). A
+partial pass is fine — oldest-first keeps progress monotone.
 
 ## Status lines
 
@@ -91,7 +98,9 @@ Same audit-trail contract as dream: `MERGE <new-id> replaces=<k>
 "<gist>"` per collapsed chain, `SKIP <id> unrelated` per rejected
 marker candidate, and never print a line for a call you didn't make.
 
-## v2 (not built)
+## Order of passes
 
-Subject digests: one focused current-truth row per subject — never a
-single mega state row. Waits on v1 shaking out.
+Cited first (provable), then markers (confirm supersession), then
+subject digests (v2) — chains should collapse before the digest pass
+sees their subjects. The `subject` scan itself excludes rows still in
+cited chains for the same reason.

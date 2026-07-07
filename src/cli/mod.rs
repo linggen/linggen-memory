@@ -416,8 +416,9 @@ pub struct DaysArgs {
 #[derive(clap::Args, Debug)]
 pub struct ChainsArgs {
     /// `cited` = id-citation chains (auto-accept quality); `marker` =
-    /// provisional-state candidates needing confirmation.
-    #[arg(long, default_value = "cited", value_parser = ["cited", "marker"])]
+    /// provisional-state candidates needing confirmation; `subject` =
+    /// same-subject vector clusters for the v2 digest pass.
+    #[arg(long, default_value = "cited", value_parser = ["cited", "marker", "subject"])]
     pub kind: String,
 
     /// Clusters per page.

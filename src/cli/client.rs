@@ -405,6 +405,20 @@ pub(crate) async fn chains(
                     println!("    {}", gist(row));
                 }
             }
+            for cluster in data
+                .get("clusters")
+                .and_then(|v| v.as_array())
+                .into_iter()
+                .flatten()
+            {
+                let seed = cluster.get("seed_id").and_then(|v| v.as_str()).unwrap_or("?");
+                let derived = cluster.get("derived_only").and_then(|v| v.as_bool()).unwrap_or(false);
+                println!("— cluster (seed {seed}, derived_only={derived})");
+                for row in cluster.get("rows").and_then(|v| v.as_array()).into_iter().flatten() {
+                    let score = row.get("score").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                    println!("    ~{score:.2} {}", gist(row));
+                }
+            }
             for cand in data
                 .get("candidates")
                 .and_then(|v| v.as_array())

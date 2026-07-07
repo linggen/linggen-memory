@@ -8,7 +8,7 @@
 //! store through its context. Read-only, zero-LLM — judgment and the
 //! actual `replace_ids` merges belong to the caller.
 //!
-//! Two confidence classes, selected by `kind`:
+//! Three scan kinds, selected by `kind`:
 //!
 //! - **`cited`** (tier-1) — rows whose content cites another row's id
 //!   verbatim. Citations are provable edges; connected components over
@@ -17,6 +17,12 @@
 //!   ("OPEN:", "uncommitted", "pending", …), each with its nearest
 //!   stored-vector neighbors. Candidates only: the caller must confirm
 //!   a real supersession before merging.
+//! - **`subject`** (v2) — star clusters over stored vectors: a seed row
+//!   plus every row within `SUBJECT_FLOOR` cosine of it, minimum
+//!   [`SUBJECT_MIN_ROWS`] members. Feeds the digest pass — N same-subject
+//!   rows condensed into one focused per-subject row (never one mega
+//!   state row: clusters are seed-anchored and size-capped, not
+//!   transitive-closure blobs).
 //!
 //! Every cluster carries `derived_only` — true when all member rows are
 //! the agent's own notes (`from=derived`, `tier=semantic`). The merge
@@ -67,6 +73,17 @@ const MARKERS_CS: &[&str] = &["OPEN:", "OPEN(", "TODO:", "NEXT:", "PENDING"];
 const NEIGHBOR_FLOOR: f32 = 0.60;
 const NEIGHBORS_PER_ROW: usize = 5;
 
+/// Subject clusters need members that genuinely share a subject, not
+/// merely a domain — tighter than [`NEIGHBOR_FLOOR`], looser than the
+/// restatement band (0.78+).
+const SUBJECT_FLOOR: f32 = 0.70;
+/// A 2-row near-pair is v1 (marker/cited) territory; digests earn their
+/// keep at 3+.
+const SUBJECT_MIN_ROWS: usize = 3;
+/// Cap members per cluster — a digest over 15+ rows drifts toward the
+/// forbidden mega state row; the tail stays for the next pass.
+const SUBJECT_MAX_ROWS: usize = 12;
+
 const DEFAULT_LIMIT: usize = 10;
 /// The scan needs every semantic row in memory at once; the table is
 /// low-volume by design (hundreds), so a flat fetch is fine.
@@ -105,8 +122,9 @@ async fn chains(
     match kind {
         "cited" => Ok(ok(cited_chains(&rows, limit, offset, req.derived_only))),
         "marker" => Ok(ok(marker_candidates(&rows, limit, offset, req.derived_only))),
+        "subject" => Ok(ok(subject_clusters(&rows, limit, offset, req.derived_only))),
         other => Err(ApiError::bad_request(format!(
-            "invalid kind {other:?}: expected \"cited\" or \"marker\""
+            "invalid kind {other:?}: expected \"cited\", \"marker\", or \"subject\""
         ))),
     }
 }
@@ -311,6 +329,98 @@ fn neighbors_of(rows: &[Memory], idx: usize) -> Vec<Value> {
         .collect()
 }
 
+// ── V2: subject clusters ────────────────────────────────────────────────────
+
+/// Star clusters over stored vectors: walk rows oldest-first; each
+/// unassigned row seeds a cluster of the unassigned rows within
+/// [`SUBJECT_FLOOR`] cosine of it (closest first, capped at
+/// [`SUBJECT_MAX_ROWS`]). Seed-anchored on purpose — transitive closure
+/// would chain drifting subjects into exactly the mega-blob the digest
+/// rule forbids. Clusters below [`SUBJECT_MIN_ROWS`] dissolve (their
+/// members stay available to later seeds).
+///
+/// Rows already in a cited chain are excluded — collapse provable
+/// chains (v1) before digesting what remains.
+fn subject_clusters(rows: &[Memory], limit: usize, offset: usize, derived_only: bool) -> Value {
+    let in_cited: Vec<bool> = {
+        let edges = citation_edges(rows);
+        let mut flags = vec![false; rows.len()];
+        for (a, b) in edges {
+            flags[a] = true;
+            flags[b] = true;
+        }
+        flags
+    };
+
+    let pool: Vec<usize> = rows
+        .iter()
+        .enumerate()
+        .filter(|(i, row)| {
+            !in_cited[*i]
+                && row.tier != Tier::Core
+                && row.vector.is_some()
+                && (!derived_only || is_derived_note(row))
+        })
+        .map(|(i, _)| i)
+        .collect();
+
+    let mut assigned = vec![false; rows.len()];
+    let mut clusters: Vec<(usize, Vec<(f32, usize)>)> = Vec::new(); // (seed, members-with-score)
+
+    for &seed in &pool {
+        if assigned[seed] {
+            continue;
+        }
+        let seed_vec = rows[seed].vector.as_deref().expect("pool rows have vectors");
+        let mut members: Vec<(f32, usize)> = pool
+            .iter()
+            .filter(|&&i| i != seed && !assigned[i])
+            .filter_map(|&i| {
+                let v = rows[i].vector.as_deref()?;
+                let score = cosine_similarity(seed_vec, v);
+                (score >= SUBJECT_FLOOR).then_some((score, i))
+            })
+            .collect();
+        if members.len() + 1 < SUBJECT_MIN_ROWS {
+            continue; // seed stays unassigned — a later seed may absorb it
+        }
+        members.sort_by(|a, b| b.0.total_cmp(&a.0));
+        members.truncate(SUBJECT_MAX_ROWS - 1);
+        assigned[seed] = true;
+        for &(_, i) in &members {
+            assigned[i] = true;
+        }
+        members.insert(0, (1.0, seed));
+        clusters.push((seed, members));
+    }
+
+    let total = clusters.len();
+    let page: Vec<Value> = clusters
+        .into_iter()
+        .skip(offset)
+        .take(limit)
+        .map(|(seed, members)| {
+            json!({
+                "seed_id": rows[seed].id,
+                "derived_only": members.iter().all(|&(_, i)| is_derived_note(&rows[i])),
+                "rows": members.iter().map(|&(score, i)| {
+                    let mut row = public_row(&rows[i]);
+                    row["score"] = json!((score * 1000.0).round() / 1000.0);
+                    row
+                }).collect::<Vec<_>>(),
+            })
+        })
+        .collect();
+
+    json!({
+        "kind": "subject",
+        "scanned": rows.len(),
+        "total": total,
+        "offset": offset,
+        "clusters": page,
+    })
+}
+
 // ── Shared helpers ──────────────────────────────────────────────────────────
 
 /// The merge law's unattended-merge bar: the agent's own note, not the
@@ -377,6 +487,55 @@ mod tests {
         ];
         let out = cited_chains(&rows, 10, 0, false);
         assert_eq!(out["chains"][0]["derived_only"], false);
+    }
+
+    fn vrow(id: &str, content: &str, origin: Origin, vector: Vec<f32>) -> Memory {
+        let mut m = row(id, content, origin);
+        m.vector = Some(vector);
+        m
+    }
+
+    #[test]
+    fn subject_clusters_group_by_cosine_with_min_rows() {
+        let rows = vec![
+            vrow("aaaaaaaaaa", "sanji planner one", Origin::Derived, vec![1.0, 0.0]),
+            vrow("bbbbbbbbbb", "sanji planner two", Origin::Derived, vec![0.98, 0.199]),
+            vrow("cccccccccc", "sanji planner three", Origin::Derived, vec![0.95, 0.312]),
+            vrow("dddddddddd", "unrelated topic", Origin::Derived, vec![0.0, 1.0]),
+        ];
+        let out = subject_clusters(&rows, 10, 0, true);
+        assert_eq!(out["total"], 1);
+        let cluster = &out["clusters"][0];
+        assert_eq!(cluster["rows"].as_array().unwrap().len(), 3);
+        assert_eq!(cluster["seed_id"], "aaaaaaaaaa");
+        assert_eq!(cluster["derived_only"], true);
+    }
+
+    #[test]
+    fn subject_pair_below_min_rows_dissolves() {
+        let rows = vec![
+            vrow("aaaaaaaaaa", "topic a", Origin::Derived, vec![1.0, 0.0]),
+            vrow("bbbbbbbbbb", "topic a again", Origin::Derived, vec![0.99, 0.141]),
+            vrow("dddddddddd", "unrelated", Origin::Derived, vec![0.0, 1.0]),
+        ];
+        let out = subject_clusters(&rows, 10, 0, true);
+        assert_eq!(out["total"], 0);
+    }
+
+    #[test]
+    fn subject_derived_only_excludes_user_rows_from_pool() {
+        let rows = vec![
+            vrow("aaaaaaaaaa", "pref one", Origin::User, vec![1.0, 0.0]),
+            vrow("bbbbbbbbbb", "pref two", Origin::Derived, vec![0.98, 0.199]),
+            vrow("cccccccccc", "pref three", Origin::Derived, vec![0.95, 0.312]),
+        ];
+        // With the user row excluded, only 2 remain — below min → no cluster.
+        let out = subject_clusters(&rows, 10, 0, true);
+        assert_eq!(out["total"], 0);
+        // Without derived_only, the mixed cluster forms and is flagged.
+        let out = subject_clusters(&rows, 10, 0, false);
+        assert_eq!(out["total"], 1);
+        assert_eq!(out["clusters"][0]["derived_only"], false);
     }
 
     #[test]
