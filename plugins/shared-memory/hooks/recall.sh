@@ -94,12 +94,15 @@ if [ -n "$sid" ]; then
   printf 'On every memory_add, pass source_session:"%s" (this session).\n' "$sid"
 fi
 
-if [ "$hit_count" -gt 1 ]; then
+if [ "$hit_count" -ge 1 ]; then
   # Mirrors linggen/src/engine/prompt/core_block.rs:RECONCILE_FOOTER.
   # Adapted to the ling-mem MCP verbs (memory_add / memory_delete;
   # replace_ids is in the MCP memory_add schema — one atomic call).
+  # Fires on ANY hit: a single recalled row can still conflict with the
+  # user's current turn, and the daemon's user-voice guard needs the
+  # resolved write to carry user_directed:true.
   cat <<'NOTE'
 
-Note: If duplicates or conflicting rows appear above AND the user's current turn is unrelated to memory itself (incidental recall hit), resolve them on the side — merge authority follows voice: memory_delete for exact dups; rows that are all your own notes (from=derived — built/fixed/tried/learned) merge freely into one current-truth row via memory_add with replace_ids listing the losers (atomic insert + delete), no AskUser; if any row is in the user's voice (from=user — preference/decision/identity), AskUser first, then the same memory_add with replace_ids (never separate add + delete). If the user IS explicitly steering memory ("clean up", "remember X", "what's in memory", "ignore the hits"), follow their instruction and do NOT side-quest into dedup. Either way, keep memory in good shape.
+Note: If a recalled row above duplicates or conflicts with another row or with what the user just said AND the user's current turn is unrelated to memory itself (incidental recall hit), resolve it on the side — merge authority follows voice: memory_delete for exact dups; rows that are all your own notes (from=derived — built/fixed/tried/learned) merge freely into one current-truth row via memory_add with replace_ids listing the losers (atomic insert + delete), no ask; if any row is in the user's voice (from=user — preference/decision/identity), ask first via the host's ask-user primitive (AskUserQuestion on Claude Code; plain chat elsewhere), then write the winner via memory_add with replace_ids AND user_directed:true — the daemon BLOCKS user-voice replaces without that flag, and a hedged reflection ("X feels about right to me") never justifies it (never separate add + delete). If the user IS explicitly steering memory ("clean up", "remember X", "what's in memory", "ignore the hits"), follow their instruction and do NOT side-quest into dedup. Either way, keep memory in good shape.
 NOTE
 fi

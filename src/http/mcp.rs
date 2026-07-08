@@ -56,7 +56,7 @@ Call Memory_search when the user's question could connect to past preferences, d
 **Curated writes → core / semantic** (high confidence) follow the read-before-write rule: **Always Memory_search the candidate content before a core/semantic Memory_add.** Write-time dedup is cheaper than read-time cleanup. Merge authority follows voice:
 - Near-duplicate exists → skip the add; if yours is better-phrased and every matching row is your own note (`from=derived` — built/fixed/tried/learned), write the merged row with `replace_ids` listing the losers (one atomic call).
 - Conflict among **your own notes only** → no ask needed: merge to one current-truth row via `replace_ids`.
-- Conflict touching the **user's voice** (`from=user` — preference/decision/identity) → ask via the host's ask-user primitive, then write the winner with `replace_ids` carrying every loser. Do not write on top of a conflict; never separate add + delete.
+- Conflict touching the **user's voice** (`from=user` — preference/decision/identity) → ask via the host's ask-user primitive, then write the winner with `replace_ids` carrying every loser AND `user_directed: true`. Do not write on top of a conflict; never separate add + delete. The daemon mechanically BLOCKS a replace/rewrite of `from=user` rows without `user_directed: true` — the flag asserts the user directed the change: their CURRENT message states it as settled (a command "update X to Y", a declaration "my X is now Y", a commitment "from now on, X"), or they just answered your ask. A hedged reflection ("X feels about right to me", "I think I prefer X") does NOT qualify — that's a contradiction: ask first. Never assert the flag from your own inference.
 
 HIGH-SIGNAL — promote straight to core/semantic (search-first), don't leave these in episodic:
 - Name + relationship ("my cat <name>", "my wife <name>") → tier=core, type=fact
@@ -81,7 +81,7 @@ Explicit imperatives — act immediately:
 Whoever surfaces garbage owns it in that moment; there is no cleanup queue. Authority follows voice:
 
 - **Your own notes** (`from=derived` — built/fixed/tried/learned) are your notebook: merge, rewrite, retire freely — one `Memory_add` of the current-truth row with `replace_ids` listing every loser (atomic insert + delete; never separate add then delete).
-- **The user's voice** (`from=user` — preference/decision/identity) changes only with the user: ask via the host's ask-user primitive (Claude Code: AskUserQuestion; Linggen: AskUser; Codex/OpenClaw: plain chat with numbered options), then write the winner with `replace_ids`. Can't ask / not material to the turn → append and leave both; recall keeps surfacing them until a user-present moment resolves it.
+- **The user's voice** (`from=user` — preference/decision/identity) changes only with the user: ask via the host's ask-user primitive (Claude Code: AskUserQuestion; Linggen: AskUser; Codex/OpenClaw: plain chat with numbered options), then write the winner with `replace_ids` + `user_directed: true` (the daemon blocks user-voice replaces without it). Can't ask / not material to the turn → append and leave both; recall keeps surfacing them until a user-present moment resolves it.
 
 Taxonomy: exact dup → delete; superseded / chain member (derived) → `replace_ids` merge; reworded derived near-dup → merge, keep the best phrasing; old pure-event row → retire, folding into a state row if one exists; user-voice contradiction → ask; secret → delete on sight.
 
@@ -205,7 +205,8 @@ fn tool_defs() -> Vec<Value> {
                     "contexts": {"type": "array", "items": {"type": "string"}},
                     "host":     {"type": "string", "description": "Identify the calling host (e.g. claude-code, codex, cursor). Stamped on the row for cross-host attribution. Optional."},
                     "source_session": {"type": "string", "description": "Session id that authored this content — pass your host session id on live captures (the recall hook prints it each turn). Makes scan's skip-by-session idempotency real: scanned sessions that already contributed rows are skipped."},
-                    "replace_ids": {"type": "array", "items": {"type": "string"}, "description": "Row ids this new row replaces — the daemon inserts the row and deletes every listed loser atomically. Use for merges of your own derived notes and for AskUser-resolved conflicts; never separate add + delete calls."}
+                    "replace_ids": {"type": "array", "items": {"type": "string"}, "description": "Row ids this new row replaces — the daemon inserts the row and deletes every listed loser atomically. Use for merges of your own derived notes and for AskUser-resolved conflicts; never separate add + delete calls."},
+                    "user_directed": {"type": "boolean", "description": "Assert the user directed this change: their CURRENT message states it as SETTLED (a command \"update X to Y\", a declaration \"my X is now Y\", a commitment \"from now on, X\"), or they just answered your ask. Required when replace_ids targets from=user rows — the daemon BLOCKS such writes otherwise. A hedged reflection (\"X feels about right to me\") does NOT qualify: ask first. Never assert from your own inference."}
                 },
                 "required": ["content"]
             }
@@ -220,8 +221,36 @@ fn tool_defs() -> Vec<Value> {
             }
         }),
         json!({
+            "name": "memory_update",
+            "description": "Edit one row in place by id (content, type, tier, contexts, tags). A tier change moves the row across tables (episodic ↔ semantic/core) keeping its id. Rewriting content on a from=user row requires user_directed (same floor as memory_add's replace_ids). For merging MULTIPLE rows prefer memory_add with replace_ids.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "id":       {"type": "string"},
+                    "content":  {"type": "string", "description": "Replacement fact text."},
+                    "type":     {"type": "string", "enum": ["fact", "preference", "decision", "tried", "fixed", "learned", "built"]},
+                    "tier":     {"type": "string", "enum": ["core", "semantic", "episodic"], "description": "Moving tier relocates the row across tables, id preserved."},
+                    "contexts": {"type": "array", "items": {"type": "string"}},
+                    "tags":     {"type": "array", "items": {"type": "string"}},
+                    "user_directed": {"type": "boolean", "description": "Required when rewriting content on a from=user row — see memory_add.user_directed."}
+                },
+                "required": ["id"]
+            }
+        }),
+        json!({
+            "name": "memory_harvest_day",
+            "description": "Stamp a day harvested after a scan/backfill pass staged its episodic rows (does NOT mark it remembered — the dream's remember pass still judges it). Only past local days.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "date": {"type": "string", "description": "Local calendar day, YYYY-MM-DD."}
+                },
+                "required": ["date"]
+            }
+        }),
+        json!({
             "name": "memory_days",
-            "description": "Per-day dream-state rollup: each day's episodic row counts + pipeline state (today / staging / pending / remembered / forgotten). Use pending_only to get the dream worklist — days awaiting a remember pass, oldest first.",
+            "description": "Per-day dream-state rollup: each day's episodic row counts + pipeline state (today / staging / pending / harvested / remembered / forgotten). Use pending_only to get the dream worklist — days awaiting a remember pass, oldest first.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -298,6 +327,7 @@ fn tool_name_to_verb(name: &str) -> Option<&'static str> {
         "memory_list"         => Some("list"),
         "memory_get"          => Some("get"),
         "memory_add"          => Some("add"),
+        "memory_update"       => Some("update"),
         "memory_delete"       => Some("delete"),
         "memory_days"         => Some("days"),
         "memory_remember_day" => Some("remember_day"),

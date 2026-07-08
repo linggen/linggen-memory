@@ -1,14 +1,14 @@
 {
   "name": "shared-memory",
   "version": "1.2.0",
-  "description": "Cross-host durable memory — same ling-mem daemon and store in Claude Code, Codex, OpenClaw, and Linggen.",
+  "description": "Cross-host durable memory \u2014 same ling-mem daemon and store in Claude Code, Codex, OpenClaw, and Linggen.",
   "author": {
     "name": "Linggen",
     "url": "https://linggen.dev"
   },
   "homepage": "https://linggen.dev",
   "repository": "https://github.com/linggen/linggen-memory",
-  "license": "Apache-2.0",
+  "license": "MIT",
   "keywords": [
     "memory",
     "ling-mem",
@@ -22,7 +22,7 @@
   "interface": {
     "displayName": "Shared Memory",
     "shortDescription": "Cross-host durable memory powered by ling-mem.",
-    "longDescription": "One memory store across Claude Code, Codex, OpenClaw, and Linggen. Three-tier model — core identity, long-term semantic, episodic staging. Memory as user biography, not coding activity log.",
+    "longDescription": "One memory store across Claude Code, Codex, OpenClaw, and Linggen. Three-tier model \u2014 core identity, long-term semantic, episodic staging. Memory as user biography, not coding activity log.",
     "developerName": "Linggen",
     "category": "Productivity",
     "capabilities": [

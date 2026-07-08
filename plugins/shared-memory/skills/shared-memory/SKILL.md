@@ -82,7 +82,7 @@ change when you switch agents.
 | Search | `ling-mem search "..." [--context ...] [--limit N]` |
 | Get    | `ling-mem get <id>` |
 | List   | `ling-mem list [--type ...] [--day YYYY-MM-DD] [--limit N] ...` |
-| Add    | `ling-mem add "..." --type <t> --from <user\|agent\|derived> [--context ...] [--tag ...]` |
+| Add    | `ling-mem add "..." --type <t> --from <user\|agent\|derived> [--context ...] [--tag ...] [--source-session <id>]` — pass the host session id on live captures so a later `scan` of the day skips sessions that already contributed |
 | Update | `ling-mem edit <id> [--content ...] [--context ...] [--tag ...]` (or the back-compat alias `ling-mem update <id> ...`) |
 | Delete | `ling-mem delete <id> --yes` |
 | Days   | `ling-mem days [--pending]` — per-day dream state (pending / remembered / forgotten); `--pending` = the dream worklist, oldest first |
@@ -320,6 +320,13 @@ word-count rows accumulate.
 `built`/`fixed`/`tried`/`learned`) are your notebook: merge, rewrite,
 retire freely, no prompt. Rows in the user's voice (`from=user` —
 preference/decision/identity) change only with the user: ask first.
+The daemon enforces this floor mechanically — a replace or content
+rewrite of a `from=user` row is BLOCKED unless the write carries
+`user_directed: true`, which you assert only when the user directed
+the change: their current message states it as settled (a command
+"update X to Y", a declaration "my X is now Y", a commitment "from
+now on, X") or they just answered your ask. A hedged reflection ("X
+feels about right to me") never qualifies — ask first.
 
 | You see | Action |
 |:---|:---|
@@ -329,7 +336,7 @@ preference/decision/identity) change only with the user: ask first.
 | Old pure-event row ("committed X") | Retire it — fold into the state row it evidences, if one exists. |
 | Contradiction touching a user-voice row | Don't pick silently. **Always ask.** |
 | Secret (credential, token, key) | Delete on sight, any tier. |
-| Past-TTL episodic that already exists in semantic | Delete the episodic source. No prompt. |
+| Judged episodic rows lingering past TTL | Run `ling-mem sweep` — it evicts exactly those, never un-judged rows. No prompt. |
 
 **How to ask:** use whichever ask-user primitive your host gives you.
 

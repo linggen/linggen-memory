@@ -1,5 +1,63 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **User-voice merge guard at the store.** `add` with `replace_ids` and
+  `update` with `content` now REFUSE to touch `from=user` rows unless the
+  caller passes `user_directed: true` — asserting the user directed the
+  change (a settled command / declaration / commitment in their current
+  message, or an answered ask). The merge law's floor now holds for every
+  frontend (CLI, MCP, HTTP), not just the Linggen engine's pre-flight
+  guard. Derived-row merges are unaffected.
+- **MCP: `memory_update` and `memory_harvest_day` exposed.** The daemon
+  verbs existed but were undiscoverable over MCP (`update` had no tool at
+  all; `harvest_day` was mapped but absent from `tools/list`).
+
+### Fixed
+
+- **MCP `memory_search` with `tier=episodic` silently searched BOTH
+  tables.** `SearchRequest` now honors the same `episodic` table-scope
+  alias as every other CRUD DTO; the dispatch shim's rewrite lands
+  correctly.
+- **`past_ttl` list now episodic-scoped by default**, matching its tool
+  description ("implies tier=episodic") — old semantic rows no longer
+  masquerade as evictable staging.
+
+## [1.2.0] - 2026-07-07 — dream v2 day pipeline + condense scan + write-path fixes
+
+Minor release: additive API surface over the 1.x contract. Store schema
+unchanged (`STORE_SCHEMA_VERSION` 1).
+
+### Added
+
+- **Day pipeline for dream v2**: `days` rollup (per-day episodic counts +
+  pipeline state, `pending_only` worklist), `remember_day` stamping,
+  `harvest_day` (scan/backfill stamp), and the mechanical `sweep` (evicts
+  only past-TTL rows on remembered days, created before the stamp; late
+  rows re-pend the day). Per-day dream state lives in the `.days.json`
+  sidecar — the single source of truth for missions, calendar, and hosts.
+- **`chains` verb (condense scan)**: `kind=cited` (id-citation union-find),
+  `kind=marker` (provisional-state candidates + cosine neighbors),
+  `kind=subject` (same-subject star clusters for digest passes), with
+  `derived_only` server-side filtering for unattended merges.
+- **`past_ttl: true` list filter** — the daemon resolves the TTL cutoff
+  itself so callers stop hardcoding it.
+- **Cross-tier dedup on add**: a verbatim re-add at a higher tier promotes
+  (deletes the lower-tier twin); at an equal/lower tier it merges into the
+  existing row.
+- **`count` endpoint**, **`source_session` filter/deep-link plumbing**,
+  **MCP server surface** (`/mcp`, tools + INSTRUCTIONS primer).
+
+### Fixed
+
+- **`tier` was silently dropped on HTTP/MCP adds** (`AddRequest` had no
+  field) — `tier=core` over the wire wrote semantic since the 1.0 cutover.
+- `replace_ids` now applies on every add return path (added / merged /
+  promoted), so an AskUser-resolved winner that dedup-merges still deletes
+  its losers.
+
 ## [1.1.0] - 2026-06-09 — hybrid search + batched import + atomic upsert
 
 Minor release: additive API surface (`/api/memory/add_batch` endpoint,
@@ -211,7 +269,7 @@ curl -fsSL https://linggen.dev/install-shared-memory.sh | bash
   `/api/memory/list` call; row tier is derived from each row's `tier`
   field.
 
-## [Unreleased]
+## [1.0.1-era, previously unlabeled]
 
 ### Added
 

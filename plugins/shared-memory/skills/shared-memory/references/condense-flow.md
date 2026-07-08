@@ -92,6 +92,11 @@ work; stop at `total: 0`. Marker candidates and subject clusters:
 page by offset; skipped ones linger (next month re-examines them). A
 partial pass is fine — oldest-first keeps progress monotone.
 
+**Stall guard.** If a fresh cited fetch returns a chain you already
+merged this run, your merge did not take — reply exactly `STALLED`
+and stop (the mission ends the run there; a human looks). Never
+re-merge the same chain twice in one pass.
+
 ## Status lines
 
 Same audit-trail contract as dream: `MERGE <new-id> replaces=<k>

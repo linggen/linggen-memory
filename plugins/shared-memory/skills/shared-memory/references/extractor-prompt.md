@@ -1,10 +1,12 @@
 # Extractor prompt — host-LLM judge + write
 
-This file is the host LLM's working prompt for **Phase 2** of
-`/shared-memory dream`. The `scan` action already produced a clean,
-secret-filtered, byte-capped transcript per session and wrote them to
+This file is the host LLM's working prompt for the **encode step of
+`/shared-memory scan`** (the user-triggered backfill of a past day —
+scan is standalone; the nightly dream is remember + forget only).
+`scan.sh` already produced a clean, secret-filtered, byte-capped
+transcript per session and wrote them to
 `~/.linggen/memory/.scan-output.jsonl`; you are about to read those
-transcripts and write durable signal to the daemon.
+transcripts and stage durable signal to the daemon.
 
 > **Single source.** The contract below mirrors the engine's
 > `linggen/agents/ling-mem.md` **ENCODE phase** verbatim — that file
@@ -34,7 +36,7 @@ apply:
   can re-read next time. The file is the source of truth; never copy
   it into memory.
 - **A secret.** Credentials, API keys, tokens, passwords, auth in
-  URLs. (Phase 2 already stripped these — defence in depth.)
+  URLs. (scan.sh already stripped these — defence in depth.)
 - **Pure activity/transcript.** "Ran the tests", "opened the file" —
   git and the host's own session store already record that.
 
@@ -43,7 +45,7 @@ immediately, not hidden until consolidation. Write a row only if a
 **future task would benefit from it**: durable signal about the user,
 their work, a decision-with-reasoning, or a reusable gotcha. Drop
 garbage. When uncertain but the content is concrete and durable-shaped,
-write it: Phase 3 (consolidate + evict) still makes the terminal
+write it: the nightly dream (remember + forget) still makes the terminal
 promote/delete call past-TTL. The bar is "useful later", not
 "certainly permanent".
 
@@ -74,7 +76,7 @@ Three destinations, picked from the utterance itself:
 
 3. **`--episodic`** — uncertain-durability signal: useful-looking but not
    clearly worth a permanent core/semantic row. This is the default
-   capture lane (the live agent also appends here every turn). Phase 3
+   capture lane (the live agent also appends here every turn). The dream
    (consolidate) clusters near-dups, promotes the durable, and evicts the
    rest at TTL.
 

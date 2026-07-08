@@ -281,6 +281,9 @@ pub(crate) async fn update(base: &str, args: UpdateArgs, format: OutputFormat) -
     if args.clear_outcome {
         body["clear_outcome"] = Value::Bool(true);
     }
+    if args.user_directed {
+        body["user_directed"] = Value::Bool(true);
+    }
     if let Some(cwd) = args.cwd {
         body["cwd"] = Value::String(cwd);
     }

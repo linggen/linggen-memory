@@ -491,6 +491,13 @@ pub struct UpdateArgs {
 
     #[arg(long)]
     pub clear_cwd: bool,
+
+    /// Assert the user directed this change (their current message
+    /// states it as settled, or they just answered an ask). Required
+    /// when rewriting `--content` on a `from=user` row — the daemon
+    /// refuses such edits otherwise (the merge law's floor).
+    #[arg(long)]
+    pub user_directed: bool,
 }
 
 #[derive(Debug, Args)]

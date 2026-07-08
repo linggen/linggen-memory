@@ -200,6 +200,15 @@ pub struct AddRequest {
     /// `replaced_failed` but never abort the insert.
     #[serde(default)]
     pub replace_ids: Vec<String>,
+    /// Assert that the user directed this change — their current message
+    /// states it as settled (a command, declaration, or commitment), or
+    /// the host resolved the conflict with them via an ask. Required when
+    /// `replace_ids` targets rows in the user's voice (`from=user`); the
+    /// daemon refuses such writes otherwise (the merge law's floor,
+    /// enforced at the store so no frontend can silently rewrite the
+    /// user's voice). Derived-row replaces never need it.
+    #[serde(default)]
+    pub user_directed: bool,
 }
 
 /// Bulk insert. Each element is a plain [`AddRequest`]; the whole batch is
@@ -338,6 +347,13 @@ pub struct SearchRequest {
     /// semantic table is a separate parameter.
     #[serde(default)]
     pub table: SearchTable,
+    /// Table-scope alias matching every other CRUD DTO: `true` = episodic
+    /// only, `false` = semantic only. Overrides `table` when set. This is
+    /// the field the MCP dispatch shim produces from `tier=episodic` —
+    /// before it existed, an episodic-scoped MCP search silently searched
+    /// BOTH tables (the flag landed as an ignored unknown field).
+    #[serde(default)]
+    pub episodic: Option<bool>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -438,6 +454,11 @@ pub struct UpdateRequest {
     /// before applying the patch.
     #[serde(default)]
     pub episodic: Option<bool>,
+    /// See [`AddRequest::user_directed`]. Required when this update
+    /// rewrites `content` on a `from=user` row; metadata-only patches
+    /// (tier, contexts, tags) stay unguarded.
+    #[serde(default)]
+    pub user_directed: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -494,6 +515,7 @@ async fn add(
     if req.content.trim().is_empty() {
         return Err(ApiError::bad_request("content must not be empty"));
     }
+    guard_user_voice(&state, &req.replace_ids, req.user_directed).await?;
 
     let skip_dedup = req.skip_dedup;
     // `tier=episodic` in the body is equivalent to `episodic: true` —
@@ -644,6 +666,46 @@ async fn add_batch(
         "count": added.len(),
         "facts": added,
     })))
+}
+
+/// The merge law's floor, enforced at the store: a write that replaces
+/// (`add` + `replace_ids`) or rewrites (`update` + `content`) rows in the
+/// USER'S VOICE (`from=user`) is refused unless the caller asserts
+/// `user_directed: true` — the user's current message states the change
+/// as settled, or the host resolved the conflict with the user via an
+/// ask. Hosts justify the flag; the daemon guarantees no silent
+/// user-voice rewrite reaches the store regardless of which frontend
+/// wrote it (the Linggen engine has its own pre-flight guard and
+/// forwards the flag; CLI/MCP hosts pass it directly). Derived rows
+/// pass free. A missing id is not the guard's problem — the real call
+/// reports it.
+async fn guard_user_voice(
+    state: &SharedState,
+    target_ids: &[String],
+    user_directed: bool,
+) -> Result<(), ApiError> {
+    if user_directed || target_ids.is_empty() {
+        return Ok(());
+    }
+    let mut offending = Vec::new();
+    for id in target_ids {
+        for store in [Arc::clone(&state.store), Arc::clone(&state.episodic)] {
+            if let Some(fact) = store.get(id).await? {
+                if fact.origin == crate::memory::Origin::User {
+                    let gist: String = fact.content.chars().take(60).collect();
+                    offending.push(format!("{id} \"{gist}\""));
+                }
+                break;
+            }
+        }
+    }
+    if offending.is_empty() {
+        return Ok(());
+    }
+    Err(ApiError::bad_request(format!(
+        "BLOCKED by the user-voice merge guard: this write replaces/rewrites rows in the USER'S VOICE (from=user): {}. The user's voice changes only with the user (merge law). Recovery — pick ONE: (1) if the user's CURRENT message states this change as SETTLED — a command (\"update X to Y\", \"forget X\"), a declaration (\"my X is now Y\"), or a commitment (\"from now on, X\") — retry the exact same call with \"user_directed\": true; a hedged reflection (\"X feels about right to me\") does NOT qualify; (2) otherwise ask the user to choose (the host's ask-user primitive, or a plain question in chat), then retry with \"user_directed\": true after their answer. Do NOT work around it by writing a new row without replace_ids — that creates the drift this guard exists to prevent.",
+        offending.join(", ")
+    )))
 }
 
 /// Apply the caller's `replace_ids` deletion sweep across both tables and
@@ -807,7 +869,12 @@ async fn search(
     // boost, so exact-keyword queries rank correctly without inventing
     // relevance for unrelated rows. `min_score` gates the hybrid score,
     // applied inside the fuse step (see crate::memory::hybrid).
-    let results = match req.table {
+    let table = match req.episodic {
+        Some(true) => SearchTable::Episodic,
+        Some(false) => SearchTable::Semantic,
+        None => req.table,
+    };
+    let results = match table {
         SearchTable::Both => {
             state
                 .recall
@@ -844,6 +911,13 @@ async fn list(
         let cutoff = chrono::Utc::now()
             - chrono::Duration::days(cfg.episodic_ttl_days as i64);
         req.filters.until = Some(cutoff);
+    }
+    // `past_ttl` is an episodic-TTL concept and the tool schema promises
+    // "implies tier=episodic" — scope the read accordingly unless the
+    // caller explicitly asked for a table, so old semantic rows don't
+    // masquerade as evictable staging.
+    if req.filters.past_ttl && req.episodic.is_none() {
+        req.episodic = Some(true);
     }
     let filters = req.filters.into_filters()?;
     let sort = req.sort.into();
@@ -919,6 +993,11 @@ async fn update(
     State(state): State<SharedState>,
     Json(req): Json<UpdateRequest>,
 ) -> Result<Response, ApiError> {
+    // A content rewrite of an existing row is the same violation class
+    // as an add-with-replace_ids; metadata-only patches stay unguarded.
+    if req.content.is_some() {
+        guard_user_voice(&state, std::slice::from_ref(&req.id), req.user_directed).await?;
+    }
     let outcome_patch = match (req.outcome, req.clear_outcome) {
         (Some(o), _) => Some(Some(o)),
         (None, true) => Some(None),

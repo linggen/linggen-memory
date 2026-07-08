@@ -91,7 +91,7 @@ const SCAN_FETCH_LIMIT: usize = 100_000;
 
 #[derive(Debug, Deserialize)]
 struct ChainsRequest {
-    /// `cited` (default) or `marker`.
+    /// `cited` (default), `marker`, or `subject`.
     #[serde(default)]
     kind: Option<String>,
     #[serde(default)]
