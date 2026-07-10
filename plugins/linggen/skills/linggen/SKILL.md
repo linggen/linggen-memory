@@ -57,25 +57,34 @@ on Claude Code, `${PLUGIN_ROOT}/skills/linggen/` on Codex.
 > predictions about this user because the fact exists. Focus on the
 > user, not the task.
 
-## First use — ensure the `ling-mem` binary is installed
+## First use — ensure the Linggen binaries are installed
 
-Every operation in this skill shells out to the **`ling-mem`** CLI, so
-the binary must be on `PATH`. Some install channels ship only these
-skill files, not the binary (skills.sh, ClawHub, manual), so **before
-your first memory op, run this check — it's a no-op if `ling-mem` is
-already present** (Linggen bundles it; the Claude Code / Codex plugin's
-hook installs it):
+This skill has two required binaries: **`ling-mem`** (the memory CLI and
+daemon — every memory op shells out to it) and **`ling`** (the Linggen
+engine — serves the `linggen` MCP tools on `127.0.0.1:9898`: `memory_*`,
+`browser_*`, `x_*`, `agent_run`). The Claude Code / Codex plugin's
+session-start hook installs both automatically (the engine in the
+background, disclosed in the session context). On channels without hooks
+(skills.sh, ClawHub, manual), **you install them — run these checks
+before your first op; each is a no-op when already satisfied:**
 
 ```bash
 command -v ling-mem >/dev/null 2>&1 || \
   bash <(curl -fsSL https://raw.githubusercontent.com/linggen/linggen-memory/main/plugins/linggen/scripts/install-bin.sh) --version '^1'
 ```
 
-Just run it yourself if the binary is missing — don't ask the user. This
-fetches **only the `ling-mem` binary** (no host hooks or stubs) to
-`~/.local/bin`, pinned to the `1.x` line, SHA-256 verified, idempotent.
-If install fails (offline, no writable bin dir), tell the user to install
-`ling-mem` manually, then continue. To update later: `ling-mem upgrade`.
+```bash
+command -v ling >/dev/null 2>&1 || [ -x "$HOME/.local/bin/ling" ] || \
+  { curl -fsSL https://linggen.dev/install.sh | bash; }
+```
+
+Run them yourself — don't ask first, but **tell the user what's
+happening** when the engine install actually runs (one line: one-time,
+~100MB, local daemon, powers browser/X/agent tools). `ling-mem` installs
+to `~/.local/bin`, pinned to the `1.x` line, SHA-256 verified. If either
+install fails (offline, no writable bin dir), tell the user, then
+continue — memory works with `ling-mem` alone. To update later:
+`ling-mem upgrade`; the engine self-updates via `ling update`.
 
 ## Interface — the `ling-mem` CLI
 
@@ -509,10 +518,8 @@ linggen-browser extension) — one **visible** controlled tab:
 - A `no_bridge` error means the linggen-browser extension isn't connected;
   ask the user to install or enable it.
 - If the `linggen` MCP server itself is unreachable (nothing listening on
-  `127.0.0.1:9898`), the Linggen engine isn't installed or running. Memory
-  still works in full via the `ling-mem` CLI fallback; browser/x tools need
-  the engine. **Suggest the install to the user — never run it unprompted:**
-
-  ```bash
-  curl -fsSL https://linggen.dev/install.sh | bash
-  ```
+  `127.0.0.1:9898`), the engine may still be installing in the background
+  (plugin channels; progress in `~/.linggen/engine-install.log`) — wait and
+  retry. If the `ling` binary is genuinely absent, run the engine install
+  from the First-use section and tell the user (one-time, ~100MB). Memory
+  keeps working via the `ling-mem` CLI fallback throughout.

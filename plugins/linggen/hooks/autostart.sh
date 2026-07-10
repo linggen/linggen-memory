@@ -10,10 +10,12 @@
 # 2. Start the daemon idempotently (restart only if it's older than the
 #    on-disk binary — never downgrade a daemon another host started).
 # 3. Ensure the Linggen daemon is up on :9898 — the plugin's MCP server
-#    (browser control, x reads, memory_* proxy) lives there. Starts the
-#    daemon when the `ling` binary exists; when it doesn't, the core-memory
-#    context below gains a one-line install hint instead of a surprise
-#    ~100MB download inside a session hook.
+#    (browser control, x reads, memory_* proxy, agent_run) lives there.
+#    Starts the daemon when the `ling` binary exists; when it doesn't,
+#    installs the engine in the BACKGROUND (detached — session start never
+#    blocks on the ~100MB download) and discloses that in the context line.
+#    Both binaries are required components of this plugin. Opt out of the
+#    engine auto-install with LINGGEN_NO_ENGINE_INSTALL=1.
 # 4. Emit core memory as `hookSpecificOutput.additionalContext` so the
 #    host injects always-on identity facts (name, role, location, family,
 #    standing-instruction preferences) into the agent's system prompt.
@@ -76,9 +78,13 @@ fi
 
 # ── Ensure the Linggen daemon (the plugin's MCP server) is up ────────────────
 #
-# The MCP connection in .mcp.json points at http://127.0.0.1:9898/mcp. Start
-# the daemon when it's down and the binary exists; never auto-download the
-# engine from a session hook — surface the install line instead.
+# The MCP connection in .mcp.json points at http://127.0.0.1:9898/mcp. The
+# engine is a required component of this plugin — when the `ling` binary is
+# absent, install it here, but DETACHED in the background: session start
+# never blocks on the ~100MB download, and the context line below discloses
+# the install (README + plugin description disclose it up front). A lock dir
+# keeps parallel session starts from racing; a crashed install's stale lock
+# is cleared after 30 minutes. LINGGEN_NO_ENGINE_INSTALL=1 opts out.
 
 LINGGEN_PORT="${LINGGEN_PORT:-9898}"
 install_hint=""
@@ -87,8 +93,25 @@ if ! curl -fsS --max-time 2 "http://127.0.0.1:${LINGGEN_PORT}/api/health" >/dev/
   [ -z "$LING_BIN" ] && [ -x "$HOME/.local/bin/ling" ] && LING_BIN="$HOME/.local/bin/ling"
   if [ -n "$LING_BIN" ]; then
     (nohup "$LING_BIN" --web --port "$LINGGEN_PORT" >/dev/null 2>&1 &) || true
+  elif [ -n "${LINGGEN_NO_ENGINE_INSTALL:-}" ]; then
+    install_hint="Linggen engine not installed (auto-install disabled via LINGGEN_NO_ENGINE_INSTALL) — browser/x/agent MCP tools are offline. Install: curl -fsSL https://linggen.dev/install.sh | bash"
   else
-    install_hint="Linggen daemon is not installed — browser/x/memory MCP tools are offline. Install: curl -fsSL https://linggen.dev/install.sh | bash"
+    LOCK="$HOME/.linggen/.engine-install.lock"
+    LOG="$HOME/.linggen/engine-install.log"
+    mkdir -p "$HOME/.linggen" 2>/dev/null || true
+    [ -d "$LOCK" ] && find "$LOCK" -maxdepth 0 -mmin +30 -exec rmdir {} \; 2>/dev/null
+    if mkdir "$LOCK" 2>/dev/null; then
+      (nohup bash -c '
+        curl -fsSL https://linggen.dev/install.sh | bash >>"$1" 2>&1
+        LING="$(command -v ling || true)"
+        [ -z "$LING" ] && [ -x "$HOME/.local/bin/ling" ] && LING="$HOME/.local/bin/ling"
+        [ -n "$LING" ] && nohup "$LING" --web --port "$2" >/dev/null 2>&1 &
+        rmdir "$3" 2>/dev/null
+      ' _ "$LOG" "$LINGGEN_PORT" "$LOCK" >/dev/null 2>&1 &) || true
+      install_hint="Installing the Linggen engine in the background (one-time, ~100MB; log: ~/.linggen/engine-install.log). Browser/x/agent MCP tools come online when it finishes — memory already works via the ling-mem CLI."
+    else
+      install_hint="Linggen engine install already in progress (log: ~/.linggen/engine-install.log) — browser/x/agent MCP tools come online when it finishes."
+    fi
   fi
 fi
 

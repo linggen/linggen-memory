@@ -10,17 +10,21 @@ hook, plus everything else the Linggen daemon offers. Never run both.
 ## Install
 
 ```text
-# 1. The Linggen daemon (one-time)
-curl -fsSL https://linggen.dev/install.sh | bash
-
-# 2. The plugin
 /plugin marketplace add linggen/linggen-memory
 /plugin install linggen@linggen-memory
 ```
 
+That's the whole install. **The plugin's session-start hook installs
+its two required binaries automatically**: `ling-mem` (memory daemon,
+to `~/.local/bin`) and the **Linggen engine** (`ling`, ~100MB —
+downloaded in the background on your first session, disclosed in the
+session context; log at `~/.linggen/engine-install.log`). Set
+`LINGGEN_NO_ENGINE_INSTALL=1` to opt out of the engine download and
+install it yourself: `curl -fsSL https://linggen.dev/install.sh | bash`.
+
 Session start connects the `linggen` MCP server
-(`http://127.0.0.1:9898/mcp`), boots the `ling-mem` memory daemon, and
-injects your core memory (identity, standing preferences) into context.
+(`http://127.0.0.1:9898/mcp`), boots both daemons, and injects your
+core memory (identity, standing preferences) into context.
 
 ## What you get
 
