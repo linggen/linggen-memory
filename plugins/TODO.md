@@ -5,8 +5,8 @@
 - Decide MCP transport (stdio shim vs SSE on daemon).
 - Wire Stop-hook encoder (CC, Codex) to call host CLI for memory extraction.
 - Hook prompts shared via `skill/encoder-prompt.md`.
-- Submit `shared-memory` to `claude-plugins-community` after MCP shim is e2e validated.
-- ClawHub release of the raw skill via `clawhub skill push plugins/shared-memory/skills/shared-memory/`.
-- Linggen install path: stop copying `shared-memory` into `~/.linggen/skills/` once engine consumes via MCP.
-- Replace `~/.linggen/skills/shared-memory/` references in `linggen/` after move from `skills/shared-memory/` (sweep).
+- Submit `linggen` to `claude-plugins-community` once the plugin has real-user mileage.
+- ClawHub release of the `linggen` skill via `clawhub skill push plugins/linggen/skills/linggen/` (mcp-spec Phase 3).
+- Linggen install path: stop copying the skill into `~/.linggen/skills/` once engine consumes via MCP.
+- Replace stale `~/.linggen/skills/shared-memory/` references in `linggen/` (sweep; dir renamed to linggen).
 - Update `linggen-vscode` extension to consume memory via the same `/mcp` endpoint once SSE ships.

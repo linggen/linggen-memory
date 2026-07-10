@@ -7,7 +7,7 @@ every trigger runs:
 - **Linggen** — the built-in `dream` mission under the `memory` agent
   runs every dream: the nightly cron, the memory app's Run-dream
   button, and the calendar day buttons (day-scoped trigger). The
-  skill session runs only **scan** (`/shared-memory scan <date>`) and
+  skill session runs only **scan** (`/linggen scan <date>`) and
   explicit chat requests.
 - **Claude Code / Codex / OpenClaw** — no mission runtime; the host
   agent runs the same steps via the `ling-mem` CLI (or the `memory_*`
@@ -72,7 +72,7 @@ never write them.
 
 Backfill staging, always user-triggered, idempotent:
 
-1. Run `Bash bash ~/.linggen/skills/shared-memory/scripts/scan.sh <date>`
+1. Run `Bash bash ~/.linggen/skills/linggen/scripts/scan.sh <date>`
    (zero-LLM session walk → `.scan-output.jsonl`).
 2. **Skip covered sessions.** `list` the day's existing rows
    (`tier=episodic` + that `day`, and note promoted twins may live in

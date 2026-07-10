@@ -1,7 +1,7 @@
 # Extractor prompt — host-LLM judge + write
 
 This file is the host LLM's working prompt for the **encode step of
-`/shared-memory scan`** (the user-triggered backfill of a past day —
+`/linggen scan`** (the user-triggered backfill of a past day —
 scan is standalone; the nightly dream is remember + forget only).
 `scan.sh` already produced a clean, secret-filtered, byte-capped
 transcript per session and wrote them to

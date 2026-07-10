@@ -1,4 +1,4 @@
-# shared-memory
+# linggen (skill)
 
 **Persistent memory for AI assistants. Local, semantic, typed.**
 
@@ -16,9 +16,9 @@ A single-binary memory layer that remembers useful facts about you and your work
 ## Quick start
 
 Install from your agent's marketplace (pick one per host): Claude Code
-`/plugin install shared-memory@linggen-memory`, Codex `codex plugin add
-shared-memory@linggen-memory`, OpenClaw `clawhub install ling-mem`, any agent
-`npx skills add linggen/linggen-memory@shared-memory`. The `ling-mem` binary
+`/plugin install linggen@linggen-memory`, Codex `codex plugin add
+linggen@linggen-memory`, OpenClaw `clawhub install linggen`, any agent
+`npx skills add linggen/linggen-memory@linggen`. The `ling-mem` binary
 auto-installs on first use.
 
 ```bash
@@ -55,7 +55,7 @@ Intel Mac: prebuilt binaries not provided. Build from source with `cargo build -
 
 ## Why this exists
 
-`CLAUDE.md` and equivalent project files handle static rules but don't grow with the user. MCP memory servers require a long-running process with JSON-RPC mediation, and aren't auto-injected into the agent's context — they're tools the agent has to remember to call. `shared-memory` fits between: a single binary (`ling-mem`) you shell out to, with semantic retrieval, typed facts, and explicit forget operations. The recall hook auto-injects relevant context on every prompt, so the agent doesn't have to remember to query.
+`CLAUDE.md` and equivalent project files handle static rules but don't grow with the user. MCP memory servers require a long-running process with JSON-RPC mediation, and aren't auto-injected into the agent's context — they're tools the agent has to remember to call. `linggen` fits between: a single binary (`ling-mem`) you shell out to, with semantic retrieval, typed facts, and explicit forget operations. The recall hook auto-injects relevant context on every prompt, so the agent doesn't have to remember to query.
 
 ## What's stored
 
@@ -66,7 +66,7 @@ Intel Mac: prebuilt binaries not provided. Build from source with `cargo build -
 
 - **Linggen platform: [linggen.dev](https://linggen.dev)** · [github.com/linggen/linggen](https://github.com/linggen/linggen)
 - Source + binary releases: [github.com/linggen/linggen-memory](https://github.com/linggen/linggen-memory)
-- Skill source: [github.com/linggen/skills/tree/main/shared-memory](https://github.com/linggen/skills/tree/main/shared-memory)
+- Skill source: [github.com/linggen/skills/tree/main/linggen](https://github.com/linggen/skills/tree/main/linggen)
 - Issues: [github.com/linggen/linggen-memory/issues](https://github.com/linggen/linggen-memory/issues)
 
 ## License

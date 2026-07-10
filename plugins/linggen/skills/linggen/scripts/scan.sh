@@ -87,7 +87,7 @@ for var in COLLECT EXTRACT; do
   path="${!var}"
   if [[ ! -f "$path" ]]; then
     base="$(basename "$path")"
-    eval "$var=\"\$HOME/.linggen/skills/shared-memory/scripts/$base\""
+    eval "$var=\"\$HOME/.linggen/skills/linggen/scripts/$base\""
   fi
   if [[ ! -f "${!var}" ]]; then
     echo "$(basename "${!var}") not found" >&2

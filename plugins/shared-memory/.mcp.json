@@ -1,8 +1,0 @@
-{
-  "mcpServers": {
-    "ling-mem": {
-      "type": "http",
-      "url": "http://localhost:9888/mcp"
-    }
-  }
-}

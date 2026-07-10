@@ -18,7 +18,7 @@ Built as the default memory skill for [Linggen](https://github.com/linggen/lingg
 - **Forgetting is first-class.** `delete` by id, `forget` by filter — refuses empty filters as a guardrail.
 - **Self-updating.** `ling-mem upgrade --check` reports the latest release; `ling-mem start`, `restart`, and `status` all embed the same cached probe in their JSON so the agent can prompt the user when a new version ships without making extra network calls. `upgrade --yes` swaps the binary atomically and restarts the daemon. (`self-update` still works as an alias.)
 - **Three ways to use it:**
-  - As the **`shared-memory` skill on Linggen** — web app UI + `Memory_*` tool dispatch in the agent.
+  - As the **`linggen` skill on Linggen** — web app UI + `Memory_*` tool dispatch in the agent.
   - As the **`shared-memory` skill on Claude Code / Codex / OpenClaw** — SKILL.md body, model calls the CLI via Bash, recall hook injects context every turn.
   - **Standalone** — any script or tool can shell out to `ling-mem`.
 

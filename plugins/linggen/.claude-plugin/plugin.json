@@ -1,0 +1,19 @@
+{
+  "name": "linggen",
+  "version": "1.0.0",
+  "description": "Linggen for Claude Code — one MCP front door to the local Linggen daemon: durable cross-host memory (ling-mem), browser control in your own Chrome, logged-in X reads. Per-turn memory recall built in.",
+  "author": {
+    "name": "Linggen"
+  },
+  "homepage": "https://linggen.dev",
+  "repository": "https://github.com/linggen/linggen-memory",
+  "license": "MIT",
+  "keywords": [
+    "linggen",
+    "memory",
+    "browser",
+    "mcp",
+    "ling-mem",
+    "cross-host"
+  ]
+}

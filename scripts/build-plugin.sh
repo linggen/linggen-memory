@@ -2,7 +2,7 @@
 #
 # Stamp the binary version (from Cargo.toml) into the VERSION file.
 #
-# After the May 2026 plugin-tree refactor, plugins/shared-memory/ is a single
+# After the May 2026 plugin-tree refactor, plugins/linggen/ is a single
 # unified tree that both Claude Code and Codex load directly. There is no
 # longer a per-host `cc/` or `codex/` build output — the tree IS the artifact.
 #
@@ -28,7 +28,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 VERSION="$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"(.*)"/\1/')"
-ROOT="plugins/shared-memory"
+ROOT="plugins/linggen"
 
 # VERSION file drives the SessionStart binary bootstrap (autostart.sh) — it
 # tracks the BINARY (Cargo) version, not the plugin content version.

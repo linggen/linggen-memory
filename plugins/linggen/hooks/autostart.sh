@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# SessionStart hook for shared-memory.
+# SessionStart hook for the linggen plugin.
 #
 # 1. Bootstrap the ling-mem binary on first run (or after a plugin update
 #    that bumped VERSION) into the ONE canonical, cross-host location
@@ -9,7 +9,12 @@
 #    downgrade a newer shared binary, and replaces any legacy symlink.
 # 2. Start the daemon idempotently (restart only if it's older than the
 #    on-disk binary — never downgrade a daemon another host started).
-# 3. Emit core memory as `hookSpecificOutput.additionalContext` so the
+# 3. Ensure the Linggen daemon is up on :9898 — the plugin's MCP server
+#    (browser control, x reads, memory_* proxy) lives there. Starts the
+#    daemon when the `ling` binary exists; when it doesn't, the core-memory
+#    context below gains a one-line install hint instead of a surprise
+#    ~100MB download inside a session hook.
+# 4. Emit core memory as `hookSpecificOutput.additionalContext` so the
 #    host injects always-on identity facts (name, role, location, family,
 #    standing-instruction preferences) into the agent's system prompt.
 #    CC honors the field natively; Codex ignores unknown JSON and just
@@ -69,6 +74,24 @@ elif [ -n "$HAVE" ] && [ -n "$_running" ] && [ "$_running" != "$HAVE" ] && \
   "$BIN" restart >/dev/null 2>&1 || true
 fi
 
+# ── Ensure the Linggen daemon (the plugin's MCP server) is up ────────────────
+#
+# The MCP connection in .mcp.json points at http://127.0.0.1:9898/mcp. Start
+# the daemon when it's down and the binary exists; never auto-download the
+# engine from a session hook — surface the install line instead.
+
+LINGGEN_PORT="${LINGGEN_PORT:-9898}"
+install_hint=""
+if ! curl -fsS --max-time 2 "http://127.0.0.1:${LINGGEN_PORT}/api/health" >/dev/null 2>&1; then
+  LING_BIN="$(command -v ling || true)"
+  [ -z "$LING_BIN" ] && [ -x "$HOME/.local/bin/ling" ] && LING_BIN="$HOME/.local/bin/ling"
+  if [ -n "$LING_BIN" ]; then
+    (nohup "$LING_BIN" --web --port "$LINGGEN_PORT" >/dev/null 2>&1 &) || true
+  else
+    install_hint="Linggen daemon is not installed — browser/x/memory MCP tools are offline. Install: curl -fsSL https://linggen.dev/install.sh | bash"
+  fi
+fi
+
 # ── Inject core memory into the session's system prompt ─────────────────────
 #
 # Only when jq is available and the daemon answered our query. Empty store
@@ -79,7 +102,12 @@ command -v jq >/dev/null 2>&1 || exit 0
 [ -x "$BIN" ] || exit 0
 
 core_rows="$("$BIN" list --tier core --limit 100 --format json --quiet 2>/dev/null || true)"
-[ -z "$core_rows" ] && exit 0
+if [ -z "$core_rows" ]; then
+  if [ -n "$install_hint" ]; then
+    jq -nc --arg ctx "$install_hint" '{hookSpecificOutput:{hookEventName:"SessionStart",additionalContext:$ctx}}'
+  fi
+  exit 0
+fi
 
 # Defensive guard: if `ling-mem list --quiet` somehow leaked non-JSON
 # to stdout (daemon bug, mixed warning, partial response), the jq
@@ -88,7 +116,7 @@ core_rows="$("$BIN" list --tier core --limit 100 --format json --quiet 2>/dev/nu
 # log to stderr (CC shows hook stderr in the transcript) and bail
 # cleanly without emitting hookSpecificOutput.
 if ! printf '%s' "$core_rows" | jq -es '.' >/dev/null 2>&1; then
-  printf 'shared-memory autostart: ling-mem list --tier core returned non-JSON; skipping core injection\n' >&2
+  printf 'linggen autostart: ling-mem list --tier core returned non-JSON; skipping core injection\n' >&2
   exit 0
 fi
 
@@ -103,6 +131,9 @@ core_block="$(printf '%s' "$core_rows" | jq -sr '
     end
 ' 2>/dev/null || true)"
 
+if [ -n "$install_hint" ]; then
+  core_block="${core_block}${core_block:+\n\n}${install_hint}"
+fi
 [ -z "$core_block" ] && exit 0
 
 jq -nc --arg ctx "$core_block" '{

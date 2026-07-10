@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# UserPromptSubmit hook installed by shared-memory. Surfaces relevant
+# UserPromptSubmit hook installed by the linggen plugin. Surfaces relevant
 # memories for each turn. Bails silently on any failure — never blocks
 # the user.
 
