@@ -572,6 +572,19 @@ function showError(err) {
   document.getElementById('list-footer').textContent = '';
 }
 
+// Action failures (save / delete) — banner over the detail pane, list
+// left alone. `showError` is for the list-LOAD path only: it replaces
+// the list, which made a failed save read as "Couldn’t load facts"
+// over an emptied browser.
+function showActionError(err, action) {
+  const pane = document.getElementById('detail-pane');
+  pane.querySelector('.error-banner')?.remove();
+  const banner = document.createElement('div');
+  banner.className = 'error-banner';
+  banner.textContent = `${action} failed: ${err.message} [${err.code ?? '—'}]`;
+  pane.prepend(banner);
+}
+
 function renderList() {
   const list = document.getElementById('list');
   list.className = '';
@@ -1199,7 +1212,7 @@ async function saveNewFact() {
     updateCount();
     renderDetail();
   } catch (err) {
-    showError(err);
+    showActionError(err, 'Save');
   }
 }
 
@@ -1253,6 +1266,10 @@ async function saveEditedFact() {
   const patch = diffForUpdate(state.draft.original, state.draft.edited);
   if (!patch) return;
   if (isEpisodicMode()) patch.episodic = true;
+  // This console is the user's own hands — every edit here is the user
+  // directing the change, so the store's user-voice floor (which blocks
+  // AGENT rewrites of from=user rows) must not gate it.
+  patch.user_directed = true;
   try {
     const updated = await api('/api/memory/update', patch);
     // Re-derive `_storage` from the (possibly changed) tier so storageLabel()
@@ -1271,7 +1288,7 @@ async function saveEditedFact() {
     renderDetail();
     syncSelectionDom(updated.id);
   } catch (err) {
-    showError(err);
+    showActionError(err, 'Save');
   }
 }
 
@@ -1307,7 +1324,7 @@ async function deleteFact(id) {
     updateCount();
     renderDetail();
   } catch (err) {
-    showError(err);
+    showActionError(err, 'Delete');
   }
 }
 
