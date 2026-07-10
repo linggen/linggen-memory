@@ -508,3 +508,11 @@ linggen-browser extension) — one **visible** controlled tab:
   API keys.
 - A `no_bridge` error means the linggen-browser extension isn't connected;
   ask the user to install or enable it.
+- If the `linggen` MCP server itself is unreachable (nothing listening on
+  `127.0.0.1:9898`), the Linggen engine isn't installed or running. Memory
+  still works in full via the `ling-mem` CLI fallback; browser/x tools need
+  the engine. **Suggest the install to the user — never run it unprompted:**
+
+  ```bash
+  curl -fsSL https://linggen.dev/install.sh | bash
+  ```
