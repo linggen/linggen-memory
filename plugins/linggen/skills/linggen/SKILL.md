@@ -468,7 +468,7 @@ Claude Code   /plugin marketplace add linggen/linggen-memory
               /plugin install linggen@linggen-memory
 Codex         codex plugin marketplace add linggen/linggen-memory
               codex plugin add linggen@linggen-memory
-OpenClaw      clawhub install ling-mem
+OpenClaw      clawhub install linggen
 Any agent     npx skills add linggen/linggen-memory@linggen
 Linggen       Settings → Skills → linggen   (in-app)
 ```

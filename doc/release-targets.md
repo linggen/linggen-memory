@@ -33,11 +33,11 @@ skills.sh has no version — it tracks repo `HEAD`.
 | **Codex — self-host repo marketplace** | `.agents/plugins/marketplace.json` in `linggen/linggen-memory` | users: `codex plugin marketplace add linggen/linggen-memory` → `codex plugin add shared-memory@linggen-memory` | live |
 | **Codex — official directory** | OpenAI Codex Plugin Directory | curated, self-serve "coming soon" | future |
 | **skills.sh** | auto-discovers `SKILL.md` in `linggen/linggen-memory` | no publish step; tracks repo `HEAD`. `npx skills add linggen/linggen-memory@shared-memory` | live |
-| **ClawHub** | `clawhub skill publish <abs-path> --slug ling-mem --version X.Y.Z` (CLI-only variant) | immutable versions — a doc-only fix needs a bump; auto-runs ClawScan | live |
+| **ClawHub** | `clawhub skill publish <abs-path> --slug linggen --version X.Y.Z` | immutable versions — a doc-only fix needs a bump; auto-runs ClawScan | live |
 | **Linggen** | in-app marketplace (`/api/marketplace/install`) | engine-side install; UI: Settings → Skills | ⚠️ binary-bootstrap gap (engine session) |
 
 ## Notes
 
-- ClawHub slug is **`ling-mem`** (owner `linggen` → clawhub.ai/linggen/ling-mem), not `shared-memory`.
+- ClawHub slug is **`linggen`** (owner `linggen` → clawhub.ai/linggen/linggen); the old `ling-mem` slug redirects (renamed 2026-07-10, skill v2.0.0).
 - ClawHub / skills.sh / community-marketplace SKILL.md must self-reference the right slug and the per-platform install (no curl fan-out — `install-shared-memory.sh` is retired).
 - Post-1.0: switch the binary pin from an exact tag to a `^1` range so patch/minor binaries reach users without a plugin release (`install-bin.sh` resolves ranges; the store-schema guard makes it safe). See `doc/schema-versioning.md`.

@@ -64,7 +64,7 @@ Claude Code   /plugin marketplace add linggen/linggen-memory
               /plugin install shared-memory@linggen-memory
 Codex         codex plugin marketplace add linggen/linggen-memory
               codex plugin add shared-memory@linggen-memory
-OpenClaw      clawhub install ling-mem
+OpenClaw      clawhub install linggen
 Any agent     npx skills add linggen/linggen-memory@shared-memory
 Linggen       Settings → Skills → shared-memory   (in-app)
 ```
