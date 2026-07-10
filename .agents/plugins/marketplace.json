@@ -1,14 +1,14 @@
 {
   "name": "linggen-memory",
   "interface": {
-    "displayName": "Linggen Memory"
+    "displayName": "Linggen"
   },
   "plugins": [
     {
-      "name": "shared-memory",
+      "name": "linggen",
       "source": {
         "source": "local",
-        "path": "./plugins/shared-memory"
+        "path": "./plugins/linggen"
       },
       "policy": {
         "installation": "AVAILABLE",
