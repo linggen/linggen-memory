@@ -101,13 +101,13 @@ async function pollStats() {
 // ── Views (Browse | Calendar) + dream strip ───────────────────────────────
 //
 // Two top-level views. Browse is the row browser (list + detail). The
-// Calendar view is a READ-ONLY render of the dream pipeline for hosts
-// without the Linggen app: an Apple-style month grid from
-// `POST /api/memory/days` plus the review queue from
-// `POST /api/memory/issues`. The console never runs a scan/dream and
-// never solves or dismisses an item — no LLM lives here; acting on the
-// pipeline belongs to a host agent (`/linggen:scan`, `/linggen:dream`,
-// `/linggen:solve`).
+// Calendar view renders the dream pipeline for hosts without the
+// Linggen app: an Apple-style month grid from `POST /api/memory/days`
+// plus the review queue from `POST /api/memory/issues`. The console
+// runs no LLM, so it never scans, dreams, or solves — those belong to a
+// host agent (`/linggen:scan`, `/linggen:dream`, `/linggen:solve`). The
+// one action it allows is dismissing a review item: pure bookkeeping
+// (`issue_resolve`), no memory rows touched.
 //
 // SYNC PAIR: the month grid + review-queue markup/styles are a
 // read-only copy of the memory app's dream-calendar / review-queue
@@ -305,8 +305,9 @@ function renderCalMonth() {
   });
 }
 
-// The review queue, read-only: what a dream audit queued for the user.
-// No solve/dismiss here — the header points at `/linggen:solve`.
+// The review queue: what a dream audit queued for the user. Solving
+// needs an LLM (agent-side, `/linggen:solve`), but dismiss is pure
+// bookkeeping — the one action the read-only console allows.
 async function renderCalIssues() {
   const box = document.getElementById('cal-issues');
   if (!box) return;
@@ -329,10 +330,28 @@ async function renderCalIssues() {
           <span class="rq-kind rq-kind-${esc(i.kind)}">${esc(i.kind)}</span>
           <span class="rq-note">${esc(i.note)}</span>
           <span class="rq-meta">${esc(fmtAgo(i.created_at))}${i.row_ids?.length ? ` · ${i.row_ids.length} row${i.row_ids.length === 1 ? '' : 's'}` : ''}</span>
+          <button type="button" class="rq-dismiss" data-id="${esc(i.id)}" title="Dismiss — not worth fixing (bookkeeping only; doesn't touch memory rows)">dismiss</button>
         </div>`).join('')
     : '<div class="rq-empty">Review queue empty — nothing needs your judgment.</div>';
   box.innerHTML = head + rows;
   box.hidden = false;
+
+  box.querySelectorAll('.rq-dismiss').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      try {
+        await api('/api/memory/issue_resolve', {
+          id: btn.dataset.id,
+          outcome: 'dismissed',
+          note: 'dismissed from the console',
+        });
+        await pollDream();            // refreshes the strip + re-renders this view
+      } catch {
+        btn.disabled = false;
+        btn.textContent = 'failed';
+      }
+    });
+  });
 }
 
 async function renderCalendarView() {

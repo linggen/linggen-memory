@@ -1137,3 +1137,15 @@ body.view-calendar #calendar-view { display: flex; }
   overflow-wrap: anywhere;
 }
 .rq-meta { flex: 0 0 auto; color: var(--text-dim); font-size: 11px; white-space: nowrap; }
+.rq-dismiss {
+  flex: 0 0 auto;
+  font-size: 11px;
+  padding: 1px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: none;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.rq-dismiss:hover { color: var(--err); border-color: var(--err); }
+.rq-dismiss:disabled { opacity: 0.5; cursor: default; }
