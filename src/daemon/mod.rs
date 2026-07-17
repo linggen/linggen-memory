@@ -30,4 +30,4 @@ pub fn skill_dir(data_dir: &Path) -> PathBuf {
 }
 
 /// Default bind port. Overridable via `--port` on any lifecycle command.
-pub const DEFAULT_PORT: u16 = 9888;
+pub const DEFAULT_PORT: u16 = 9528;
