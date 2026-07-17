@@ -8,7 +8,8 @@
 //!   mission's worklist ("undreamed days, oldest first"), and the CLI's
 //!   `ling-mem days`. Each day carries per-verb flags (`scanned`,
 //!   `dreamed`); the top level carries `first_unscanned` /
-//!   `first_undreamed` for status surfaces.
+//!   `first_undreamed` plus past-day summary counts (`total_days`,
+//!   `scanned_days`, `dreamed_days`) for status surfaces.
 //! - **`remember_day`** — stamp a day `remembered_at` after a remember
 //!   pass judged its rows. Called by whichever agent ran the pass
 //!   (Linggen mission, skill page, CC/Codex host agent).
@@ -232,19 +233,29 @@ async fn days(
 
     let today = today_local();
     let mut out = Vec::new();
-    // "First day the user's next verb applies to" — computed over ALL
-    // past days, deliberately ignoring the from/to window and the
-    // worklist filter, so status surfaces get the global truth.
+    // "First day the user's next verb applies to" plus summary counts —
+    // computed over ALL past days (today can't be scanned/dreamed yet),
+    // deliberately ignoring the from/to window and the worklist filter,
+    // so status surfaces get the global truth.
     let mut first_unscanned: Option<String> = None;
     let mut first_undreamed: Option<String> = None;
+    let mut total_days = 0u32;
+    let mut scanned_days = 0u32;
+    let mut dreamed_days = 0u32;
     for date in dates {
         let empty = DayLive::default();
         let l = live.get(&date).unwrap_or(&empty);
         let rec = days_state.days.get(&date);
         let (scanned, dreamed) = day_flags(l, rec);
         if date.as_str() < today.as_str() {
-            if !scanned && first_unscanned.is_none() {
+            total_days += 1;
+            if scanned {
+                scanned_days += 1;
+            } else if first_unscanned.is_none() {
                 first_unscanned = Some(date.clone());
+            }
+            if dreamed {
+                dreamed_days += 1;
             }
             if undreamed(&date, &today, l) && first_undreamed.is_none() {
                 first_undreamed = Some(date.clone());
@@ -288,6 +299,9 @@ async fn days(
         "open_issues": open_issues,
         "first_unscanned": first_unscanned,
         "first_undreamed": first_undreamed,
+        "total_days": total_days,
+        "scanned_days": scanned_days,
+        "dreamed_days": dreamed_days,
         "days": out,
     })))
 }

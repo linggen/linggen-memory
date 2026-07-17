@@ -98,9 +98,10 @@ pub enum Command {
 
     /// Per-day dream-state rollup: each day's episodic row counts +
     /// per-verb flags (`scanned`, `dreamed`), plus `first_unscanned` /
-    /// `first_undreamed`. `--undreamed` narrows to days awaiting a
-    /// dream pass, oldest first — the dream worklist. Requires the
-    /// daemon.
+    /// `first_undreamed` and past-day summary counts (`total_days`,
+    /// `scanned_days`, `dreamed_days`). `--undreamed` narrows to days
+    /// awaiting a dream pass, oldest first — the dream worklist.
+    /// Requires the daemon.
     Days(DaysArgs),
 
     /// Stamp a day as remembered after a remember pass judged its rows.

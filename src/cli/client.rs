@@ -373,6 +373,13 @@ pub(crate) async fn days(
                     "{date}  {scanned} {dreamed}  rows={rows} unjudged={unjudged} promoted={promoted}"
                 );
             }
+            let count = |k: &str| data.get(k).and_then(|v| v.as_u64()).unwrap_or(0);
+            println!(
+                "days: {} scanned · {} dreamed · {} total",
+                count("scanned_days"),
+                count("dreamed_days"),
+                count("total_days")
+            );
             for key in ["first_unscanned", "first_undreamed"] {
                 if let Some(day) = data.get(key).and_then(|v| v.as_str()) {
                     println!("{key}: {day}");

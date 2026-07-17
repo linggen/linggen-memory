@@ -254,7 +254,7 @@ fn tool_defs() -> Vec<Value> {
         }),
         json!({
             "name": "memory_days",
-            "description": "Per-day dream-state rollup: each day's episodic row counts + per-verb flags (scanned = a scan walked its session logs; dreamed = a dream pass judged it, late rows clear the flag). Top level carries first_unscanned / first_undreamed / open_issues. Use undreamed_only to get the dream worklist — days awaiting a dream pass, oldest first.",
+            "description": "Per-day dream-state rollup: each day's episodic row counts + per-verb flags (scanned = a scan walked its session logs; dreamed = a dream pass judged it, late rows clear the flag). Top level carries first_unscanned / first_undreamed / open_issues plus past-day summary counts (total_days / scanned_days / dreamed_days). Use undreamed_only to get the dream worklist — days awaiting a dream pass, oldest first.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
