@@ -291,7 +291,6 @@ mode's references.
 |:---|:---|:---|
 | **Dream** | Message says `/linggen dream` (all undreamed days) or `/linggen dream <YYYY-MM-DD>` (one day). User-triggered — or wired to the host's own scheduler for a nightly pass. | `Read references/dream-flow.md` (the canonical remember/forget runbook) and `references/routing-rules.md`. |
 | **Scan** | Message says `/linggen scan <YYYY-MM-DD>` — stage that day's session logs (backfill), see the verb table. | `Read references/dream-flow.md` (its Scan section) and `references/extractor-prompt.md` (what to stage). |
-| **Condense** | Message says `/linggen condense` — collapse stale chains in long-term memory. | `Read references/condense-flow.md` (the canonical condense runbook). |
 | **Solve** | Message says `/linggen solve` — drain the review queue (items a dream audit queued for the user). | The Solve runbook below; `references/routing-rules.md` for write decisions. |
 | **Status** | Message says `/linggen status` — one glanceable block: versions + updates, store size, upkeep. | Nothing extra: the host command carries the full recipe (fetches + render); its data = `memory_dream_status` + `ling-mem status`/`stats` + engine/bridge probes. |
 | **Chat** | **Anything else** — bare `/linggen`, `/linggen list`, `/linggen search foo`, plain `"show all memory"`, free-form questions. | Body of this SKILL.md is the entry. `Read references/routing-rules.md` only when making save / dedup decisions. |
@@ -317,7 +316,6 @@ first.
 | `list [--type ...] [--tier ...] [--limit N]` | Paginated listing. |
 | `delete <id>` | Remove a specific row by id. |
 | `update <id> --content "<new>"` | Edit a row in-place (content / contexts / tags). |
-| `condense` | **Collapse stale same-subject chains in long-term memory** — stage 4, the only pass over semantic-at-rest. Scan via `ling-mem chains --derived-only` (cited = pre-confirmed id-citation chains; `--kind marker` = provisional-state candidates to confirm); collapse each into one current-truth row (add the survivor first, then delete members). Back up first (`ling-mem export`), supervise early runs. See `references/condense-flow.md`. |
 | `solve` | **Drain the review queue** — see the Solve runbook below. |
 | `status` | **Glanceable install status** — binary versions + cached update probes, store size (`ling-mem stats`), and upkeep: `scanned_days`/`dreamed_days`/`total_days` counts, `first_unscanned` / `first_undreamed`, open issues, last run (from `memory_dream_status` or `ling-mem days`). |
 
