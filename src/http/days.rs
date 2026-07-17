@@ -268,9 +268,14 @@ async fn days(
         }));
     }
 
+    // Open review items ride along so one `days` call feeds every
+    // "is memory upkeep due?" surface (recall footer, dream status).
+    let open_issues = super::issues::open_count(&state.data_dir).await;
+
     Ok(ok(json!({
         "today": today,
         "ttl_days": cfg.episodic_ttl_days,
+        "open_issues": open_issues,
         "days": out,
     })))
 }

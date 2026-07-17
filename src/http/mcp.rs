@@ -76,6 +76,10 @@ Explicit imperatives — act immediately:
 - **Never, any tier:** secrets (credentials, tokens, keys); content verbatim re-derivable from a file the agent re-reads (store the *decision/learning about* it, not the file body).
 - **Keep out of core/semantic — episodic is fine:** project-internal facts, raw activity logs, single architectural calls, opinions without commitment. These stage in episodic; the dream pass decides if any earn a curated row.
 
+# Status rows are perishable — supersede at write time
+
+A status-bearing row ("in progress", "OPEN:", "not committed", "shipped", "dormant") is a claim about the world, and the world moves. When capturing a status change (shipped / fixed / dormant / abandoned), search the subject and write the new status with `replace_ids` listing the prior status row(s) — never leave "in progress" beside its own outcome. (Own-notes only; a user-voice predecessor follows the merge law.) The dream audit's review queue catches what slips through (memory_issues lists it; memory_issue_resolve closes items after an attended solve) — write-time supersede is the real fix, the queue is the backstop.
+
 # Memory hygiene — see it, solve it
 
 Whoever surfaces garbage owns it in that moment; there is no cleanup queue. Authority follows voice:
@@ -284,6 +288,30 @@ fn tool_defs() -> Vec<Value> {
             }
         }),
         json!({
+            "name": "memory_issues",
+            "description": "Review queue — items the dream audit could not solve with confidence (uncertain merges, stale status claims, user-voice contradictions). Returns the facts only; YOU are the solver: gather evidence (e.g. git history for a stale status claim), ask the user one item at a time when their call is needed, write the fix via memory_add + replace_ids, then close the item with memory_issue_resolve.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "status": {"type": "string", "enum": ["open", "resolved", "dismissed", "all"], "description": "Which items to list (default open)."},
+                    "limit":  {"type": "integer", "description": "Max items (default 50)."}
+                }
+            }
+        }),
+        json!({
+            "name": "memory_issue_resolve",
+            "description": "Close one review-queue item by id after solving it (outcome=resolved) or deciding it isn't worth fixing (outcome=dismissed). Pass a one-line note of what was done. Closing an already-closed item is a no-op success.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "id":      {"type": "string", "description": "The issue id from memory_issues."},
+                    "outcome": {"type": "string", "enum": ["resolved", "dismissed"]},
+                    "note":    {"type": "string", "description": "One-line record of what was done."}
+                },
+                "required": ["id", "outcome"]
+            }
+        }),
+        json!({
             "name": "memory_chains",
             "description": "Condense scan — mechanical, read-only detection of stale same-subject clusters in long-term memory. kind=cited: rows citing another row's id verbatim, grouped into chains (auto-accept quality). kind=marker: rows with provisional-state language (\"OPEN:\", \"uncommitted\", …) plus nearest-neighbor rows — confirm a real supersession before merging. kind=subject: same-subject vector clusters (3+ rows) for the digest pass — condense into ONE focused per-subject row, never a mega state row. Each cluster carries derived_only: merge unattended ONLY when true (the merge law); user-voice clusters need the user. Apply merges via memory_add with replace_ids.",
             "inputSchema": {
@@ -334,6 +362,8 @@ fn tool_name_to_verb(name: &str) -> Option<&'static str> {
         "memory_harvest_day"  => Some("harvest_day"),
         "memory_sweep"        => Some("sweep"),
         "memory_chains"       => Some("chains"),
+        "memory_issues"       => Some("issues"),
+        "memory_issue_resolve" => Some("issue_resolve"),
         _ => None,
     }
 }

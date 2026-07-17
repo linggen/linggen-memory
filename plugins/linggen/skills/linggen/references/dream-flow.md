@@ -52,14 +52,20 @@ never write them.
 
 ## `dream` (no argument) — remember all pending days
 
+0. **Snapshot + in-flight check.** `ling-mem export` once (a store
+   backup before any judged writes — the engine does the same before
+   its mission runs). If the `memory_dream_status` MCP tool is
+   reachable and reports `in_flight: true`, the Linggen engine is
+   already dreaming — stop and say so; never run two dreams at once.
 1. Fetch the worklist: `days` with `pending_only` (CLI:
-   `ling-mem days --pending`). Empty → run **Forget** below, reply
-   that memory is up to date, done.
+   `ling-mem days --pending`). Empty → run **Forget** below, then
+   **Audit** below, reply that memory is up to date, done.
 2. Take the **oldest** pending day → run **Remember one day** below.
 3. Repeat from 1. If the same day comes back with an undropped
    `unjudged` count, **stop and report** ("stalled") instead of
    looping.
-4. When no days remain: run **Forget**, then report totals.
+4. When no days remain: run **Forget**, then **Audit**, then report
+   totals.
 
 ## `dream <YYYY-MM-DD>` — remember one day
 
@@ -145,6 +151,31 @@ self-guarding: evicts only rows that are past the episodic TTL **and**
 on a remembered day **and** created before that day's stamp. Un-judged
 rows are untouchable — an undreamed day keeps its rows forever until
 someone remembers it. Safe to call anytime; `--dry-run` previews.
+
+## Audit (after the sweep, clean-worklist runs only)
+
+Confidence decides what happens to long-term staleness: solve what you
+can prove, queue the rest for the user. Two capped passes:
+
+1. **Condense cited chains** —
+   `ling-mem chains --kind cited --derived-only --limit 10`.
+   Pre-confirmed id-citation chains of your own notes: collapse each
+   into ONE current-truth row (`replace_ids` over MCP; CLI: add the
+   survivor, then delete members). See `references/condense-flow.md`
+   for drafting rules.
+2. **Queue what you can't solve** —
+   `ling-mem chains --kind marker --limit 5` (no `--derived-only`:
+   queueing is bookkeeping, not merging). Per candidate: skip rows
+   younger than ~14 days (write-time supersede gets first chance);
+   otherwise queue via
+   `ling-mem issue-add --kind <k> --row <id> [--row <id>] "<note>"` —
+   `chain` for an uncertain merge (note: subject + both gists),
+   `stale-status` for a provisional claim with no completing neighbor
+   (note: the claim + "verify against git/files at solve time"),
+   `contradiction` when user-voice rows disagree. `already queued` is
+   success — the daemon dedups per (kind, row_ids). **Never merge
+   marker or subject clusters in a dream** — solving queued items is
+   `/linggen solve`, with the user present.
 
 ## Reporting (Linggen dashboard)
 

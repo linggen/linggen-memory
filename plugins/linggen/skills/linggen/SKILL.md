@@ -106,6 +106,8 @@ change when you switch agents.
 | Stamp  | `ling-mem remember-day <date> --judged N --promoted K` — mark a day judged after a remember pass |
 | Sweep  | `ling-mem sweep [--dry-run]` — the forget stage: evict judged episodic rows past TTL; never touches un-judged rows |
 | Chains | `ling-mem chains [--kind cited\|marker] [--derived-only] [--limit N] [--offset N]` — condense scan: stale same-subject chains in long-term memory (read-only; judgment is yours) |
+| Issues | `ling-mem issues [--status open\|all]` — the review queue: items a dream audit could not solve with confidence (facts only; you are the solver — see the Solve mode) |
+| Close issue | `ling-mem issue-resolve <id> [--outcome resolved\|dismissed] [--note "..."]` — close one review item after solving it |
 
 **Anchor relative time in every saved row** — substitute today's date in before writing (e.g. if today is 2026-07-07: "turned 3 last month" → "turned 3 in 2026-06, as of 2026-07-07"); relative words rot silently.
 
@@ -290,6 +292,7 @@ mode's references.
 | **Dream** | Message says `/linggen dream` (all pending days) or `/linggen dream <YYYY-MM-DD>` (one day). User-triggered — or wired to the host's own scheduler for a nightly pass. | `Read references/dream-flow.md` (the canonical remember/forget runbook) and `references/routing-rules.md`. |
 | **Scan** | Message says `/linggen scan <YYYY-MM-DD>` — stage that day's session logs (backfill), see the verb table. | `Read references/dream-flow.md` (its Scan section) and `references/extractor-prompt.md` (what to stage). |
 | **Condense** | Message says `/linggen condense` — collapse stale chains in long-term memory. | `Read references/condense-flow.md` (the canonical condense runbook). |
+| **Solve** | Message says `/linggen solve` — drain the review queue (items a dream audit queued for the user). | The Solve runbook below; `references/routing-rules.md` for write decisions. |
 | **Chat** | **Anything else** — bare `/linggen`, `/linggen list`, `/linggen search foo`, plain `"show all memory"`, free-form questions. | Body of this SKILL.md is the entry. `Read references/routing-rules.md` only when making save / dedup decisions. |
 
 **Chat mode is the default.** When in doubt, you are in chat mode.
@@ -314,6 +317,37 @@ first.
 | `delete <id>` | Remove a specific row by id. |
 | `update <id> --content "<new>"` | Edit a row in-place (content / contexts / tags). |
 | `condense` | **Collapse stale same-subject chains in long-term memory** — stage 4, the only pass over semantic-at-rest. Scan via `ling-mem chains --derived-only` (cited = pre-confirmed id-citation chains; `--kind marker` = provisional-state candidates to confirm); collapse each into one current-truth row (add the survivor first, then delete members). Back up first (`ling-mem export`), supervise early runs. See `references/condense-flow.md`. |
+| `solve` | **Drain the review queue** — see the Solve runbook below. |
+
+### Solve runbook — `/linggen solve`
+
+The review queue holds what a dream audit could NOT solve with
+confidence: uncertain merges (`chain`), status claims likely overtaken
+by the world (`stale-status`), and conflicts needing the user's pick
+(`contradiction`). The daemon only bookkeeps; **you are the solver**,
+with this session's model, tools, and user.
+
+1. **Back up, then list.** `ling-mem export` first (one snapshot per
+   solve session), then `ling-mem issues --format json` (or the
+   `memory_issues` MCP tool). Empty → say so, done.
+2. **Per item, gather evidence at solve time.** Fetch the rows
+   (`ling-mem get <row_id>`). For `stale-status`: check the WORLD —
+   `git log --oneline --since=<row date>` in the named repo, working
+   tree, file existence. The row was written before the world moved;
+   your evidence decides what's true now.
+3. **Apply the confidence rule.** Evidence is conclusive AND every
+   affected row is your own note (`from=derived`) → solve directly, no
+   ask: one `memory_add` with `replace_ids` (or CLI add-then-delete)
+   writing current truth. Evidence is ambiguous, OR any affected row is
+   user-voice (`from=user`) → **ask the user, ONE item per question**
+   (AskUserQuestion on Claude Code; plain numbered options elsewhere) —
+   never batch the whole queue into one wall of questions. User-voice
+   fixes carry `user_directed:true` after their answer.
+4. **Close as you go.** After each item:
+   `ling-mem issue-resolve <id> --outcome resolved --note "<what you did>"`
+   (or `memory_issue_resolve`). Not worth fixing → `--outcome dismissed`.
+5. **Report one line per item** — `SOLVED <id> <what changed>` /
+   `DISMISSED <id> <why>` — then a closing count.
 
 ### Chat-mode rules
 
@@ -344,6 +378,17 @@ the change: their current message states it as settled (a command
 "update X to Y", a declaration "my X is now Y", a commitment "from
 now on, X") or they just answered your ask. A hedged reflection ("X
 feels about right to me") never qualifies — ask first.
+
+**Status rows are perishable — supersede at write time.** A
+status-bearing row ("in progress", "OPEN:", "not committed",
+"shipped", "dormant") is a claim about the world, and the world moves.
+When you capture a status change (shipped / fixed / dormant /
+abandoned), search the subject first and write the new status
+replacing the prior status row(s) on that subject (`replace_ids` over
+MCP; add-then-delete via CLI) — never leave "in progress" beside its
+own outcome. Own-notes only; a user-voice predecessor follows the
+merge law. The dream audit's review queue is the backstop for what
+slips through — write-time supersede is the real fix.
 
 | You see | Action |
 |:---|:---|

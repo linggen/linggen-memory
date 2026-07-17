@@ -17,6 +17,7 @@ mod config;
 pub(crate) mod days;
 pub mod envelope;
 mod health;
+pub(crate) mod issues;
 mod mcp;
 mod memory;
 pub mod state;
@@ -45,6 +46,7 @@ pub fn build_router(state: SharedState, telemetry: Telemetry) -> Router {
             memory::router()
                 .merge(days::router())
                 .merge(chains::router())
+                .merge(issues::router())
                 .merge(stats::router())
                 .layer(middleware::from_fn_with_state(
                     telemetry,

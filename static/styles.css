@@ -900,3 +900,100 @@ input[type="text"]:disabled { opacity: 0.6; }
   border-radius: 3px;
 }
 .chip.tag { font-family: ui-monospace, SFMono-Regular, monospace; }
+
+/* ── Dream strip + panel ─────────────────────────────────────────────── */
+
+#dream-strip {
+  border-bottom: 1px solid var(--border);
+}
+#dream-toggle {
+  width: 100%;
+  text-align: left;
+  padding: 6px 20px;
+  font-size: 12px;
+  color: var(--text-dim);
+  background: none;
+  border: none;
+  cursor: pointer;
+  letter-spacing: 0.1px;
+}
+#dream-toggle:hover { color: var(--text); background: var(--panel); }
+#dream-toggle.attention { color: var(--warn); }
+
+#dream-panel {
+  display: flex;
+  gap: 24px;
+  flex-wrap: wrap;
+  padding: 12px 20px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+}
+
+#dream-calendar .dcal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 26px);
+  gap: 3px;
+}
+.dcal-cell {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 22px;
+  font-size: 10px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  background: var(--bg);
+}
+.dcal-pending    { background: color-mix(in srgb, var(--warn) 22%, var(--bg)); border-color: var(--warn); color: var(--text); }
+.dcal-remembered { background: color-mix(in srgb, var(--ok) 20%, var(--bg));  border-color: var(--ok); }
+.dcal-forgotten  { background: var(--panel-2); }
+.dcal-harvested  { background: var(--panel-2); }
+.dcal-today      { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+#dream-calendar .dcal-legend {
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--text-dim);
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+#dream-calendar .dcal-legend .dcal-cell { width: 14px; height: 12px; }
+
+#dream-issues { flex: 1; min-width: 320px; font-size: 12px; }
+.dream-issues-head { color: var(--text-dim); margin-bottom: 8px; }
+.dream-issues-head code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; }
+.dream-issues-empty { color: var(--text-dim); }
+.issue-row {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 5px 0;
+  border-top: 1px solid var(--border);
+}
+.issue-kind {
+  flex: none;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.issue-kind-chain         { color: var(--t-decision); border-color: var(--t-decision); }
+.issue-kind-stale-status  { color: var(--warn); border-color: var(--warn); }
+.issue-kind-contradiction { color: var(--err); border-color: var(--err); }
+.issue-note { flex: 1; min-width: 0; }
+.issue-meta { flex: none; color: var(--text-dim); font-size: 11px; white-space: nowrap; }
+.issue-dismiss {
+  flex: none;
+  font-size: 11px;
+  padding: 1px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: none;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.issue-dismiss:hover { color: var(--err); border-color: var(--err); }

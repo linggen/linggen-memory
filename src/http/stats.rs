@@ -66,6 +66,7 @@ async fn stats(State(state): State<SharedState>) -> Result<Response, ApiError> {
         .count();
 
     let config = super::config::load(&state.data_dir).await;
+    let open_issues = super::issues::open_count(&state.data_dir).await;
 
     Ok(ok(json!({
         "total": core + semantic + episodic,
@@ -77,6 +78,7 @@ async fn stats(State(state): State<SharedState>) -> Result<Response, ApiError> {
         },
         "remembered_days": remembered_days,
         "last_remembered_at": last_remembered_at,
+        "open_issues": open_issues,
         "ttl_days": config.episodic_ttl_days,
         "schema_version": crate::memory::schema_version::STORE_SCHEMA_VERSION,
         "embedding_model": crate::embed::MODEL_REPO,

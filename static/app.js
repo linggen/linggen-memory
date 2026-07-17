@@ -98,6 +98,150 @@ async function pollStats() {
   }
 }
 
+// ── Dream strip + panel ───────────────────────────────────────────────────
+//
+// Read-only view of the dream pipeline for hosts without the Linggen app:
+// a one-line summary (pending days · open review items) expanding into a
+// calendar rendered from `POST /api/memory/days` and the review queue from
+// `POST /api/memory/issues`. The console never runs a dream and never
+// solves an item — no LLM lives here. Dismiss is the one action (pure
+// bookkeeping); solving belongs to a host agent (`/linggen:solve`).
+
+let dreamOpen = false;
+
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, (c) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+  ));
+}
+
+const DREAM_STATE_LABEL = {
+  pending: 'pending — awaiting a dream pass',
+  remembered: 'remembered — judged, short-term rows still live',
+  forgotten: 'forgotten — judged, past-TTL rows evicted',
+  harvested: 'harvested — scanned, nothing staged',
+  today: 'today — not yet dreamable',
+  staging: 'staging',
+};
+
+async function pollDream() {
+  const strip = document.getElementById('dream-strip');
+  const toggle = document.getElementById('dream-toggle');
+  if (!strip || !toggle) return;
+  try {
+    const d = await api('/api/memory/days');
+    const pending = d.days.filter((x) => x.state === 'pending');
+    const issues = d.open_issues ?? 0;
+    const bits = [];
+    bits.push(pending.length
+      ? `${pending.length} day(s) pending (oldest ${pending[0].date})`
+      : 'no days pending');
+    bits.push(issues ? `${issues} item(s) need review` : 'review queue empty');
+    toggle.textContent = `☾ dream — ${bits.join(' · ')} ${dreamOpen ? '▴' : '▾'}`;
+    toggle.classList.toggle('attention', pending.length > 0 || issues > 0);
+    strip.hidden = false;
+    if (dreamOpen) await renderDreamPanel(d);
+  } catch {
+    strip.hidden = true;
+    document.getElementById('dream-panel').hidden = true;
+  }
+}
+
+function dayCellClass(state) {
+  return `dcal-cell dcal-${state}`;
+}
+
+/// Six trailing weeks, Monday-first, today in the last row.
+function renderDreamCalendar(rollup) {
+  const el = document.getElementById('dream-calendar');
+  if (!el) return;
+  const byDate = new Map(rollup.days.map((d) => [d.date, d]));
+  const today = new Date(`${rollup.today}T12:00:00`);
+  const dow = (today.getDay() + 6) % 7; // Monday = 0
+  const end = new Date(today);
+  end.setDate(end.getDate() + (6 - dow));
+  const cells = [];
+  for (let i = 41; i >= 0; i--) {
+    const day = new Date(end);
+    day.setDate(end.getDate() - i);
+    const key = day.toISOString().slice(0, 10);
+    const rec = byDate.get(key);
+    const state = key === rollup.today ? 'today' : (rec?.state ?? 'none');
+    const tip = rec
+      ? `${key} — ${DREAM_STATE_LABEL[rec.state] ?? rec.state}` +
+        (rec.rows ? ` · ${rec.rows} row(s), ${rec.unjudged} unjudged` : '') +
+        (rec.promoted ? ` · ${rec.promoted} promoted` : '')
+      : `${key}${key === rollup.today ? ' — today' : ''}`;
+    cells.push(`<span class="${dayCellClass(state)}" title="${esc(tip)}">${day.getDate()}</span>`);
+  }
+  el.innerHTML = `<div class="dcal-grid">${cells.join('')}</div>
+    <div class="dcal-legend">
+      <span class="dcal-cell dcal-pending"></span> pending
+      <span class="dcal-cell dcal-remembered"></span> remembered
+      <span class="dcal-cell dcal-forgotten"></span> forgotten
+      <span class="dcal-cell dcal-today"></span> today
+    </div>`;
+}
+
+async function renderDreamPanel(rollup) {
+  const panel = document.getElementById('dream-panel');
+  if (!panel) return;
+  renderDreamCalendar(rollup);
+  const box = document.getElementById('dream-issues');
+  try {
+    const data = await api('/api/memory/issues', { status: 'open' });
+    if (!data.issues.length) {
+      box.innerHTML = '<div class="dream-issues-empty">Review queue empty.</div>';
+    } else {
+      const rows = data.issues.map((i) => `
+        <div class="issue-row" data-id="${esc(i.id)}">
+          <span class="issue-kind issue-kind-${esc(i.kind)}">${esc(i.kind)}</span>
+          <span class="issue-note">${esc(i.note)}</span>
+          <span class="issue-meta">${esc(fmtAgo(i.created_at))}${i.row_ids.length ? ` · ${i.row_ids.length} row(s)` : ''}</span>
+          <button type="button" class="issue-dismiss" data-id="${esc(i.id)}" title="Dismiss — not worth fixing">dismiss</button>
+        </div>`).join('');
+      box.innerHTML = `
+        <div class="dream-issues-head">${data.open_count} open — solve with your agent: <code>/linggen:solve</code></div>
+        ${rows}`;
+      box.querySelectorAll('.issue-dismiss').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+          btn.disabled = true;
+          try {
+            await api('/api/memory/issue_resolve', {
+              id: btn.dataset.id,
+              outcome: 'dismissed',
+              note: 'dismissed from the console',
+            });
+            await pollDream();
+          } catch (e) {
+            btn.disabled = false;
+            btn.textContent = 'failed';
+          }
+        });
+      });
+    }
+  } catch {
+    box.innerHTML = '<div class="dream-issues-empty">Could not load the review queue.</div>';
+  }
+  panel.hidden = false;
+}
+
+function wireDreamStrip() {
+  const toggle = document.getElementById('dream-toggle');
+  const panel = document.getElementById('dream-panel');
+  if (!toggle || !panel) return;
+  toggle.addEventListener('click', async () => {
+    dreamOpen = !dreamOpen;
+    toggle.setAttribute('aria-expanded', String(dreamOpen));
+    if (!dreamOpen) {
+      panel.hidden = true;
+      pollDream();
+      return;
+    }
+    await pollDream();
+  });
+}
+
 // ── Query parser ──────────────────────────────────────────────────────────
 //
 // Strict grammar — unknown fields or malformed values fall through to
@@ -2159,6 +2303,9 @@ pollHealth();
 setInterval(pollHealth, HEALTH_POLL_MS);
 pollStats();
 setInterval(pollStats, HEALTH_POLL_MS * 4);
+wireDreamStrip();
+pollDream();
+setInterval(pollDream, HEALTH_POLL_MS * 4);
 
 renderFiltersBar();
 renderViewBar();

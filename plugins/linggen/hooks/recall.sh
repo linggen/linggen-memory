@@ -81,6 +81,32 @@ hits="$(printf '%s' "$out" | jq -sr --arg proj "$proj" --argjson k "$topk" '
 hit_count="$(printf '%s\n' "$hits" | grep -c .)"
 [ -n "$hits" ] && printf '%s\n' "$hits"
 
+# Memory-upkeep nudge — pending dream days + open review items, from ONE
+# `days` rollup call. Cached (default 30 min) so the recall path stays
+# fast; upkeep state moves slowly. Thresholds: ≥2 undreamed days (the
+# engine's own 3am cron usually covers yesterday; nagging about one day
+# is noise) and ≥1 open review item.
+upkeep_ttl_min="${LING_MEM_UPKEEP_CACHE_MIN:-30}"
+upkeep_cache="${TMPDIR:-/tmp}/ling-mem-upkeep-$(id -u)"
+upkeep=""
+if [ -f "$upkeep_cache" ] && [ -n "$(find "$upkeep_cache" -mmin "-$upkeep_ttl_min" 2>/dev/null)" ]; then
+  upkeep="$(cat "$upkeep_cache" 2>/dev/null || true)"
+else
+  days_out="$(run_with_timeout "$to" ling-mem days --pending --format json --quiet || true)"
+  if [ -n "$days_out" ]; then
+    upkeep="$(printf '%s' "$days_out" | jq -r '
+      (.days // [] | length) as $p |
+      (.open_issues // 0) as $i |
+      ((.days // [])[0].date // "") as $o |
+      [ (if $p >= 2 then "memory upkeep: \($p) days undreamed (oldest \($o)) — offer to run the dream: /linggen:dream runs it with this session'\''s model; memory_dream_run offloads it to the Linggen engine" else empty end),
+        (if $i >= 1 then "memory upkeep: \($i) item(s) awaiting review — offer /linggen:solve (memory_issues has the facts)" else empty end) ]
+      | join("\n")
+    ' 2>/dev/null || true)"
+    printf '%s' "$upkeep" > "$upkeep_cache" 2>/dev/null || true
+  fi
+fi
+[ -n "$upkeep" ] && printf '\n%s\n' "$upkeep"
+
 # Always-on capture nudge — fires EVERY turn, including zero-hit turns
 # (often the very turns that produce new memory). Tier definitions / routing
 # live in the session-start MCP instructions; this is only the per-turn reminder.

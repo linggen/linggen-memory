@@ -139,6 +139,21 @@ pub enum Command {
     /// caller (the condense mission / host agent). Requires the daemon.
     Chains(ChainsArgs),
 
+    /// Review queue — items the dream audit could not solve with
+    /// confidence (uncertain merges, stale status claims, user-voice
+    /// contradictions). Listing is read-only; solving happens in a host
+    /// agent (`/linggen:solve`). Requires the daemon.
+    Issues(IssuesArgs),
+
+    /// Queue one review item (the audit's holding pen). Idempotent per
+    /// (kind, row_ids) — re-queueing an unfixed suspect returns the
+    /// existing item. Requires the daemon.
+    IssueAdd(IssueAddArgs),
+
+    /// Close one review-queue item by id after solving (or dismissing)
+    /// it. Requires the daemon.
+    IssueResolve(IssueResolveArgs),
+
     // Session-scanning utilities (`collect` + `extract`) used to live here.
     // They moved to `skills/memory/scripts/` as bash helpers — the daemon is
     // a pure data service; reading session files isn't its concern.
@@ -433,6 +448,47 @@ pub struct ChainsArgs {
     /// (`from=derived`, `tier=semantic`). What the condense mission uses.
     #[arg(long)]
     pub derived_only: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct IssuesArgs {
+    /// Which items to list.
+    #[arg(long, default_value = "open", value_parser = ["open", "resolved", "dismissed", "all"])]
+    pub status: String,
+
+    /// Max items.
+    #[arg(long, default_value_t = 50)]
+    pub limit: usize,
+}
+
+#[derive(Debug, Args)]
+pub struct IssueAddArgs {
+    /// What the audit saw: `chain` (uncertain merge candidate),
+    /// `stale-status` (claim likely overtaken by the world), or
+    /// `contradiction` (conflicting rows needing the user's pick).
+    #[arg(long, value_parser = ["chain", "stale-status", "contradiction"])]
+    pub kind: String,
+
+    /// Memory row id(s) the item is about (repeatable).
+    #[arg(long = "row", value_name = "ROW_ID")]
+    pub row_ids: Vec<String>,
+
+    /// What a solver should check — the item's whole context.
+    pub note: String,
+}
+
+#[derive(Debug, Args)]
+pub struct IssueResolveArgs {
+    /// The issue id (from `ling-mem issues`).
+    pub id: String,
+
+    /// `resolved` (fixed in the store) or `dismissed` (not worth fixing).
+    #[arg(long, default_value = "resolved", value_parser = ["resolved", "dismissed"])]
+    pub outcome: String,
+
+    /// One-line record of what was done.
+    #[arg(long)]
+    pub note: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -814,6 +870,11 @@ pub async fn run(cli: Cli) -> Result<()> {
                 }
                 Command::Stats => client::stats(&base_url, format).await,
                 Command::Chains(args) => client::chains(&base_url, args, format).await,
+                Command::Issues(args) => client::issues(&base_url, args, format).await,
+                Command::IssueAdd(args) => client::issue_add(&base_url, args, format).await,
+                Command::IssueResolve(args) => {
+                    client::issue_resolve(&base_url, args, format).await
+                }
                 Command::Serve { .. }
                 | Command::Start { .. }
                 | Command::Stop
@@ -856,7 +917,10 @@ pub async fn run(cli: Cli) -> Result<()> {
         | Command::HarvestDay { .. }
         | Command::Sweep { .. }
         | Command::Stats
-        | Command::Chains(_) => Err(anyhow!(
+        | Command::Chains(_)
+        | Command::Issues(_)
+        | Command::IssueAdd(_)
+        | Command::IssueResolve(_) => Err(anyhow!(
             "this command requires the daemon — start it with `ling-mem start`"
         )),
         Command::Serve { .. }

@@ -446,6 +446,89 @@ pub(crate) async fn chains(
     }
 }
 
+pub(crate) async fn issues(
+    base: &str,
+    args: crate::cli::IssuesArgs,
+    format: OutputFormat,
+) -> Result<()> {
+    let body = json!({ "status": args.status, "limit": args.limit });
+    let data = post(base, "/api/memory/issues", &body).await?;
+    match format {
+        OutputFormat::Json => writeln_ndjson(&data),
+        OutputFormat::Text => {
+            let open = data.get("open_count").and_then(|v| v.as_u64()).unwrap_or(0);
+            let items = data.get("issues").and_then(|v| v.as_array());
+            let Some(items) = items.filter(|i| !i.is_empty()) else {
+                println!("review queue empty ({open} open)");
+                return Ok(());
+            };
+            println!("{open} open item(s) — solve with your agent (/linggen:solve)");
+            for i in items {
+                let id = i.get("id").and_then(|v| v.as_str()).unwrap_or("?");
+                let kind = i.get("kind").and_then(|v| v.as_str()).unwrap_or("?");
+                let status = i.get("status").and_then(|v| v.as_str()).unwrap_or("?");
+                let rows = i
+                    .get("row_ids")
+                    .and_then(|v| v.as_array())
+                    .map(|a| a.len())
+                    .unwrap_or(0);
+                let note = i.get("note").and_then(|v| v.as_str()).unwrap_or("");
+                let head: String = note.chars().take(90).collect();
+                println!("{id}  [{kind}] {status} rows={rows}  {head}");
+            }
+            Ok(())
+        }
+    }
+}
+
+pub(crate) async fn issue_add(
+    base: &str,
+    args: crate::cli::IssueAddArgs,
+    format: OutputFormat,
+) -> Result<()> {
+    let body = json!({ "kind": args.kind, "row_ids": args.row_ids, "note": args.note });
+    let data = post(base, "/api/memory/issue_add", &body).await?;
+    match format {
+        OutputFormat::Json => writeln_ndjson(&data),
+        OutputFormat::Text => {
+            let issue = data.get("issue").cloned().unwrap_or_default();
+            let id = issue.get("id").and_then(|v| v.as_str()).unwrap_or("?");
+            if data.get("deduped").and_then(|v| v.as_bool()).unwrap_or(false) {
+                println!("{id} already queued");
+            } else {
+                println!("{id} queued");
+            }
+            Ok(())
+        }
+    }
+}
+
+pub(crate) async fn issue_resolve(
+    base: &str,
+    args: crate::cli::IssueResolveArgs,
+    format: OutputFormat,
+) -> Result<()> {
+    let mut body = json!({ "id": args.id, "outcome": args.outcome });
+    if let Some(note) = args.note {
+        body["note"] = Value::String(note);
+    }
+    let data = post(base, "/api/memory/issue_resolve", &body).await?;
+    match format {
+        OutputFormat::Json => writeln_ndjson(&data),
+        OutputFormat::Text => {
+            let issue = data.get("issue").cloned().unwrap_or_default();
+            let id = issue.get("id").and_then(|v| v.as_str()).unwrap_or("?");
+            let status = issue.get("status").and_then(|v| v.as_str()).unwrap_or("?");
+            if data.get("already_closed").and_then(|v| v.as_bool()).unwrap_or(false) {
+                println!("{id} was already {status}");
+            } else {
+                println!("{id} → {status}");
+            }
+            Ok(())
+        }
+    }
+}
+
 pub(crate) async fn remember_day(
     base: &str,
     args: crate::cli::RememberDayArgs,
