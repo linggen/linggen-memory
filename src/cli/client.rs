@@ -339,7 +339,7 @@ pub(crate) async fn days(
     args: crate::cli::DaysArgs,
     format: OutputFormat,
 ) -> Result<()> {
-    let mut body = json!({ "pending_only": args.pending });
+    let mut body = json!({ "undreamed_only": args.undreamed });
     if let Some(f) = args.from {
         body["from"] = Value::String(f);
     }
@@ -357,13 +357,26 @@ pub(crate) async fn days(
             };
             for d in days {
                 let date = d.get("date").and_then(|v| v.as_str()).unwrap_or("?");
-                let state = d.get("state").and_then(|v| v.as_str()).unwrap_or("?");
+                let flag = |k: &str, label: &str| {
+                    if d.get(k).and_then(|v| v.as_bool()).unwrap_or(false) {
+                        format!("{label}\u{2713}")
+                    } else {
+                        format!("{label}\u{00b7}")
+                    }
+                };
+                let scanned = flag("scanned", "scan");
+                let dreamed = flag("dreamed", "dream");
                 let rows = d.get("rows").and_then(|v| v.as_u64()).unwrap_or(0);
                 let unjudged = d.get("unjudged").and_then(|v| v.as_u64()).unwrap_or(0);
                 let promoted = d.get("promoted").and_then(|v| v.as_u64()).unwrap_or(0);
                 println!(
-                    "{date}  {state:<10} rows={rows} unjudged={unjudged} promoted={promoted}"
+                    "{date}  {scanned} {dreamed}  rows={rows} unjudged={unjudged} promoted={promoted}"
                 );
+            }
+            for key in ["first_unscanned", "first_undreamed"] {
+                if let Some(day) = data.get(key).and_then(|v| v.as_str()) {
+                    println!("{key}: {day}");
+                }
             }
             Ok(())
         }

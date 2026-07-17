@@ -115,14 +115,24 @@ function esc(s) {
   ));
 }
 
+// One display bucket per day, derived from the per-verb flags the
+// daemon now returns (scanned / dreamed) — verb-aligned, no state enum.
 const DREAM_STATE_LABEL = {
-  pending: 'pending — awaiting a dream pass',
-  remembered: 'remembered — judged, short-term rows still live',
-  forgotten: 'forgotten — judged, past-TTL rows evicted',
-  harvested: 'harvested — scanned, nothing staged',
+  undreamed: 'undreamed — rows awaiting a dream pass',
+  dreamed: 'dreamed — judged; short-term rows age out via the sweep',
+  scanned: 'scanned — logs walked, nothing awaiting judgment',
   today: 'today — not yet dreamable',
-  staging: 'staging',
+  none: '',
 };
+
+function dayBucket(rec, isToday) {
+  if (isToday) return 'today';
+  if (!rec) return 'none';
+  if (rec.unjudged > 0) return 'undreamed';
+  if (rec.dreamed) return 'dreamed';
+  if (rec.scanned) return 'scanned';
+  return 'none';
+}
 
 async function pollDream() {
   const strip = document.getElementById('dream-strip');
@@ -130,15 +140,15 @@ async function pollDream() {
   if (!strip || !toggle) return;
   try {
     const d = await api('/api/memory/days');
-    const pending = d.days.filter((x) => x.state === 'pending');
+    const undreamed = d.days.filter((x) => dayBucket(x, x.date === d.today) === 'undreamed');
     const issues = d.open_issues ?? 0;
     const bits = [];
-    bits.push(pending.length
-      ? `${pending.length} day(s) pending (oldest ${pending[0].date})`
-      : 'no days pending');
+    bits.push(undreamed.length
+      ? `${undreamed.length} day(s) undreamed (oldest ${d.first_undreamed ?? undreamed[0].date})`
+      : 'no days undreamed');
     bits.push(issues ? `${issues} item(s) need review` : 'review queue empty');
     toggle.textContent = `☾ dream — ${bits.join(' · ')} ${dreamOpen ? '▴' : '▾'}`;
-    toggle.classList.toggle('attention', pending.length > 0 || issues > 0);
+    toggle.classList.toggle('attention', undreamed.length > 0 || issues > 0);
     strip.hidden = false;
     if (dreamOpen) await renderDreamPanel(d);
   } catch {
@@ -147,8 +157,8 @@ async function pollDream() {
   }
 }
 
-function dayCellClass(state) {
-  return `dcal-cell dcal-${state}`;
+function dayCellClass(bucket) {
+  return `dcal-cell dcal-${bucket}`;
 }
 
 /// Six trailing weeks, Monday-first, today in the last row.
@@ -166,19 +176,19 @@ function renderDreamCalendar(rollup) {
     day.setDate(end.getDate() - i);
     const key = day.toISOString().slice(0, 10);
     const rec = byDate.get(key);
-    const state = key === rollup.today ? 'today' : (rec?.state ?? 'none');
+    const bucket = dayBucket(rec, key === rollup.today);
     const tip = rec
-      ? `${key} — ${DREAM_STATE_LABEL[rec.state] ?? rec.state}` +
+      ? `${key} — ${DREAM_STATE_LABEL[bucket] || bucket}` +
         (rec.rows ? ` · ${rec.rows} row(s), ${rec.unjudged} unjudged` : '') +
         (rec.promoted ? ` · ${rec.promoted} promoted` : '')
       : `${key}${key === rollup.today ? ' — today' : ''}`;
-    cells.push(`<span class="${dayCellClass(state)}" title="${esc(tip)}">${day.getDate()}</span>`);
+    cells.push(`<span class="${dayCellClass(bucket)}" title="${esc(tip)}">${day.getDate()}</span>`);
   }
   el.innerHTML = `<div class="dcal-grid">${cells.join('')}</div>
     <div class="dcal-legend">
-      <span class="dcal-cell dcal-pending"></span> pending
-      <span class="dcal-cell dcal-remembered"></span> remembered
-      <span class="dcal-cell dcal-forgotten"></span> forgotten
+      <span class="dcal-cell dcal-undreamed"></span> undreamed
+      <span class="dcal-cell dcal-dreamed"></span> dreamed
+      <span class="dcal-cell dcal-scanned"></span> scanned only
       <span class="dcal-cell dcal-today"></span> today
     </div>`;
 }

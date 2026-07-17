@@ -97,9 +97,10 @@ pub enum Command {
     Forget(ForgetArgs),
 
     /// Per-day dream-state rollup: each day's episodic row counts +
-    /// pipeline state (today / staging / pending / remembered /
-    /// forgotten). `--pending` narrows to days awaiting a remember pass,
-    /// oldest first — the dream worklist. Requires the daemon.
+    /// per-verb flags (`scanned`, `dreamed`), plus `first_unscanned` /
+    /// `first_undreamed`. `--undreamed` narrows to days awaiting a
+    /// dream pass, oldest first — the dream worklist. Requires the
+    /// daemon.
     Days(DaysArgs),
 
     /// Stamp a day as remembered after a remember pass judged its rows.
@@ -415,9 +416,10 @@ pub struct FilterArgs {
 
 #[derive(Debug, Args)]
 pub struct DaysArgs {
-    /// Only days awaiting a remember pass, oldest first.
-    #[arg(long)]
-    pub pending: bool,
+    /// Only days awaiting a dream pass, oldest first (the worklist).
+    /// `--pending` is the pre-flags spelling, kept as an alias.
+    #[arg(long, alias = "pending")]
+    pub undreamed: bool,
 
     /// Inclusive lower bound, `YYYY-MM-DD`.
     #[arg(long, value_name = "YYYY-MM-DD")]

@@ -254,11 +254,11 @@ fn tool_defs() -> Vec<Value> {
         }),
         json!({
             "name": "memory_days",
-            "description": "Per-day dream-state rollup: each day's episodic row counts + pipeline state (today / staging / pending / harvested / remembered / forgotten). Use pending_only to get the dream worklist — days awaiting a remember pass, oldest first.",
+            "description": "Per-day dream-state rollup: each day's episodic row counts + per-verb flags (scanned = a scan walked its session logs; dreamed = a dream pass judged it, late rows clear the flag). Top level carries first_unscanned / first_undreamed / open_issues. Use undreamed_only to get the dream worklist — days awaiting a dream pass, oldest first.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "pending_only": {"type": "boolean", "description": "Only days awaiting a remember pass."},
+                    "undreamed_only": {"type": "boolean", "description": "Only days awaiting a dream pass (the worklist)."},
                     "from": {"type": "string", "description": "Inclusive YYYY-MM-DD lower bound."},
                     "to":   {"type": "string", "description": "Inclusive YYYY-MM-DD upper bound."}
                 }

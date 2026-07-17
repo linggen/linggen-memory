@@ -946,10 +946,9 @@ input[type="text"]:disabled { opacity: 0.6; }
   color: var(--text-dim);
   background: var(--bg);
 }
-.dcal-pending    { background: color-mix(in srgb, var(--warn) 22%, var(--bg)); border-color: var(--warn); color: var(--text); }
-.dcal-remembered { background: color-mix(in srgb, var(--ok) 20%, var(--bg));  border-color: var(--ok); }
-.dcal-forgotten  { background: var(--panel-2); }
-.dcal-harvested  { background: var(--panel-2); }
+.dcal-undreamed  { background: color-mix(in srgb, var(--warn) 22%, var(--bg)); border-color: var(--warn); color: var(--text); }
+.dcal-dreamed    { background: color-mix(in srgb, var(--ok) 20%, var(--bg));  border-color: var(--ok); }
+.dcal-scanned    { background: var(--panel-2); }
 .dcal-today      { border-color: var(--accent); color: var(--accent); font-weight: 600; }
 #dream-calendar .dcal-legend {
   margin-top: 8px;

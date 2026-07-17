@@ -22,7 +22,7 @@ On **Linggen**, use the built-in `Memory_query` / `Memory_write` tools
 (Chat-tier, ungated — zero permission prompts across a pass full of
 writes): verbs `days`, `list` (+`day`), `add`, `remember_day`,
 `harvest_day` (the scan stamp), `sweep`.
-On **other hosts**, the CLI is 1:1: `ling-mem days [--pending]`,
+On **other hosts**, the CLI is 1:1: `ling-mem days [--undreamed]`,
 `ling-mem list --tier episodic --day <date>`, `ling-mem add`,
 `ling-mem remember-day <date>`, `ling-mem harvest-day <date>`,
 `ling-mem sweep`. Always pipe CLI list/search output through
@@ -50,17 +50,17 @@ never write them.
   `SWEEP removed=<n>` → one final totals sentence. Never print a
   status line for a call you didn't make.
 
-## `dream` (no argument) — remember all pending days
+## `dream` (no argument) — remember all undreamed days
 
 0. **Snapshot + in-flight check.** `ling-mem export` once (a store
    backup before any judged writes — the engine does the same before
    its mission runs). If the `memory_dream_status` MCP tool is
    reachable and reports `in_flight: true`, the Linggen engine is
    already dreaming — stop and say so; never run two dreams at once.
-1. Fetch the worklist: `days` with `pending_only` (CLI:
-   `ling-mem days --pending`). Empty → run **Forget** below, then
+1. Fetch the worklist: `days` with `undreamed_only` (CLI:
+   `ling-mem days --undreamed`). Empty → run **Forget** below, then
    **Audit** below, reply that memory is up to date, done.
-2. Take the **oldest** pending day → run **Remember one day** below.
+2. Take the **oldest** undreamed day → run **Remember one day** below.
 3. Repeat from 1. If the same day comes back with an undropped
    `unjudged` count, **stop and report** ("stalled") instead of
    looping.
@@ -91,7 +91,7 @@ Backfill staging, always user-triggered, idempotent:
    set to the session time.
 4. Stamp scanned — `harvest_day` verb (CLI:
    `ling-mem harvest-day <date>`). This does **not** mark the day
-   remembered: new rows make it *pending*, and the next dream (nightly
+   remembered: new rows clear its `dreamed` flag, and the next dream (nightly
    or the day's dream button) judges them. Nothing new staged → still
    stamp, report `CLEAN`.
 
@@ -142,7 +142,7 @@ Backfill staging, always user-triggered, idempotent:
 5. **Stamp.** `{"verb":"remember_day","date":"<date>","judged":<seen>,"promoted":<adds>}`
    (CLI: `ling-mem remember-day <date> --judged N --promoted K`).
    Never skip the stamp, even with zero promotions — it's what moves
-   the day out of pending.
+   the day marked dreamed.
 
 ## Forget (the sweep)
 

@@ -81,7 +81,7 @@ hits="$(printf '%s' "$out" | jq -sr --arg proj "$proj" --argjson k "$topk" '
 hit_count="$(printf '%s\n' "$hits" | grep -c .)"
 [ -n "$hits" ] && printf '%s\n' "$hits"
 
-# Memory-upkeep nudge — pending dream days + open review items, from ONE
+# Memory-upkeep nudge — undreamed days + open review items, from ONE
 # `days` rollup call. Cached (default 30 min) so the recall path stays
 # fast; upkeep state moves slowly. Thresholds: ≥2 undreamed days (the
 # engine's own 3am cron usually covers yesterday; nagging about one day
@@ -92,7 +92,7 @@ upkeep=""
 if [ -f "$upkeep_cache" ] && [ -n "$(find "$upkeep_cache" -mmin "-$upkeep_ttl_min" 2>/dev/null)" ]; then
   upkeep="$(cat "$upkeep_cache" 2>/dev/null || true)"
 else
-  days_out="$(run_with_timeout "$to" ling-mem days --pending --format json --quiet || true)"
+  days_out="$(run_with_timeout "$to" ling-mem days --undreamed --format json --quiet || true)"
   if [ -n "$days_out" ]; then
     upkeep="$(printf '%s' "$days_out" | jq -r '
       (.days // [] | length) as $p |

@@ -5,8 +5,10 @@
 //!
 //! - **`days`** — per-day rollup merging the stored day records with live
 //!   episodic row counts. Drives the memory app's calendar, the dream
-//!   mission's worklist ("pending days, oldest first"), and the CLI's
-//!   `ling-mem days`.
+//!   mission's worklist ("undreamed days, oldest first"), and the CLI's
+//!   `ling-mem days`. Each day carries per-verb flags (`scanned`,
+//!   `dreamed`); the top level carries `first_unscanned` /
+//!   `first_undreamed` for status surfaces.
 //! - **`remember_day`** — stamp a day `remembered_at` after a remember
 //!   pass judged its rows. Called by whichever agent ran the pass
 //!   (Linggen mission, skill page, CC/Codex host agent).
@@ -153,10 +155,11 @@ async fn all_episodic(state: &SharedState) -> Result<Vec<Memory>, ApiError> {
 
 #[derive(Debug, Default, Deserialize)]
 pub struct DaysRequest {
-    /// Only days that need a remember pass (`state == "pending"`),
+    /// Only days that need a dream pass (past day, unjudged rows),
     /// oldest first — the dream mission's worklist shape.
-    #[serde(default)]
-    pub pending_only: bool,
+    /// `pending_only` is the pre-flags spelling, kept as an alias.
+    #[serde(default, alias = "pending_only")]
+    pub undreamed_only: bool,
     /// Inclusive `YYYY-MM-DD` bounds on the returned days. Omit for all
     /// days that carry any data.
     #[serde(default)]
@@ -172,27 +175,20 @@ struct DayLive {
     past_ttl: usize,
 }
 
-/// Derive one day's state. The stage names are the pipeline's:
-/// a day is `pending` until remembered, `remembered` while its
-/// short-term rows still exist, `forgotten` once they've aged out.
-/// `today`/`staging` are not yet dreamable (the day isn't over).
-fn day_state(date: &str, today: &str, live: &DayLive, rec: Option<&DayRecord>) -> &'static str {
-    if date == today {
-        return "today";
-    }
-    if date > today {
-        return "staging";
-    }
-    if live.unjudged > 0 {
-        return "pending";
-    }
-    match rec.and_then(|r| r.remembered_at) {
-        Some(_) if live.rows > 0 => "remembered",
-        Some(_) => "forgotten",
-        // No rows, never remembered — only reachable via a record that
-        // holds nothing but a harvest stamp (walked, nothing found).
-        None => "harvested",
-    }
+/// Per-day pipeline flags, aligned 1:1 with the user-facing verbs:
+/// `scanned` — a scan (session backfill) walked this day's logs;
+/// `dreamed` — a remember pass judged the day and nothing new arrived
+/// since (late rows clear the flag and the day rejoins the worklist).
+/// Sweep is invisible mechanics: a forgotten day stays `dreamed`.
+fn day_flags(live: &DayLive, rec: Option<&DayRecord>) -> (bool, bool) {
+    let scanned = rec.and_then(|r| r.harvested_at).is_some();
+    let dreamed = rec.and_then(|r| r.remembered_at).is_some() && live.unjudged == 0;
+    (scanned, dreamed)
+}
+
+/// A past day with rows awaiting judgment — the dream worklist test.
+fn undreamed(date: &str, today: &str, live: &DayLive) -> bool {
+    date < today && live.unjudged > 0
 }
 
 async fn days(
@@ -236,7 +232,24 @@ async fn days(
 
     let today = today_local();
     let mut out = Vec::new();
+    // "First day the user's next verb applies to" — computed over ALL
+    // past days, deliberately ignoring the from/to window and the
+    // worklist filter, so status surfaces get the global truth.
+    let mut first_unscanned: Option<String> = None;
+    let mut first_undreamed: Option<String> = None;
     for date in dates {
+        let empty = DayLive::default();
+        let l = live.get(&date).unwrap_or(&empty);
+        let rec = days_state.days.get(&date);
+        let (scanned, dreamed) = day_flags(l, rec);
+        if date.as_str() < today.as_str() {
+            if !scanned && first_unscanned.is_none() {
+                first_unscanned = Some(date.clone());
+            }
+            if undreamed(&date, &today, l) && first_undreamed.is_none() {
+                first_undreamed = Some(date.clone());
+            }
+        }
         if let Some(f) = from {
             if parse_day(&date).map(|d| d < f).unwrap_or(false) {
                 continue;
@@ -247,16 +260,13 @@ async fn days(
                 continue;
             }
         }
-        let empty = DayLive::default();
-        let l = live.get(&date).unwrap_or(&empty);
-        let rec = days_state.days.get(&date);
-        let s = day_state(&date, &today, l, rec);
-        if req.pending_only && s != "pending" {
+        if req.undreamed_only && !undreamed(&date, &today, l) {
             continue;
         }
         out.push(json!({
             "date": date,
-            "state": s,
+            "scanned": scanned,
+            "dreamed": dreamed,
             "rows": l.rows,
             "unjudged": l.unjudged,
             "past_ttl": l.past_ttl,
@@ -276,6 +286,8 @@ async fn days(
         "today": today,
         "ttl_days": cfg.episodic_ttl_days,
         "open_issues": open_issues,
+        "first_unscanned": first_unscanned,
+        "first_undreamed": first_undreamed,
         "days": out,
     })))
 }
@@ -435,51 +447,46 @@ mod tests {
     }
 
     #[test]
-    fn state_today_and_staging_beat_everything() {
+    fn today_and_future_days_are_never_undreamed() {
         let live = DayLive { rows: 5, unjudged: 5, past_ttl: 0 };
-        assert_eq!(day_state("2026-07-03", "2026-07-03", &live, None), "today");
-        assert_eq!(day_state("2026-07-09", "2026-07-03", &live, None), "staging");
+        assert!(!undreamed("2026-07-03", "2026-07-03", &live));
+        assert!(!undreamed("2026-07-09", "2026-07-03", &live));
     }
 
     #[test]
-    fn state_pending_until_remembered() {
+    fn past_day_with_unjudged_rows_is_undreamed() {
         let live = DayLive { rows: 3, unjudged: 3, past_ttl: 0 };
-        assert_eq!(day_state("2026-07-01", "2026-07-03", &live, None), "pending");
+        assert!(undreamed("2026-07-01", "2026-07-03", &live));
+        assert_eq!(day_flags(&live, None), (false, false));
     }
 
     #[test]
-    fn state_late_rows_repend_a_remembered_day() {
+    fn late_rows_clear_the_dreamed_flag() {
         let live = DayLive { rows: 4, unjudged: 1, past_ttl: 0 };
         let r = rec(true);
-        assert_eq!(day_state("2026-07-01", "2026-07-03", &live, Some(&r)), "pending");
+        assert_eq!(day_flags(&live, Some(&r)), (false, false));
+        assert!(undreamed("2026-07-01", "2026-07-03", &live));
     }
 
     #[test]
-    fn state_remembered_then_forgotten() {
+    fn dreamed_survives_the_forget_sweep() {
         let r = rec(true);
         let with_rows = DayLive { rows: 4, unjudged: 0, past_ttl: 2 };
-        assert_eq!(
-            day_state("2026-06-20", "2026-07-03", &with_rows, Some(&r)),
-            "remembered"
-        );
+        assert_eq!(day_flags(&with_rows, Some(&r)), (false, true));
+        // Sweep drained the rows — the day stays dreamed.
         let drained = DayLive::default();
-        assert_eq!(
-            day_state("2026-06-20", "2026-07-03", &drained, Some(&r)),
-            "forgotten"
-        );
+        assert_eq!(day_flags(&drained, Some(&r)), (false, true));
     }
 
     #[test]
-    fn state_harvested_only_record() {
+    fn scanned_only_record_is_not_dreamed_and_not_worklisted() {
         let r = DayRecord {
             harvested_at: Some(Utc::now()),
             ..Default::default()
         };
         let drained = DayLive::default();
-        assert_eq!(
-            day_state("2026-06-20", "2026-07-03", &drained, Some(&r)),
-            "harvested"
-        );
+        assert_eq!(day_flags(&drained, Some(&r)), (true, false));
+        assert!(!undreamed("2026-06-20", "2026-07-03", &drained));
     }
 
     #[test]
