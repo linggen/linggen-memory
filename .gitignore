@@ -2,7 +2,6 @@
 /target/
 **/*.rs.bk
 *.pdb
-Cargo.lock
 
 # Web UI (Vite + Node)
 webui/node_modules/
