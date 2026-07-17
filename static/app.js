@@ -98,16 +98,51 @@ async function pollStats() {
   }
 }
 
-// ── Dream strip + panel ───────────────────────────────────────────────────
+// ── Views (Browse | Calendar) + dream strip ───────────────────────────────
 //
-// Read-only view of the dream pipeline for hosts without the Linggen app:
-// a one-line summary (pending days · open review items) expanding into a
-// calendar rendered from `POST /api/memory/days` and the review queue from
-// `POST /api/memory/issues`. The console never runs a dream and never
-// solves an item — no LLM lives here. Dismiss is the one action (pure
-// bookkeeping); solving belongs to a host agent (`/linggen:solve`).
+// Two top-level views. Browse is the row browser (list + detail). The
+// Calendar view is a READ-ONLY render of the dream pipeline for hosts
+// without the Linggen app: an Apple-style month grid from
+// `POST /api/memory/days` plus the review queue from
+// `POST /api/memory/issues`. The console never runs a scan/dream and
+// never solves or dismisses an item — no LLM lives here; acting on the
+// pipeline belongs to a host agent (`/linggen:scan`, `/linggen:dream`,
+// `/linggen:solve`).
+//
+// SYNC PAIR: the month grid + review-queue markup/styles are a
+// read-only copy of the memory app's dream-calendar / review-queue
+// widgets (skills/shared-memory/scripts/widget-renderers.js +
+// memory.css). Keep the dcal-* / rq-* classes aligned when editing
+// either side.
 
-let dreamOpen = false;
+let uiView = 'browse';
+
+function switchUiView(name) {
+  uiView = name;
+  document.body.classList.toggle('view-calendar', name === 'calendar');
+  const cal = document.getElementById('calendar-view');
+  if (cal) cal.hidden = name !== 'calendar';
+  for (const btn of document.querySelectorAll('#main-nav button[data-nav]')) {
+    const active = btn.dataset.nav === name;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-selected', String(active));
+  }
+  if (name === 'calendar') renderCalendarView().catch(() => {});
+}
+
+function wireMainNav() {
+  const nav = document.getElementById('main-nav');
+  if (nav) {
+    nav.addEventListener('click', (e) => {
+      const btn = e.target.closest('button[data-nav]');
+      if (btn) switchUiView(btn.dataset.nav);
+    });
+  }
+  // The dream strip is a one-line summary; clicking it opens the
+  // Calendar view (it no longer expands a panel in place).
+  const toggle = document.getElementById('dream-toggle');
+  if (toggle) toggle.addEventListener('click', () => switchUiView('calendar'));
+}
 
 function esc(s) {
   return String(s ?? '').replace(/[&<>"']/g, (c) => (
@@ -117,14 +152,6 @@ function esc(s) {
 
 // One display bucket per day, derived from the per-verb flags the
 // daemon now returns (scanned / dreamed) — verb-aligned, no state enum.
-const DREAM_STATE_LABEL = {
-  undreamed: 'undreamed — rows awaiting a dream pass',
-  dreamed: 'dreamed — judged; short-term rows age out via the sweep',
-  scanned: 'scanned — logs walked, nothing awaiting judgment',
-  today: 'today — not yet dreamable',
-  none: '',
-};
-
 function dayBucket(rec, isToday) {
   if (isToday) return 'today';
   if (!rec) return 'none';
@@ -140,6 +167,7 @@ async function pollDream() {
   if (!strip || !toggle) return;
   try {
     const d = await api('/api/memory/days');
+    calRollup = d;
     const undreamed = d.days.filter((x) => dayBucket(x, x.date === d.today) === 'undreamed');
     const issues = d.open_issues ?? 0;
     const bits = [];
@@ -147,109 +175,172 @@ async function pollDream() {
       ? `${undreamed.length} day(s) undreamed (oldest ${d.first_undreamed ?? undreamed[0].date})`
       : 'no days undreamed');
     bits.push(issues ? `${issues} item(s) need review` : 'review queue empty');
-    toggle.textContent = `☾ dream — ${bits.join(' · ')} ${dreamOpen ? '▴' : '▾'}`;
+    toggle.textContent = `☾ dream — ${bits.join(' · ')} · calendar ▸`;
     toggle.classList.toggle('attention', undreamed.length > 0 || issues > 0);
     strip.hidden = false;
-    if (dreamOpen) await renderDreamPanel(d);
+    if (uiView === 'calendar') await renderCalendarView();
   } catch {
     strip.hidden = true;
-    document.getElementById('dream-panel').hidden = true;
   }
 }
 
-function dayCellClass(bucket) {
-  return `dcal-cell dcal-${bucket}`;
+// ── Calendar view — month grid + review queue (read-only) ────────────────
+
+const DCAL_DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const DCAL_MONTHS = ['January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December'];
+
+let calRollup = null;     // latest days rollup (kept fresh by pollDream)
+// Month the user navigated to, kept across re-renders so the periodic
+// rollup poll doesn't snap the calendar back to the current month.
+let calViewMonth = null;
+
+function calIso(d) {
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${d.getFullYear()}-${m}-${day}`;
 }
 
-/// Six trailing weeks, Monday-first, today in the last row.
-function renderDreamCalendar(rollup) {
-  const el = document.getElementById('dream-calendar');
-  if (!el) return;
-  const byDate = new Map(rollup.days.map((d) => [d.date, d]));
-  const today = new Date(`${rollup.today}T12:00:00`);
-  const dow = (today.getDay() + 6) % 7; // Monday = 0
-  const end = new Date(today);
-  end.setDate(end.getDate() + (6 - dow));
+function calTooltip(iso, rec, isToday) {
+  if (!rec) return `${iso} · no memory activity`;
+  if (isToday) return `${iso} · today · ${rec.rows} rows staging — dreamable after midnight`;
+  switch (dayBucket(rec, false)) {
+    case 'undreamed':
+      return `${iso} · undreamed · ${rec.unjudged}/${rec.rows} rows to judge — dream it from your agent: /linggen:dream ${iso}`;
+    case 'dreamed':
+      return rec.rows
+        ? `${iso} · dreamed · ${rec.promoted} promoted · ${rec.rows} short-term rows kept`
+        : `${iso} · dreamed${rec.promoted ? ` (${rec.promoted} promoted)` : ''} · short-term aged out`;
+    case 'scanned':
+      return `${iso} · scanned — logs walked, nothing awaiting judgment`;
+    default:
+      return `${iso} · no memory activity`;
+  }
+}
+
+// Read-only chips for one past day — same visual language as the memory
+// app's calendar, minus the action buttons.
+function calDayChips(iso, rec) {
+  const chips = [];
+  if (rec?.harvested_at) {
+    chips.push(`<div class="dcal-chip dcal-chip-scanned" title="${esc(`scanned ${fmtAgo(rec.harvested_at)}`)}">scanned ✓</div>`);
+  }
+  const unjudged = rec?.unjudged || 0;
+  if (unjudged > 0) {
+    chips.push(`<div class="dcal-chip dcal-chip-pending">undreamed (${unjudged})</div>`);
+  } else if (rec?.remembered_at) {
+    chips.push(`<div class="dcal-chip dcal-chip-remembered" title="${esc(`dreamed ${fmtAgo(rec.remembered_at)} — ${rec.judged || 0} judged, ${rec.promoted || 0} promoted`)}">dreamed ✓ ${rec.judged || 0}·${rec.promoted || 0}</div>`);
+  }
+  return chips.length ? `<div class="dcal-chips">${chips.join('')}</div>` : '';
+}
+
+function renderCalMonth() {
+  const box = document.getElementById('cal-month');
+  if (!box || !calRollup) return;
+  const byDate = new Map(calRollup.days.map((d) => [d.date, d]));
+  const todayIso = calRollup.today;
+  const today = new Date(`${todayIso}T12:00:00`);
+  const view = calViewMonth
+    ? new Date(calViewMonth)
+    : new Date(today.getFullYear(), today.getMonth(), 1);
+
+  // Header: "July 2026" + prev / Today / next.
+  const first = new Date(view.getFullYear(), view.getMonth(), 1);
+  const startOffset = first.getDay(); // Sun = 0
+  const gridStart = new Date(first);
+  gridStart.setDate(first.getDate() - startOffset);
+  const lastDate = new Date(view.getFullYear(), view.getMonth() + 1, 0).getDate();
+  const weeks = Math.ceil((startOffset + lastDate) / 7);
+
   const cells = [];
-  for (let i = 41; i >= 0; i--) {
-    const day = new Date(end);
-    day.setDate(end.getDate() - i);
-    const key = day.toISOString().slice(0, 10);
-    const rec = byDate.get(key);
-    const bucket = dayBucket(rec, key === rollup.today);
-    const tip = rec
-      ? `${key} — ${DREAM_STATE_LABEL[bucket] || bucket}` +
-        (rec.rows ? ` · ${rec.rows} row(s), ${rec.unjudged} unjudged` : '') +
-        (rec.promoted ? ` · ${rec.promoted} promoted` : '')
-      : `${key}${key === rollup.today ? ' — today' : ''}`;
-    cells.push(`<span class="${dayCellClass(bucket)}" title="${esc(tip)}">${day.getDate()}</span>`);
+  for (let i = 0; i < weeks * 7; i++) {
+    const date = new Date(gridStart);
+    date.setDate(gridStart.getDate() + i);
+    const iso = calIso(date);
+    const inMonth = date.getMonth() === view.getMonth();
+    const isToday = iso === todayIso;
+    const isFuture = date > today;
+    const rec = byDate.get(iso);
+    const cls = ['dcal-cell'];
+    if (!inMonth) cls.push('dcal-out');
+    if (isFuture) cls.push('dcal-future');
+    if (!isToday) {
+      const bucket = dayBucket(rec, false);
+      if (bucket !== 'none') cls.push(`dcal-state-${bucket}`);
+    }
+    const num = `<div class="dcal-num${isToday ? ' dcal-today-num' : ''}">${date.getDate()}</div>`;
+    const chips = isToday
+      ? (rec?.rows ? `<div class="dcal-chips"><div class="dcal-chip dcal-chip-staging">${rec.rows} staged</div></div>` : '')
+      : (isFuture ? '' : calDayChips(iso, rec));
+    cells.push(`<div class="${cls.join(' ')}" title="${esc(calTooltip(iso, rec, isToday))}">${num}${chips}</div>`);
   }
-  el.innerHTML = `<div class="dcal-grid">${cells.join('')}</div>
+
+  box.innerHTML = `
+    <div class="dcal-head">
+      <div class="dcal-title"><strong>${DCAL_MONTHS[view.getMonth()]}</strong> ${view.getFullYear()}</div>
+      <div class="dcal-nav">
+        <button type="button" class="dcal-navbtn" data-cal-nav="-1">‹</button>
+        <button type="button" class="dcal-todaybtn" data-cal-nav="today">Today</button>
+        <button type="button" class="dcal-navbtn" data-cal-nav="1">›</button>
+      </div>
+    </div>
+    <div class="dcal-weekdays">${DCAL_DOW.map((n) => `<div class="dcal-wd">${n}</div>`).join('')}</div>
+    <div class="dcal-grid" style="grid-template-rows: repeat(${weeks}, 1fr)">${cells.join('')}</div>
     <div class="dcal-legend">
-      <span class="dcal-cell dcal-undreamed"></span> undreamed
-      <span class="dcal-cell dcal-dreamed"></span> dreamed
-      <span class="dcal-cell dcal-scanned"></span> scanned only
-      <span class="dcal-cell dcal-today"></span> today
+      <span class="dcal-legend-term">scan</span>
+      <span class="dcal-legend-text">backfills a past day from your agents' session logs — run <code>/linggen:scan &lt;date&gt;</code> in your agent</span>
+      <span class="dcal-legend-term">dream</span>
+      <span class="dcal-legend-text">judges the day's staged rows — run <code>/linggen:dream</code> in your agent; the console is read-only</span>
     </div>`;
-}
 
-async function renderDreamPanel(rollup) {
-  const panel = document.getElementById('dream-panel');
-  if (!panel) return;
-  renderDreamCalendar(rollup);
-  const box = document.getElementById('dream-issues');
-  try {
-    const data = await api('/api/memory/issues', { status: 'open' });
-    if (!data.issues.length) {
-      box.innerHTML = '<div class="dream-issues-empty">Review queue empty.</div>';
-    } else {
-      const rows = data.issues.map((i) => `
-        <div class="issue-row" data-id="${esc(i.id)}">
-          <span class="issue-kind issue-kind-${esc(i.kind)}">${esc(i.kind)}</span>
-          <span class="issue-note">${esc(i.note)}</span>
-          <span class="issue-meta">${esc(fmtAgo(i.created_at))}${i.row_ids.length ? ` · ${i.row_ids.length} row(s)` : ''}</span>
-          <button type="button" class="issue-dismiss" data-id="${esc(i.id)}" title="Dismiss — not worth fixing">dismiss</button>
-        </div>`).join('');
-      box.innerHTML = `
-        <div class="dream-issues-head">${data.open_count} open — solve with your agent: <code>/linggen:solve</code></div>
-        ${rows}`;
-      box.querySelectorAll('.issue-dismiss').forEach((btn) => {
-        btn.addEventListener('click', async () => {
-          btn.disabled = true;
-          try {
-            await api('/api/memory/issue_resolve', {
-              id: btn.dataset.id,
-              outcome: 'dismissed',
-              note: 'dismissed from the console',
-            });
-            await pollDream();
-          } catch (e) {
-            btn.disabled = false;
-            btn.textContent = 'failed';
-          }
-        });
-      });
-    }
-  } catch {
-    box.innerHTML = '<div class="dream-issues-empty">Could not load the review queue.</div>';
-  }
-  panel.hidden = false;
-}
-
-function wireDreamStrip() {
-  const toggle = document.getElementById('dream-toggle');
-  const panel = document.getElementById('dream-panel');
-  if (!toggle || !panel) return;
-  toggle.addEventListener('click', async () => {
-    dreamOpen = !dreamOpen;
-    toggle.setAttribute('aria-expanded', String(dreamOpen));
-    if (!dreamOpen) {
-      panel.hidden = true;
-      pollDream();
-      return;
-    }
-    await pollDream();
+  box.querySelectorAll('[data-cal-nav]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const v = btn.dataset.calNav;
+      const next = v === 'today'
+        ? new Date(today.getFullYear(), today.getMonth(), 1)
+        : new Date(view.getFullYear(), view.getMonth() + Number(v), 1);
+      calViewMonth = next.getTime();
+      renderCalMonth();
+    });
   });
+}
+
+// The review queue, read-only: what a dream audit queued for the user.
+// No solve/dismiss here — the header points at `/linggen:solve`.
+async function renderCalIssues() {
+  const box = document.getElementById('cal-issues');
+  if (!box) return;
+  let data;
+  try {
+    data = await api('/api/memory/issues', { status: 'open' });
+  } catch {
+    box.hidden = true;
+    return;
+  }
+  const issues = data.issues || [];
+  const head = `
+    <div class="rq-head">
+      <div class="rq-title"><strong>Review queue</strong> · ${issues.length} open</div>
+      <div class="rq-hint">solve with your agent: <code>/linggen:solve</code></div>
+    </div>`;
+  const rows = issues.length
+    ? issues.map((i) => `
+        <div class="rq-item">
+          <span class="rq-kind rq-kind-${esc(i.kind)}">${esc(i.kind)}</span>
+          <span class="rq-note">${esc(i.note)}</span>
+          <span class="rq-meta">${esc(fmtAgo(i.created_at))}${i.row_ids?.length ? ` · ${i.row_ids.length} row${i.row_ids.length === 1 ? '' : 's'}` : ''}</span>
+        </div>`).join('')
+    : '<div class="rq-empty">Review queue empty — nothing needs your judgment.</div>';
+  box.innerHTML = head + rows;
+  box.hidden = false;
+}
+
+async function renderCalendarView() {
+  if (!calRollup) {
+    try { calRollup = await api('/api/memory/days'); } catch { return; }
+  }
+  renderCalMonth();
+  await renderCalIssues();
 }
 
 // ── Query parser ──────────────────────────────────────────────────────────
@@ -2313,7 +2404,7 @@ pollHealth();
 setInterval(pollHealth, HEALTH_POLL_MS);
 pollStats();
 setInterval(pollStats, HEALTH_POLL_MS * 4);
-wireDreamStrip();
+wireMainNav();
 pollDream();
 setInterval(pollDream, HEALTH_POLL_MS * 4);
 

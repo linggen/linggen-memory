@@ -10,7 +10,11 @@
   <body>
     <div id="app">
       <header id="header">
-        <h1>Memory <span class="sub">· Browse</span></h1>
+        <h1>Memory</h1>
+        <nav id="main-nav" role="tablist" aria-label="Console view">
+          <button type="button" role="tab" data-nav="browse" class="active">Browse</button>
+          <button type="button" role="tab" data-nav="calendar">Calendar</button>
+        </nav>
         <div id="status">
           <span id="count">—</span>
           <span class="sep">·</span>
@@ -25,11 +29,7 @@
       <div id="stats-strip" hidden></div>
 
       <div id="dream-strip" hidden>
-        <button id="dream-toggle" type="button" aria-expanded="false"></button>
-      </div>
-      <div id="dream-panel" hidden>
-        <div id="dream-calendar" aria-label="dream calendar"></div>
-        <div id="dream-issues" aria-label="review queue"></div>
+        <button id="dream-toggle" type="button" title="Open the calendar view"></button>
       </div>
 
       <div id="help-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="help-title"></div>
@@ -86,6 +86,15 @@
             Select a fact on the left to see details.
           </div>
         </aside>
+      </section>
+
+      <!-- Calendar view — read-only render of the dream pipeline: month
+           grid + review queue. Styled to match the memory app's
+           dream-calendar / review-queue widgets (SYNC PAIR with
+           skills/shared-memory — see app.js renderCalendarView). -->
+      <section id="calendar-view" hidden aria-label="dream calendar">
+        <div id="cal-month" class="widget-dream-cal"></div>
+        <div id="cal-issues" class="widget-review-queue" hidden></div>
       </section>
     </div>
 
