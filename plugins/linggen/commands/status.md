@@ -8,8 +8,8 @@ Invoke the linggen skill (Skill tool) and treat this message as `/linggen status
 2. One Bash call combining, all failure-tolerant (`|| true`, `--max-time 2`):
    - `ling-mem status --format json` — daemon health, version, cached `update` probe
    - `ling-mem stats --format json` — per-tier row counts + `disk_bytes.total`
-   - `curl -s --max-time 2 'http://127.0.0.1:9898/api/status?project_root=.'` — engine version
-   - `curl -s --max-time 2 http://127.0.0.1:9898/api/bridge/status` — browser bridge
+   - `curl -s --max-time 2 'http://127.0.0.1:9527/api/status?project_root=.'` — engine version
+   - `curl -s --max-time 2 http://127.0.0.1:9527/api/bridge/status` — browser bridge
    - engine latest, 24h file cache (NEVER a fresh network hit when the cache is warm):
      `c=~/.linggen/cache/engine-latest.json; mkdir -p ~/.linggen/cache; if [ ! -s "$c" ] || [ $(( $(date +%s) - $(stat -f %m "$c" 2>/dev/null || stat -c %Y "$c") )) -gt 86400 ]; then curl -sL --max-time 5 https://github.com/linggen/linggen/releases/latest/download/manifest.json -o "$c" || true; fi; cat "$c" 2>/dev/null`
 

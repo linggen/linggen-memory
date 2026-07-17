@@ -61,7 +61,7 @@ on Claude Code, `${PLUGIN_ROOT}/skills/linggen/` on Codex.
 
 This skill has two required binaries: **`ling-mem`** (the memory CLI and
 daemon — every memory op shells out to it) and **`ling`** (the Linggen
-engine — serves the `linggen` MCP tools on `127.0.0.1:9898`: `memory_*`,
+engine — serves the `linggen` MCP tools on `127.0.0.1:9527`: `memory_*`,
 `browser_*`, `x_*`, `agent_run`). The Claude Code / Codex plugin's
 session-start hook installs both automatically (the engine in the
 background, disclosed in the session context). On channels without hooks
@@ -563,7 +563,7 @@ linggen-browser extension) — one **visible** controlled tab:
 - A `no_bridge` error means the linggen-browser extension isn't connected;
   ask the user to install or enable it.
 - If the `linggen` MCP server itself is unreachable (nothing listening on
-  `127.0.0.1:9898`), the engine may still be installing in the background
+  `127.0.0.1:9527`), the engine may still be installing in the background
   (plugin channels; progress in `~/.linggen/engine-install.log`) — wait and
   retry. If the `ling` binary is genuinely absent, run the engine install
   from the First-use section and tell the user (one-time, ~100MB). Memory

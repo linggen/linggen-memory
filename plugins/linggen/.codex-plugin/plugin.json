@@ -1,6 +1,6 @@
 {
   "name": "linggen",
-  "version": "1.5.2",
+  "version": "1.5.3",
   "description": "Linggen for Codex \u2014 one MCP front door to the local Linggen daemon: durable cross-host memory, browser control, logged-in X reads. Installs its required binaries (ling-mem + the Linggen engine, background download) on first session start.",
   "author": {
     "name": "Linggen",

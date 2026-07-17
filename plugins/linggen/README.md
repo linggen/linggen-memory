@@ -23,7 +23,7 @@ session context; log at `~/.linggen/engine-install.log`). Set
 install it yourself: `curl -fsSL https://linggen.dev/install.sh | bash`.
 
 Session start connects the `linggen` MCP server
-(`http://127.0.0.1:9898/mcp`), boots both daemons, and injects your
+(`http://127.0.0.1:9527/mcp`), boots both daemons, and injects your
 core memory (identity, standing preferences) into context.
 
 ## What you get
@@ -46,7 +46,7 @@ core memory (identity, standing preferences) into context.
 
 ## Requirements
 
-- The Linggen daemon (`install.sh` above) on `127.0.0.1:9898`.
+- The Linggen daemon (`install.sh` above) on `127.0.0.1:9527`.
 - For browser tools: the linggen-browser Chrome extension.
 - `ling-mem` installs itself on first use (~7 MB).
 
