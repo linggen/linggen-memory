@@ -46,7 +46,7 @@ ling-mem forget --context trip-japan-2026 --yes
 
 Default output is NDJSON on stdout — any model / script / shell can parse it. Pass `--format text` for human-readable lines.
 
-The daemon (`ling-mem start`) also serves a built-in Data Browser at `http://127.0.0.1:9888` for hands-on filter / edit / batch-delete.
+The daemon (`ling-mem start`) also serves a built-in Data Browser at `http://127.0.0.1:9528` for hands-on filter / edit / batch-delete.
 
 ---
 
@@ -100,7 +100,7 @@ linggen-memory/
 ├── src/                # all Rust code (CLI, HTTP daemon, embed pipeline,
 │                       #  LanceDB store)
 ├── static/             # Data Browser UI (baked into the binary via rust-embed,
-│                       #  served at 127.0.0.1:9888 by the daemon)
+│                       #  served at 127.0.0.1:9528 by the daemon)
 ├── doc/
 │   ├── product-spec.md # features, user-facing behavior, scenarios
 │   ├── tech-spec.md    # schema, storage, CLI contract, release process

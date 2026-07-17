@@ -134,7 +134,7 @@ Keep the current web app + workflow. One codebase, host-detected mode:
 - **On Linggen** — AI-native app (skill app surface, dashboard /
   `PageUpdate`).
 - **On other hosts** — standard skill (CLI / chat, no `PageUpdate`
-  canvas) + the daemon-served data browser at `127.0.0.1:9888`.
+  canvas) + the daemon-served data browser at `127.0.0.1:9528`.
 
 Restripe today's Linggen-coupled bits (the `implements:` block,
 dashboard mode) to **host-detected**, not hardwired.

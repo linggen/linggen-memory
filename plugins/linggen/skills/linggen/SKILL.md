@@ -357,7 +357,7 @@ The user is reading text in a conversation panel:
   table. If the user asked to list memory, run the recipe in
   *Listing & searching memory* above and render the result inline.
 - For hands-on row-level CRUD, point the user at the daemon-served
-  data browser at `127.0.0.1:9888` (run `ling-mem start` first).
+  data browser at `127.0.0.1:9528` (run `ling-mem start` first).
 
 ## Memory hygiene — see it, solve it
 
@@ -480,7 +480,7 @@ identity.
 ## Data browser
 
 Row-level CRUD (filter, edit-in-place, batch delete) lives at
-`http://127.0.0.1:9888` when the daemon is running. Direct the user
+`http://127.0.0.1:9528` when the daemon is running. Direct the user
 there for hands-on cleanup. Run `ling-mem start` if not already
 running.
 

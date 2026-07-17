@@ -4,7 +4,7 @@ LongMemEval-S runner for ling-mem.
 
 Architecture (v0.3 — isolated bench daemon):
   - The whole run uses ONE throwaway data dir under $TMPDIR. The user's
-    real store (~/.linggen) and their daemon on port 9888 are never
+    real store (~/.linggen) and their daemon on port 9528 are never
     touched — no pollution of their recall hook, no backup/restore needed.
   - A dedicated `ling-mem serve` is started on an alternate port against
     that temp dir. All `ling-mem --data-dir <tmp>` calls auto-discover it

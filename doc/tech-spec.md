@@ -249,7 +249,7 @@ Release profile: `strip = true`, `lto = "thin"`, `codegen-units = 1`.
 
 The **linggen-memory skill** is a thin wrapper in the main Linggen repo's skills tree. Its responsibilities:
 
-- `SKILL.md` frontmatter: `provides: [memory]`, `app:` launcher pointing at the daemon's bound port (`http://127.0.0.1:<port>/`), `install: install.sh`, `daemon: { subdir: linggen-memory, port: 9888, healthcheck: /api/health }`.
+- `SKILL.md` frontmatter: `provides: [memory]`, `app:` launcher pointing at the daemon's bound port (`http://127.0.0.1:<port>/`), `install: install.sh`, `daemon: { subdir: linggen-memory, port: 9528, healthcheck: /api/health }`.
 - Web UI: **served by the daemon itself**. Static HTML/JS/CSS live under `static/` in this repo and are embedded into the binary via `rust-embed`. The skill wrapper does not ship any UI assets — Linggen just opens the daemon URL in an iframe. Calls from the page go to `/api/memory/*` on the same origin; Linggen's `Memory_*` tool dispatch is an alternate entry point that hits the same endpoints.
 - `install.sh`: detect platform via `uname`, download matching release binary from GitHub Releases, extract to the skill's `bin/` directory.
 - No scripts beyond install — the binary handles everything else.
