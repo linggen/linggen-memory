@@ -97,12 +97,19 @@ input[type="text"]:disabled { opacity: 0.6; }
 
 /* ── Shell ─────────────────────────────────────────────── */
 
+/* Column flex, not grid: every chrome row is intrinsic-height and the
+   content pane takes the rest. Hidden rows simply drop out, so DOM order
+   is the layout — no row arithmetic to get wrong when a strip appears.
+   (It was grid, and #main's `grid-row: -2/-1` pushed the query bar into an
+   implicit row *below* the list — that's how the search bar ended up at
+   the bottom of the window.) */
 #app {
-  display: grid;
-  /* header · query-bar · filters-bar (collapses to 0 when hidden) · main */
-  grid-template-rows: auto auto auto 1fr;
+  display: flex;
+  flex-direction: column;
   height: 100vh;
 }
+/* Chrome rows keep their intrinsic height; only the content pane flexes. */
+#header, #stats-strip, #dream-strip, #query-bar, #filters-bar { flex: 0 0 auto; }
 
 #header {
   display: flex;
@@ -266,8 +273,7 @@ input[type="text"]:disabled { opacity: 0.6; }
 #main {
   display: grid;
   grid-template-columns: minmax(360px, 1fr) minmax(320px, 440px);
-  /* always occupy the flexible last row, even when filters-bar is shown */
-  grid-row: -2 / -1;
+  flex: 1;
   min-height: 0;
 }
 
@@ -289,6 +295,8 @@ input[type="text"]:disabled { opacity: 0.6; }
   border-top: 1px solid var(--border);
   text-align: center;
 }
+/* No content (end of list / end of results) → no row at all. */
+#list-footer:empty { display: none; }
 
 #detail-pane {
   overflow: auto;
@@ -296,12 +304,13 @@ input[type="text"]:disabled { opacity: 0.6; }
   background: var(--panel);
 }
 
+/* An empty pane is already empty — a big dashed box around the hint just
+   draws the eye to where nothing is. Quiet centred text instead. */
 .detail-empty {
   color: var(--text-dim);
   text-align: center;
-  padding: 40px 20px;
-  border: 1px dashed var(--border);
-  border-radius: 8px;
+  padding: 48px 24px;
+  font-size: 13px;
 }
 
 .detail {
@@ -825,12 +834,14 @@ input[type="text"]:disabled { opacity: 0.6; }
   margin-bottom: 4px;
   align-items: center;
 }
+/* The card's left border already carries the type colour, so boxing the
+   type marker too is duplicate ink. Colour + weight is enough, and it
+   leaves the boxed treatment to mean one thing: storage/host metadata. */
 .row-type {
-  background: var(--panel-2);
-  border: 1px solid var(--border);
-  padding: 1px 6px;
-  border-radius: 3px;
-  font-weight: 600;
+  font-weight: 700;
+}
+.row-from {
+  color: color-mix(in srgb, var(--text-dim) 70%, transparent);
 }
 .row-type.t-fact       { color: var(--t-fact); }
 .row-type.t-preference { color: var(--t-preference); }
@@ -858,18 +869,19 @@ input[type="text"]:disabled { opacity: 0.6; }
 /* Storage tier + inferred host — small dim chips next to the type
    marker so a glance distinguishes core / semantic / episodic rows
    and which host wrote them (when cwd lets us tell). */
+/* Tinted fills rather than outlines — three bordered boxes per row read as
+   three separate controls; a soft wash reads as one family of metadata. */
 .row-storage, .row-host {
-  background: var(--panel-2);
-  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--text-dim) 10%, transparent);
   padding: 1px 6px;
   border-radius: 3px;
   color: var(--text-dim);
   text-transform: lowercase;
   letter-spacing: 0.2px;
 }
-.row-storage.s-core      { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); }
-.row-storage.s-semantic { color: var(--t-learned); border-color: color-mix(in srgb, var(--t-learned) 40%, var(--border)); }
-.row-storage.s-episodic  { color: var(--t-tried);   border-color: color-mix(in srgb, var(--t-tried) 40%, var(--border)); }
+.row-storage.s-core     { color: var(--accent);     background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.row-storage.s-semantic { color: var(--t-learned);  background: color-mix(in srgb, var(--t-learned) 12%, transparent); }
+.row-storage.s-episodic { color: var(--t-tried);    background: color-mix(in srgb, var(--t-tried) 12%, transparent); }
 .row-host { font-style: italic; }
 
 .row-age { margin-left: auto; text-transform: none; }
@@ -962,7 +974,7 @@ body.view-calendar #calendar-view { display: flex; }
 
 #calendar-view {
   display: none;               /* shown via body.view-calendar */
-  grid-row: -2 / -1;           /* the grid's flexible last row, like #main */
+  flex: 1;
   min-height: 0;
   overflow-y: auto;
   padding: 18px 20px 24px;

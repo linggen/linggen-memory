@@ -959,7 +959,9 @@ function renderRowHead(fact) {
 
   if (fact.from) {
     const from = document.createElement('span');
+    from.className = 'row-from';
     from.textContent = fact.from;
+    from.title = `authored ${fact.from === 'user' ? 'by the user' : 'by the assistant'}`;
     head.appendChild(from);
   }
 
@@ -1055,14 +1057,10 @@ function renderFooter() {
     el.textContent = 'Loading…';
     return;
   }
-  if (isSearchMode()) {
-    el.textContent = state.loaded.length > 0 ? 'End of ranked results' : '';
-    return;
-  }
-  if (!state.hasMore) {
-    el.textContent = state.loaded.length > 0 ? 'End of list' : '';
-    return;
-  }
+  // Reaching the end is self-evident — the scrollbar already says so. An
+  // "End of list" line just spends a row on it. Leave the footer empty and
+  // `#list-footer:empty` collapses it away.
+  if (isSearchMode() || !state.hasMore) return;
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.textContent = `Load ${LIST_LIMIT} more`;
