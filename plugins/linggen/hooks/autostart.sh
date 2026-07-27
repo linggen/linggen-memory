@@ -9,7 +9,7 @@
 #    downgrade a newer shared binary, and replaces any legacy symlink.
 # 2. Start the daemon idempotently (restart only if it's older than the
 #    on-disk binary — never downgrade a daemon another host started).
-# 3. Ensure the Linggen daemon is up on :9898 — the plugin's MCP server
+# 3. Ensure the Linggen daemon is up on :9527 — the plugin's MCP server
 #    (browser control, x reads, memory_* proxy, agent_run) lives there.
 #    Starts the daemon when the `ling` binary exists; when it doesn't,
 #    installs the engine in the BACKGROUND (detached — session start never
@@ -78,7 +78,7 @@ fi
 
 # ── Ensure the Linggen daemon (the plugin's MCP server) is up ────────────────
 #
-# The MCP connection in .mcp.json points at http://127.0.0.1:9898/mcp. The
+# The MCP connection in .mcp.json points at http://127.0.0.1:9527/mcp. The
 # engine is a required component of this plugin — when the `ling` binary is
 # absent, install it here, but DETACHED in the background: session start
 # never blocks on the ~100MB download, and the context line below discloses
@@ -86,7 +86,10 @@ fi
 # keeps parallel session starts from racing; a crashed install's stale lock
 # is cleared after 30 minutes. LINGGEN_NO_ENGINE_INSTALL=1 opts out.
 
-LINGGEN_PORT="${LINGGEN_PORT:-9898}"
+# 9527 since the 2026-07 port migration. This default was missed while
+# .mcp.json was flipped, so every session start probed a port nothing serves
+# and launched a SECOND daemon there — one the plugin then never talked to.
+LINGGEN_PORT="${LINGGEN_PORT:-9527}"
 install_hint=""
 if ! curl -fsS --max-time 2 "http://127.0.0.1:${LINGGEN_PORT}/api/health" >/dev/null 2>&1; then
   LING_BIN="$(command -v ling || true)"
