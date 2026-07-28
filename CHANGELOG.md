@@ -1,5 +1,60 @@
 # Changelog
 
+## [1.5.0] - 2026-07-28 — lancedb 0.31 (lance 8)
+
+### Changed
+
+- **lancedb 0.29 → 0.31 (lance 6 → 8).** No migration and no reindex:
+  lance 8 opens an existing lance-6 store directly, and ling-mem builds
+  no ANN index (search is a full scan plus in-process hybrid scoring),
+  so there is nothing to rebuild. Verified against a copy of a real
+  94 MB store — reads both tables, writes a new row and finds it by
+  vector search — and the rollback direction holds too: a 0.29 binary
+  still reads rows lance 8 wrote. `roaring` stays pinned at 0.11.4 in
+  the lockfile; 0.11.3 dropped an `Eq` impl lance needs.
+- **Console: the search bar sits at the top**, and the list no longer
+  spends a row on "End of list".
+
+### Fixed
+
+- **The plugin's autostart hook started a daemon on the port nothing
+  serves** — it spawned a stray daemon on the pre-migration port every
+  session (shipped to plugin users as 1.5.4).
+- **A store test asserted an order `list` does not guarantee.** It
+  stamped `occurred_at`, but `list` has ordered by
+  `activity_timestamp` (`updated_at ?? created_at`) since 1.1.x, so its
+  fixtures were tied on the real key and it was really asserting scan
+  order.
+
+## [1.4.0] - 2026-07-17 — review queue, day-state flags, port 9528
+
+Backfilled: this release shipped without a changelog entry.
+
+### Added
+
+- **Review queue.** An `issues` sidecar plus an audit backstop: the
+  dream pass queues what it cannot merge with confidence instead of
+  guessing, and `/linggen:solve` drains the queue where the user is.
+  `open_issues` surfaces in stats and the days rollup.
+- **Days rollup gains past-day summary counts** and a whole-install
+  `/linggen:status`.
+
+### Changed
+
+- **Default port 9888 → 9528**, alongside the engine's 9898 → 9527.
+- **Day state is verb-aligned flags (`scanned` / `dreamed`)** rather
+  than an enum.
+- **Console: Browse and Calendar split**, calendar as its own view;
+  dismiss allowed on the review queue — the one console action.
+- **`/linggen:condense` retired** — dream's audit stage absorbed it.
+- **`Cargo.lock` is committed** so CI and local builds resolve the same
+  dependency set.
+
+### Fixed
+
+- **The recall hook displayed the wrong score** — it now shows
+  `hybrid_score`, the value the recall floor actually gates on.
+
 ## [1.3.0] - 2026-07-08 — user-voice merge guard at the store
 
 ### Added
