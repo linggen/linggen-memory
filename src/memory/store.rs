@@ -1226,11 +1226,19 @@ mod tests {
     async fn list_with_empty_filters_returns_all_newest_first() {
         let (store, _dir) = fresh_store().await;
 
+        // list() orders by activity_timestamp (updated_at ?? created_at), so the
+        // fixtures have to differ THERE. Stamping only occurred_at leaves all
+        // three tied on the real key — successive Utc::now() calls share one
+        // microsecond ~86% of the time — and a tied stable sort just returns
+        // scan order, which is the store's to choose, not ours to assert.
         let mut old = make_fact("old", MemoryType::Fact);
-        old.occurred_at = Some(Utc::now() - Duration::days(3));
+        old.created_at = Utc::now() - Duration::days(3);
         let mut mid = make_fact("mid", MemoryType::Fact);
-        mid.occurred_at = Some(Utc::now() - Duration::days(1));
-        let new = make_fact("new", MemoryType::Fact); // no occurred_at, uses created_at ≈ now
+        mid.created_at = Utc::now() - Duration::days(1);
+        let mut new = make_fact("new", MemoryType::Fact);
+        // Back-dated occurred_at on the NEWEST row: list must not reorder on it.
+        // That is effective_timestamp's key, deliberately not this one.
+        new.occurred_at = Some(Utc::now() - Duration::days(10));
 
         store.insert(&[old, mid, new]).await.unwrap();
 
