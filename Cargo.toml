@@ -59,15 +59,16 @@ fastembed = { version = "5", features = ["qwen3"] }
 # Version must align with the candle-core pulled in by fastembed's qwen3 feature.
 candle-core = "0.10"
 
-# Storage — arrow 58 aligns with lance 7.x / lancedb 0.30's internal version
-# (lancedb 0.30 deps: arrow ^58, lance =7.0.0, datafusion ^53). Keep this a
-# compatible triple — bumping arrow past what lancedb pins duplicates the
-# arrow types ling-mem uses directly (schema.rs RecordBatch/Field/DataType).
+# Storage — keep arrow aligned with the lance version lancedb pins internally.
+# Bumping arrow past that duplicates the arrow types ling-mem uses directly
+# (schema.rs RecordBatch/Field/DataType). Check `cargo tree -p lancedb` after
+# any lancedb bump. NOTE the requirement is a caret: "0.30" never resolves 0.31,
+# so bump this string to move a minor version, don't just `cargo update`.
 # roaring is pinned to 0.11.4 in Cargo.lock: 0.11.3 dropped the Eq impl lance 7
 # needs and cargo's minimal update parks there ("RoaringBitmap: Eq is not
 # satisfied" in lance transaction.rs). Re-pin with
 # `cargo update -p roaring --precise 0.11.4` if the lock is ever regenerated.
-lancedb = "0.30"
+lancedb = "0.31"
 arrow = "58"
 arrow-array = "58"
 arrow-schema = "58"
