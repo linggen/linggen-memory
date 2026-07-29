@@ -86,12 +86,33 @@ fi
 # keeps parallel session starts from racing; a crashed install's stale lock
 # is cleared after 30 minutes. LINGGEN_NO_ENGINE_INSTALL=1 opts out.
 
-# 9527 since the 2026-07 port migration. This default was missed while
-# .mcp.json was flipped, so every session start probed a port nothing serves
-# and launched a SECOND daemon there — one the plugin then never talked to.
+# ONE source for where the daemon is, read by BOTH this hook and .mcp.json's
+# ${LINGGEN_HOST}/${LINGGEN_PORT} expansion — with the SAME defaults, written
+# once each here and once each there and nowhere else.
+#
+# They used to be two independent literals, and they drifted: the 2026-07
+# migration flipped .mcp.json to 9527 and left this at 9898, so every session
+# start probed a port nothing served and launched a SECOND daemon there — one
+# the plugin then never talked to, and which registered the same relay
+# instance as the real one and split a paired phone's traffic between them.
+#
+# A config FILE cannot fix this: Claude Code resolves ${VAR} in .mcp.json at
+# startup, before any hook runs, and no hook return value can change the
+# environment CC itself reads. An env var with a shared default is the only
+# thing both sides can follow.
+LINGGEN_HOST="${LINGGEN_HOST:-127.0.0.1}"
 LINGGEN_PORT="${LINGGEN_PORT:-9527}"
+# Starting a daemon only makes sense for a daemon on THIS machine. Pointed at
+# another host, an unreachable engine means "that machine is off" — spawning a
+# local one on the same port would answer with the wrong store and hide it.
+case "$LINGGEN_HOST" in
+  127.0.0.1|localhost|::1|"") LINGGEN_LOCAL=1 ;;
+  *) LINGGEN_LOCAL=0 ;;
+esac
+
 install_hint=""
-if ! curl -fsS --max-time 2 "http://127.0.0.1:${LINGGEN_PORT}/api/health" >/dev/null 2>&1; then
+if ! curl -fsS --max-time 2 "http://${LINGGEN_HOST}:${LINGGEN_PORT}/api/health" >/dev/null 2>&1 \
+   && [ "$LINGGEN_LOCAL" = 1 ]; then
   LING_BIN="$(command -v ling || true)"
   [ -z "$LING_BIN" ] && [ -x "$HOME/.local/bin/ling" ] && LING_BIN="$HOME/.local/bin/ling"
   if [ -n "$LING_BIN" ]; then

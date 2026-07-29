@@ -2,7 +2,7 @@
   "mcpServers": {
     "linggen": {
       "type": "http",
-      "url": "http://127.0.0.1:9527/mcp"
+      "url": "http://${LINGGEN_HOST:-127.0.0.1}:${LINGGEN_PORT:-9527}/mcp"
     }
   }
 }
