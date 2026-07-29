@@ -171,6 +171,13 @@ fn tool_defs() -> Vec<Value> {
                 },
                 "required": ["query"]
             }
+            // `min_score` is deliberately absent. The REST handler accepts it
+            // and the loopback passes it through, so a *programmatic* caller
+            // (Linggen's auto-recall) can set a floor — but advertising a
+            // relevance threshold to a model invites exactly the over-fill
+            // failure these narrow schemas exist to prevent: a guessed value
+            // silently narrows recall to zero rows. Omitted here, the daemon's
+            // store-wide `recall_min_score` applies.
         }),
         json!({
             "name": "memory_list",
