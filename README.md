@@ -140,6 +140,17 @@ Source is open on both ends: client at [`src/telemetry/`](src/telemetry/), recei
 
 MIT. See `LICENSE`.
 
+One subtree is different: **`plugins/linggen/skills/linggen/` is Apache 2.0**, carried
+in its own `LICENSE` there. Skill code tracks the engine's license, not this repo's —
+the bundle originated in the `linggen/skills` repo and kept its terms when the plugin
+tree was scaffolded here. The nearest `LICENSE` governs, so the rest of
+`plugins/linggen/` stays MIT.
+
+This is also what the ClawHub listing should say. If `clawhub inspect linggen` reports
+anything other than Apache-2.0 for the published skill, the registry metadata is stale —
+it is a skill-level field on clawhub.ai with no CLI flag, so republishing will not
+correct it.
+
 ---
 
 ## History
