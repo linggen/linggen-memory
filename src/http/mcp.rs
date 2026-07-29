@@ -343,7 +343,10 @@ async fn handle_tools_call(state: &SharedState, params: Value) -> Result<Value, 
     apply_dispatch_fixes(verb, &mut args);
 
     match loopback(state, verb, args).await {
-        Ok(data) => Ok(mcp_text_content(&data)),
+        Ok(mut data) => {
+            apply_response_fixes(verb, &mut data);
+            Ok(mcp_text_content(&data))
+        }
         Err(err) => Err(rpc_error(-32603, err.message)),
     }
 }
@@ -399,13 +402,42 @@ fn apply_dispatch_fixes(verb: &str, args: &mut Value) {
     //    (`type=fact, from=user, outcome=positive`) which narrows the
     //    sweep to zero rows. Strip them at the dispatch boundary; the
     //    schema doesn't expose them on list, but defend defensively.
-    if verb == "list" {
-        let is_ttl_sweep = obj.get("past_ttl").and_then(|v| v.as_bool()).unwrap_or(false);
-        if is_ttl_sweep {
-            for k in ["type", "from", "outcome"] {
-                let _ = obj.remove(k);
-            }
+    //    Not gated on `verb == "list"`: `past_ttl` is only meaningful on a
+    //    sweep, so stripping it wherever it appears costs nothing and covers
+    //    a model that reaches for the sweep shape on the wrong verb.
+    let is_ttl_sweep = obj.get("past_ttl").and_then(|v| v.as_bool()).unwrap_or(false);
+    if is_ttl_sweep {
+        for k in ["type", "from", "outcome"] {
+            let _ = obj.remove(k);
         }
+    }
+}
+
+/// The mirror of `apply_dispatch_fixes` on the way back out: shapes the
+/// daemon returns that a *model* reliably misreads.
+///
+/// This layer, not the REST handler, is the right home for them for the same
+/// reason the request-side fixes live here — CLI arguments come from clap,
+/// typed, from a human, and REST callers are programs. Only the MCP surface
+/// is talking to something that infers intent from JSON it did not write.
+fn apply_response_fixes(verb: &str, value: &mut Value) {
+    if verb != "delete" {
+        return;
+    }
+    let Some(obj) = value.as_object_mut() else { return };
+    // Deleting an already-absent row is success, not an anomaly — the row is
+    // gone either way (commonly this daemon's own cross-tier dedup removed
+    // the episodic copy during a promote add). A bare `removed:false` reads
+    // as an error signal to LLM callers: three dream runs were observed
+    // aborting over it, claiming "store inconsistency". Say what it means.
+    if obj.get("removed").and_then(|v| v.as_bool()) == Some(false) {
+        obj.insert("already_gone".to_string(), Value::Bool(true));
+        obj.insert(
+            "note".to_string(),
+            Value::String(
+                "row was already absent — treat as success; do not retry or verify".to_string(),
+            ),
+        );
     }
 }
 
@@ -449,5 +481,86 @@ async fn loopback(state: &SharedState, verb: &str, body: Value) -> Result<Value,
             .unwrap_or("upstream error")
             .to_string();
         Err(ApiError::internal(anyhow::anyhow!(msg)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `until: ""` used to reach the RFC-3339 parser and crash it; empty
+    /// arrays silently narrowed a query to nothing.
+    #[test]
+    fn soft_empty_fields_never_reach_the_daemon() {
+        let mut args = json!({
+            "query": "real",
+            "until": "",
+            "contexts": [],
+            "tier": null,
+            "limit": 5
+        });
+        apply_dispatch_fixes("search", &mut args);
+        let obj = args.as_object().unwrap();
+        assert_eq!(obj.keys().collect::<Vec<_>>(), ["limit", "query"]);
+    }
+
+    /// The episodic store is a separate table, so the tier is a routing
+    /// decision on the wire, not a filter value.
+    #[test]
+    fn episodic_tier_becomes_a_routing_flag() {
+        let mut args = json!({"content": "x", "tier": "episodic"});
+        apply_dispatch_fixes("add", &mut args);
+        assert_eq!(args["episodic"], json!(true));
+        assert!(args.get("tier").is_none());
+
+        // Any other tier stays a filter within the semantic store.
+        let mut semantic = json!({"content": "x", "tier": "core"});
+        apply_dispatch_fixes("add", &mut semantic);
+        assert_eq!(semantic["tier"], json!("core"));
+        assert!(semantic.get("episodic").is_none());
+    }
+
+    /// A sweep wants every past-TTL row. gpt-5.5 was observed filling these
+    /// with hallucinated defaults, narrowing it to zero.
+    #[test]
+    fn a_ttl_sweep_is_not_narrowed_by_invented_filters() {
+        let mut args = json!({
+            "past_ttl": true,
+            "type": "fact",
+            "from": "user",
+            "outcome": "positive",
+            "contexts": ["keep-me"]
+        });
+        apply_dispatch_fixes("list", &mut args);
+        assert!(args.get("type").is_none());
+        assert!(args.get("from").is_none());
+        assert!(args.get("outcome").is_none());
+        // A caller legitimately scoping by tag keeps it.
+        assert_eq!(args["contexts"], json!(["keep-me"]));
+
+        // Not gated on the verb: the same shape on the wrong one is stripped.
+        let mut wrong_verb = json!({"past_ttl": true, "type": "fact"});
+        apply_dispatch_fixes("search", &mut wrong_verb);
+        assert!(wrong_verb.get("type").is_none());
+    }
+
+    /// Three dream runs aborted claiming "store inconsistency" over a bare
+    /// `removed:false`. The row is gone either way.
+    #[test]
+    fn deleting_an_absent_row_reads_as_success() {
+        let mut resp = json!({"id": "abc", "removed": false});
+        apply_response_fixes("delete", &mut resp);
+        assert_eq!(resp["already_gone"], json!(true));
+        assert!(resp["note"].as_str().unwrap().contains("treat as success"));
+
+        // A real delete is left alone…
+        let mut real = json!({"id": "abc", "removed": true});
+        apply_response_fixes("delete", &mut real);
+        assert!(real.get("already_gone").is_none());
+
+        // …and so is every other verb's response.
+        let mut search = json!({"removed": false});
+        apply_response_fixes("search", &mut search);
+        assert!(search.get("already_gone").is_none());
     }
 }
