@@ -47,13 +47,13 @@ const INSTRUCTIONS: &str = r#"ling-mem provides durable cross-session memory for
 
 # When to SEARCH (before answering)
 
-Call Memory_search when the user's question could connect to past preferences, decisions, or gotchas. Chip every fact you actually use: "From memory: …".
+Call memory_search when the user's question could connect to past preferences, decisions, or gotchas. Chip every fact you actually use: "From memory: …".
 
-# When to SAVE (call Memory_add)
+# When to SAVE (call memory_add)
 
 **Per-turn capture → episodic.** Each turn, append genuinely-noteworthy signal to `tier=episodic` — fast, no search-first, no confirmation. **Anchor relative time before writing** (substitution against today's date, not math — e.g. if today is 2026-07-07, "turned 3 last month" → "turned 3 in 2026-06, as of 2026-07-07"): "yesterday"/"last month"/"recently" in stored content rots silently. **Project-scoped is fine; episodic is staging, not user-biography.** Capture: shipped milestones, decisions + *why*, non-obvious learnings from a run/experiment. E.g. "Shipped Linggen 1.0"; "Sanji docking: dropped dock-wall cost, treat all cost-points uniformly"; "BlueBoat cruise tops out ~0.2 m/s". If a future session would be smarter for it, stage it — the dream pass dedupes and promotes.
 
-**Curated writes → core / semantic** (high confidence) follow the read-before-write rule: **Always Memory_search the candidate content before a core/semantic Memory_add.** Write-time dedup is cheaper than read-time cleanup. Merge authority follows voice:
+**Curated writes → core / semantic** (high confidence) follow the read-before-write rule: **Always memory_search the candidate content before a core/semantic memory_add.** Write-time dedup is cheaper than read-time cleanup. Merge authority follows voice:
 - Near-duplicate exists → skip the add; if yours is better-phrased and every matching row is your own note (`from=derived` — built/fixed/tried/learned), write the merged row with `replace_ids` listing the losers (one atomic call).
 - Conflict among **your own notes only** → no ask needed: merge to one current-truth row via `replace_ids`.
 - Conflict touching the **user's voice** (`from=user` — preference/decision/identity) → ask via the host's ask-user primitive, then write the winner with `replace_ids` carrying every loser AND `user_directed: true`. Do not write on top of a conflict; never separate add + delete. The daemon mechanically BLOCKS a replace/rewrite of `from=user` rows without `user_directed: true` — the flag asserts the user directed the change: their CURRENT message states it as settled (a command "update X to Y", a declaration "my X is now Y", a commitment "from now on, X"), or they just answered your ask. A hedged reflection ("X feels about right to me", "I think I prefer X") does NOT qualify — that's a contradiction: ask first. Never assert the flag from your own inference.
@@ -78,13 +78,13 @@ Explicit imperatives — act immediately:
 
 # Status rows are perishable — supersede at write time
 
-A status-bearing row ("in progress", "OPEN:", "not committed", "shipped", "dormant") is a claim about the world, and the world moves. When capturing a status change (shipped / fixed / dormant / abandoned), search the subject and write the new status with `replace_ids` listing the prior status row(s) — never leave "in progress" beside its own outcome. (Own-notes only; a user-voice predecessor follows the merge law.) The dream audit's review queue catches what slips through (memory_issues lists it; memory_issue_resolve closes items after an attended solve) — write-time supersede is the real fix, the queue is the backstop.
+A status-bearing row ("in progress", "OPEN:", "not committed", "shipped", "dormant") is a claim about the world, and the world moves. When capturing a status change (shipped / fixed / dormant / abandoned), search the subject and write the new status with `replace_ids` listing the prior status row(s) — never leave "in progress" beside its own outcome. (Own-notes only; a user-voice predecessor follows the merge law.) The dream audit's review queue catches what slips through (memory_issue_add queues an item the pass can't settle; memory_issues lists them; memory_issue_resolve closes one after an attended solve) — write-time supersede is the real fix, the queue is the backstop.
 
 # Memory hygiene — see it, solve it
 
 Whoever surfaces garbage owns it in that moment; there is no cleanup queue. Authority follows voice:
 
-- **Your own notes** (`from=derived` — built/fixed/tried/learned) are your notebook: merge, rewrite, retire freely — one `Memory_add` of the current-truth row with `replace_ids` listing every loser (atomic insert + delete; never separate add then delete).
+- **Your own notes** (`from=derived` — built/fixed/tried/learned) are your notebook: merge, rewrite, retire freely — one `memory_add` of the current-truth row with `replace_ids` listing every loser (atomic insert + delete; never separate add then delete).
 - **The user's voice** (`from=user` — preference/decision/identity) changes only with the user: ask via the host's ask-user primitive (Claude Code: AskUserQuestion; Linggen: AskUser; Codex/OpenClaw: plain chat with numbered options), then write the winner with `replace_ids` + `user_directed: true` (the daemon blocks user-voice replaces without it). Can't ask / not material to the turn → append and leave both; recall keeps surfacing them until a user-present moment resolves it.
 
 Taxonomy: exact dup → delete; superseded / chain member (derived) → `replace_ids` merge; reworded derived near-dup → merge, keep the best phrasing; old pure-event row → retire, folding into a state row if one exists; user-voice contradiction → ask; secret → delete on sight.
@@ -93,7 +93,7 @@ Inline reconciliation fires on **incidental** recall hits only. When the user is
 
 # Tool gotchas — CRITICAL
 
-For Memory_search / Memory_list: do NOT pass `type`, `from`, or `outcome` unless the user explicitly asked. Models hallucinate these defaults and over-constrain queries to 0 rows. Pass only the query (and `limit` if relevant)."#;
+For memory_search / memory_list: do NOT pass `type`, `from`, or `outcome` unless the user explicitly asked. Models hallucinate these defaults and over-constrain queries to 0 rows. Pass only the query (and `limit` if relevant)."#;
 
 pub fn router() -> Router<SharedState> {
     Router::new().route("/mcp", post(handler))
@@ -306,6 +306,19 @@ fn tool_defs() -> Vec<Value> {
             }
         }),
         json!({
+            "name": "memory_issue_add",
+            "description": "Queue one review-queue item the audit could not solve with confidence. Idempotent per (kind, row_ids) — the nightly audit re-detects the same suspects until they are fixed, and re-queuing returns the existing item rather than growing the list. Prefer solving it now: queue only what genuinely needs the user, or evidence this pass cannot gather.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "kind":    {"type": "string", "enum": ["chain", "stale-status", "contradiction"], "description": "What you saw: `chain` = uncertain merge candidate; `stale-status` = a status claim likely overtaken by the world (verify against git/files at solve time); `contradiction` = conflicting rows needing the user's pick."},
+                    "row_ids": {"type": "array", "items": {"type": "string"}, "description": "The memory row ids this item is about."},
+                    "note":    {"type": "string", "description": "What you saw and what a solver should check — the item's whole context, since the solver starts from this line alone."}
+                },
+                "required": ["kind", "note"]
+            }
+        }),
+        json!({
             "name": "memory_issue_resolve",
             "description": "Close one review-queue item by id after solving it (outcome=resolved) or deciding it isn't worth fixing (outcome=dismissed). Pass a one-line note of what was done. Closing an already-closed item is a no-op success.",
             "inputSchema": {
@@ -373,6 +386,7 @@ fn tool_name_to_verb(name: &str) -> Option<&'static str> {
         "memory_sweep"        => Some("sweep"),
         "memory_chains"       => Some("chains"),
         "memory_issues"       => Some("issues"),
+        "memory_issue_add"    => Some("issue_add"),
         "memory_issue_resolve" => Some("issue_resolve"),
         _ => None,
     }
@@ -569,5 +583,51 @@ mod tests {
         let mut search = json!({"removed": false});
         apply_response_fixes("search", &mut search);
         assert!(search.get("already_gone").is_none());
+    }
+
+    /// An advertised tool nobody can route is a phantom, and a routable verb
+    /// nobody advertises is a capability the model cannot reach — which is
+    /// exactly how `issue_add` went missing while every other verb had a
+    /// tool. The two lists are one surface; test them as one.
+    #[test]
+    fn every_advertised_tool_routes_and_every_route_is_advertised() {
+        let advertised: Vec<String> = tool_defs()
+            .iter()
+            .map(|t| t["name"].as_str().expect("a tool has a name").to_string())
+            .collect();
+
+        for name in &advertised {
+            assert!(
+                tool_name_to_verb(name).is_some(),
+                "advertised tool `{name}` has no verb to route to"
+            );
+        }
+
+        // Every verb the map knows must be advertised. Kept as the map's own
+        // inverse rather than a hand-written list, so adding a route without
+        // a schema fails here.
+        for verb in [
+            "search", "list", "get", "add", "update", "delete", "days", "remember_day",
+            "harvest_day", "sweep", "chains", "issues", "issue_add", "issue_resolve",
+        ] {
+            let advertised_for_verb = advertised
+                .iter()
+                .any(|name| tool_name_to_verb(name) == Some(verb));
+            assert!(advertised_for_verb, "verb `{verb}` is routable but not advertised");
+        }
+    }
+
+    /// The audit queues what it cannot solve; without this tool the whole
+    /// review queue is write-only from a model's point of view.
+    #[test]
+    fn the_audit_can_queue_a_review_item() {
+        assert_eq!(tool_name_to_verb("memory_issue_add"), Some("issue_add"));
+        let def = tool_defs()
+            .into_iter()
+            .find(|t| t["name"] == json!("memory_issue_add"))
+            .expect("memory_issue_add is advertised");
+        // `kind` + `note` are what /api/memory/issue_add rejects a call for
+        // missing, so they are the schema's required pair.
+        assert_eq!(def["inputSchema"]["required"], json!(["kind", "note"]));
     }
 }
