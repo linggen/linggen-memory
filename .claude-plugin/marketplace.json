@@ -8,7 +8,7 @@
   "plugins": [
     {
       "name": "linggen",
-      "description": "Linggen for Claude Code \u2014 durable cross-host memory, browser control in your own Chrome, and logged-in X reads, all over one MCP connection to the local Linggen daemon. Installs its required binaries (ling-mem + the Linggen engine, background download) on first session start. Replaces shared-memory.",
+      "description": "Linggen for Claude Code \u2014 durable cross-host memory, browser control in your own Chrome, and logged-in X reads. Two local MCP servers: ling-mem for memory, the Linggen engine for the browser, X and agents. Installs its required binaries (ling-mem + the Linggen engine, background download) on first session start. Replaces shared-memory.",
       "category": "productivity",
       "homepage": "https://linggen.dev",
       "source": {
