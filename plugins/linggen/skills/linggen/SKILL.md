@@ -1,12 +1,14 @@
 ---
 name: linggen
 description: >-
-  Linggen — durable cross-host memory plus browser control over one
-  local MCP server. Memory: three-tier model (core + long-term +
+  Linggen — durable cross-host memory plus browser control, over two
+  local MCP servers: `ling-mem` for memory, the Linggen engine for
+  browser, X and agents. Memory: three-tier model (core + long-term +
   episodic staging) of who the user is, not a log of what was done;
   same `ling-mem` daemon and store in Claude Code, Codex, and
-  OpenClaw. Browser: agent control of the user's own Chrome with
-  per-site permission prompts, and logged-in X session reads.
+  OpenClaw, and reachable over the LAN from a second machine
+  (`/linggen:config`). Browser: agent control of the user's own Chrome
+  with per-site permission prompts, and logged-in X session reads.
 license: Apache-2.0
 homepage: https://linggen.dev
 allowed-tools:

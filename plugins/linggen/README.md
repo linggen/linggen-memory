@@ -1,8 +1,9 @@
 # linggen
 
-> One plugin, one local MCP server, three capabilities: durable
-> cross-session **memory**, agent **browser control** in your own
-> Chrome, and structured reads of your **logged-in X session**.
+> One plugin, two local MCP servers, three capabilities: durable
+> cross-session **memory** (`ling-mem`), agent **browser control** in
+> your own Chrome, and structured reads of your **logged-in X session**
+> (the Linggen engine). Each tool served in exactly one place.
 
 Replaces the `shared-memory` plugin — same memory store, same recall
 hook, plus everything else the Linggen daemon offers. Never run both.
