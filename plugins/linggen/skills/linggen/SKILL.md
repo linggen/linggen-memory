@@ -66,7 +66,9 @@ channel shells out to) and **`ling`** (the Linggen engine — serves
 `127.0.0.1:9527/mcp`). Each tool is served in exactly one place: the
 engine does not proxy memory. The Claude Code / Codex plugin's
 session-start hook installs both automatically (the engine in the
-background, disclosed in the session context). On channels without hooks
+background, disclosed in the session context) — unless `~/.linggen/client.json`
+points off-machine, in which case this host is a *client* of another machine's
+Linggen and installs nothing. `/linggen:config` is how that is set. On channels without hooks
 (skills.sh, ClawHub, manual), **you install them — run these checks
 before your first op; each is a no-op when already satisfied:**
 

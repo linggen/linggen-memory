@@ -13,8 +13,8 @@
 #    needs a URL and a token, nothing installed.
 # 2. Start the daemon idempotently (restart only if it's older than the
 #    on-disk binary — never downgrade a daemon another host started).
-# 3. Ensure the Linggen daemon is up on :9527 — the plugin's MCP server
-#    (browser control, x reads, memory_* proxy, agent_run) lives there.
+# 3. Ensure the Linggen daemon is up where client.json says — the plugin's
+#    MCP server (browser control, x reads, agent_run) lives there.
 #    Starts the daemon when the `ling` binary exists; when it doesn't,
 #    installs the engine in the BACKGROUND (detached — session start never
 #    blocks on the ~100MB download) and discloses that in the context line.
@@ -96,45 +96,35 @@ fi  # LING_MEM_LOCAL
 
 # ── Ensure the Linggen daemon (the plugin's MCP server) is up ────────────────
 #
-# The MCP connection in .mcp.json points at http://127.0.0.1:9527/mcp. The
-# engine is a required component of this plugin — when the `ling` binary is
+# The engine is a required component of this plugin — when the `ling` binary is
 # absent, install it here, but DETACHED in the background: session start
 # never blocks on the ~100MB download, and the context line below discloses
 # the install (README + plugin description disclose it up front). A lock dir
 # keeps parallel session starts from racing; a crashed install's stale lock
 # is cleared after 30 minutes. LINGGEN_NO_ENGINE_INSTALL=1 opts out.
 
-# ONE source for where the daemon is, read by BOTH this hook and .mcp.json's
-# ${LINGGEN_HOST}/${LINGGEN_PORT} expansion — with the SAME defaults, written
-# once each here and once each there and nowhere else.
+# `LINGGEN_URL` and `LINGGEN_LOCAL` come from mcp.sh, which resolves them from
+# `~/.linggen/client.json` (env > file > default) — ONE authored address for
+# every hook. `.mcp.json` still needs the same values as environment variables,
+# because Claude Code expands it at startup before any hook runs; `config.sh`
+# mirrors them there when it writes the file.
 #
-# They used to be two independent literals, and they drifted: the 2026-07
-# migration flipped .mcp.json to 9527 and left this at 9898, so every session
-# start probed a port nothing served and launched a SECOND daemon there — one
-# the plugin then never talked to, and which registered the same relay
-# instance as the real one and split a paired phone's traffic between them.
-#
-# A config FILE cannot fix this: Claude Code resolves ${VAR} in .mcp.json at
-# startup, before any hook runs, and no hook return value can change the
-# environment CC itself reads. An env var with a shared default is the only
-# thing both sides can follow.
-LINGGEN_HOST="${LINGGEN_HOST:-127.0.0.1}"
-LINGGEN_PORT="${LINGGEN_PORT:-9527}"
-# Starting a daemon only makes sense for a daemon on THIS machine. Pointed at
-# another host, an unreachable engine means "that machine is off" — spawning a
-# local one on the same port would answer with the wrong store and hide it.
-case "$LINGGEN_HOST" in
-  127.0.0.1|localhost|::1|"") LINGGEN_LOCAL=1 ;;
-  *) LINGGEN_LOCAL=0 ;;
-esac
+# The address used to be an independent literal here, and it drifted: the
+# 2026-07 migration flipped .mcp.json to 9527 and left this at 9898, so every
+# session start probed a port nothing served and launched a SECOND daemon there
+# — one the plugin never talked to, which registered the same relay instance as
+# the real one and split a paired phone's traffic between them.
 
 install_hint=""
-if ! curl -fsS --max-time 2 "http://${LINGGEN_HOST}:${LINGGEN_PORT}/api/health" >/dev/null 2>&1 \
+if ! curl -fsS --max-time 2 "${LINGGEN_URL}/api/health" >/dev/null 2>&1 \
    && [ "$LINGGEN_LOCAL" = 1 ]; then
   LING_BIN="$(command -v ling || true)"
   [ -z "$LING_BIN" ] && [ -x "$HOME/.local/bin/ling" ] && LING_BIN="$HOME/.local/bin/ling"
   if [ -n "$LING_BIN" ]; then
-    (nohup "$LING_BIN" --web --port "$LINGGEN_PORT" >/dev/null 2>&1 &) || true
+    # No `--port`: the engine binds from its own `[server].url`. Passing a
+    # port here would override the user's config with this hook's reading of
+    # it, which is how a daemon ends up somewhere its own config denies.
+    (nohup "$LING_BIN" --web >/dev/null 2>&1 &) || true
   elif [ -n "${LINGGEN_NO_ENGINE_INSTALL:-}" ]; then
     install_hint="Linggen engine not installed (auto-install disabled via LINGGEN_NO_ENGINE_INSTALL) — browser/x/agent MCP tools are offline. Install: curl -fsSL https://linggen.dev/install.sh | bash"
   else
@@ -147,9 +137,9 @@ if ! curl -fsS --max-time 2 "http://${LINGGEN_HOST}:${LINGGEN_PORT}/api/health" 
         curl -fsSL https://linggen.dev/install.sh | bash >>"$1" 2>&1
         LING="$(command -v ling || true)"
         [ -z "$LING" ] && [ -x "$HOME/.local/bin/ling" ] && LING="$HOME/.local/bin/ling"
-        [ -n "$LING" ] && nohup "$LING" --web --port "$2" >/dev/null 2>&1 &
-        rmdir "$3" 2>/dev/null
-      ' _ "$LOG" "$LINGGEN_PORT" "$LOCK" >/dev/null 2>&1 &) || true
+        [ -n "$LING" ] && nohup "$LING" --web >/dev/null 2>&1 &
+        rmdir "$2" 2>/dev/null
+      ' _ "$LOG" "$LOCK" >/dev/null 2>&1 &) || true
       install_hint="Installing the Linggen engine in the background (one-time, ~100MB; log: ~/.linggen/engine-install.log). Browser/x/agent MCP tools come online when it finishes — memory already works via the ling-mem CLI."
     else
       install_hint="Linggen engine install already in progress (log: ~/.linggen/engine-install.log) — browser/x/agent MCP tools come online when it finishes."

@@ -31,11 +31,21 @@ Each tool is served in exactly one place. Memory comes from the memory
 daemon, so a machine that only wants memory needs only that one; the
 engine no longer proxies `memory_*`.
 
-**A second machine on your LAN** can share the same memory without
-installing anything: point `LING_MEM_HOST` at the machine that holds the
-store, pair it once through Linggen, and set `LING_MEM_TOKEN` to the
-device token. The hooks and the MCP entry follow those two variables, and
-nothing is installed locally — one store, not two.
+**A second machine on your LAN** can share the same memory without installing
+anything:
+
+```
+/linggen:config --ling-mem 192.168.1.5:9528 --token <device-token>
+```
+
+That writes `~/.linggen/client.json` — where *this* host goes looking — probes
+the address, and mirrors it into Claude Code's `settings.json` so the MCP
+servers follow. Restart Claude Code afterwards; MCP URLs resolve at startup.
+Nothing is installed locally: the hooks speak MCP over HTTP and the tools come
+from the daemon, so one store, not two. `/linggen:config --local` goes back.
+
+The token comes from pairing that machine through Linggen on the Mac that holds
+the store — the same screen-confirm flow the phone uses. Loopback needs none.
 
 ## What you get
 
