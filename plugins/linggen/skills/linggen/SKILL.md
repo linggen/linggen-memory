@@ -59,10 +59,12 @@ on Claude Code, `${PLUGIN_ROOT}/skills/linggen/` on Codex.
 
 ## First use — ensure the Linggen binaries are installed
 
-This skill has two required binaries: **`ling-mem`** (the memory CLI and
-daemon — every memory op shells out to it) and **`ling`** (the Linggen
-engine — serves the `linggen` MCP tools on `127.0.0.1:9527`: `memory_*`,
-`browser_*`, `x_*`, `agent_run`). The Claude Code / Codex plugin's
+This skill has two required binaries: **`ling-mem`** (the memory daemon —
+serves `memory_*` on `127.0.0.1:9528/mcp`, and the CLI every Bash-only
+channel shells out to) and **`ling`** (the Linggen engine — serves
+`browser_*`, `x_*`, `agent_run` and the dream tools on
+`127.0.0.1:9527/mcp`). Each tool is served in exactly one place: the
+engine does not proxy memory. The Claude Code / Codex plugin's
 session-start hook installs both automatically (the engine in the
 background, disclosed in the session context). On channels without hooks
 (skills.sh, ClawHub, manual), **you install them — run these checks

@@ -2,12 +2,24 @@
 # UserPromptSubmit hook installed by the linggen plugin. Surfaces relevant
 # memories for each turn. Bails silently on any failure — never blocks
 # the user.
+#
+# Talks to ling-mem over **MCP**, not the CLI. A hook can't *be* a model's
+# tool call, but it can *make* one: `tools/call` is a JSON-RPC POST, and
+# curl can post JSON. What that buys is the whole point — this hook now needs
+# a URL and (off-machine) a token, and **no `ling-mem` binary at all**. The
+# CLI resolves the daemon through `daemon.json`, which can only ever describe
+# a *local* daemon, so a second machine on CLI recall would need its own
+# binary, its own daemon and its own store: memory forked in two.
+#
+# Cost, accepted: the daemon must be up. The CLI could fall back to opening
+# the store directly; a URL cannot. The SessionStart hook starts it, and a
+# quiet turn is the correct failure — recall is an enhancement, never a gate.
 
 set -u
 [ "${LING_MEM_RECALL_DISABLE:-0}" = "1" ] && exit 0
 
-command -v jq       >/dev/null 2>&1 || exit 0
-command -v ling-mem >/dev/null 2>&1 || exit 0
+command -v jq   >/dev/null 2>&1 || exit 0
+command -v curl >/dev/null 2>&1 || exit 0
 
 input="$(cat)"
 prompt="$(printf '%s' "$input" | jq -r '.prompt // empty' 2>/dev/null || true)"
@@ -19,60 +31,37 @@ sid="$(printf '%s' "$input"   | jq -r '.session_id // empty' 2>/dev/null || true
 topk="${LING_MEM_RECALL_TOPK:-3}"
 limit="${LING_MEM_RECALL_LIMIT:-8}"
 to="${LING_MEM_RECALL_TIMEOUT:-3}"
-# No hardcoded floor: omit --min-score so the daemon applies its store-wide
+# No hardcoded floor: with no `min_score` the daemon applies its store-wide
 # `recall_min_score` (one selectivity shared by all hosts). Set
-# LING_MEM_RECALL_MIN_SCORE to override per-host.
-min_score="${LING_MEM_RECALL_MIN_SCORE:-}"
+# LING_MEM_RECALL_MIN_SCORE to tighten it per host — applied client-side,
+# because `min_score` is deliberately absent from the MCP schema (a *model*
+# guessing a threshold narrows recall to zero). The rows carry their scores,
+# so filtering here costs nothing and needs no schema change.
+min_score="${LING_MEM_RECALL_MIN_SCORE:-0}"
+
+# Address + `mcp_call`, shared with autostart.sh. Located from this script's
+# own path rather than a plugin-root env var — Codex's hook runner doesn't set
+# one, and recall has to keep working there.
+# shellcheck source=./mcp.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/mcp.sh" 2>/dev/null || exit 0
 
 proj=""
 if [ -n "$cwd" ] && [ "$cwd" != "$HOME" ]; then
   proj="$(basename "$cwd")"
 fi
 
-TIMEOUT_BIN=""
-if   command -v timeout  >/dev/null 2>&1; then TIMEOUT_BIN="timeout"
-elif command -v gtimeout >/dev/null 2>&1; then TIMEOUT_BIN="gtimeout"
-fi
-
-# Portable timeout. Stock macOS ships neither `timeout` nor `gtimeout`
-# (those are GNU coreutils, opt-in via Homebrew). Without a fallback, a
-# hung daemon — slow LanceDB scan, OOM, lock contention — would block
-# the user's prompt indefinitely. The background+kill pattern works on
-# any POSIX shell.
-run_with_timeout() {
-  local seconds="$1"; shift
-  if [ -n "$TIMEOUT_BIN" ]; then
-    "$TIMEOUT_BIN" "$seconds" "$@" 2>/dev/null
-    return
-  fi
-  "$@" 2>/dev/null &
-  local pid=$!
-  (
-    sleep "$seconds"
-    kill -TERM "$pid" 2>/dev/null
-    sleep 1
-    kill -KILL "$pid" 2>/dev/null
-  ) &
-  local watcher=$!
-  wait "$pid" 2>/dev/null
-  kill -KILL "$watcher" 2>/dev/null
-  wait "$watcher" 2>/dev/null
-}
-
-score_arg=""
-[ -n "$min_score" ] && score_arg="--min-score $min_score"
-# shellcheck disable=SC2086
-out="$(run_with_timeout "$to" ling-mem search "$prompt" \
-    --limit "$limit" $score_arg \
-    --format json --quiet || true)"
+search_args="$(jq -nc --arg q "$prompt" --argjson l "$limit" '{query:$q, limit:$l}')"
+out="$(mcp_call memory_search "$search_args" "$to")"
 
 [ -z "$out" ] && exit 0
 
-hits="$(printf '%s' "$out" | jq -sr --arg proj "$proj" --argjson k "$topk" '
-  map(select(
-    ((.contexts // []) | map(select(startswith("project/"))))
-    | (length == 0 or any(. == ("project/" + $proj)))
-  ))
+hits="$(printf '%s' "$out" | jq -r --arg proj "$proj" --argjson k "$topk" --argjson min "$min_score" '
+  (if type == "array" then . else [] end)
+  | map(select((.hybrid_score // .score // 0) >= $min))
+  | map(select(
+      ((.contexts // []) | map(select(startswith("project/"))))
+      | (length == 0 or any(. == ("project/" + $proj)))
+    ))
   | .[:$k]
   | .[]
   | "From memory (\(.type), \(.host // "unknown"), \((.created_at // "")[0:10]), score=\((.hybrid_score // .score // 0) * 100 | floor / 100), id=\(.id)): \(.content)"
@@ -82,7 +71,7 @@ hit_count="$(printf '%s\n' "$hits" | grep -c .)"
 [ -n "$hits" ] && printf '%s\n' "$hits"
 
 # Memory-upkeep nudge — undreamed days + open review items, from ONE
-# `days` rollup call. Cached (default 30 min) so the recall path stays
+# `memory_days` call. Cached (default 30 min) so the recall path stays
 # fast; upkeep state moves slowly. Thresholds: ≥2 undreamed days (the
 # engine's own 3am cron usually covers yesterday; nagging about one day
 # is noise) and ≥1 open review item.
@@ -92,7 +81,7 @@ upkeep=""
 if [ -f "$upkeep_cache" ] && [ -n "$(find "$upkeep_cache" -mmin "-$upkeep_ttl_min" 2>/dev/null)" ]; then
   upkeep="$(cat "$upkeep_cache" 2>/dev/null || true)"
 else
-  days_out="$(run_with_timeout "$to" ling-mem days --undreamed --format json --quiet || true)"
+  days_out="$(mcp_call memory_days '{"undreamed_only":true}' "$to")"
   if [ -n "$days_out" ]; then
     upkeep="$(printf '%s' "$days_out" | jq -r '
       (.days // [] | length) as $p |
@@ -122,8 +111,6 @@ fi
 
 if [ "$hit_count" -ge 1 ]; then
   # Mirrors linggen/src/engine/prompt/core_block.rs:RECONCILE_FOOTER.
-  # Adapted to the ling-mem MCP verbs (memory_add / memory_delete;
-  # replace_ids is in the MCP memory_add schema — one atomic call).
   # Fires on ANY hit: a single recalled row can still conflict with the
   # user's current turn, and the daemon's user-voice guard needs the
   # resolved write to carry user_directed:true.

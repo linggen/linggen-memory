@@ -3,6 +3,10 @@
     "linggen": {
       "type": "http",
       "url": "http://${LINGGEN_HOST:-127.0.0.1}:${LINGGEN_PORT:-9527}/mcp"
+    },
+    "ling-mem": {
+      "type": "http",
+      "url": "http://${LING_MEM_HOST:-127.0.0.1}:${LING_MEM_PORT:-9528}/mcp"
     }
   }
 }

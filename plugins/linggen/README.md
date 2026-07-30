@@ -22,9 +22,20 @@ session context; log at `~/.linggen/engine-install.log`). Set
 `LINGGEN_NO_ENGINE_INSTALL=1` to opt out of the engine download and
 install it yourself: `curl -fsSL https://linggen.dev/install.sh | bash`.
 
-Session start connects the `linggen` MCP server
-(`http://127.0.0.1:9527/mcp`), boots both daemons, and injects your
-core memory (identity, standing preferences) into context.
+Session start connects **two** MCP servers — `linggen`
+(`http://127.0.0.1:9527/mcp`: browser, x, agents) and `ling-mem`
+(`http://127.0.0.1:9528/mcp`: memory) — boots both daemons, and injects
+your core memory (identity, standing preferences) into context.
+
+Each tool is served in exactly one place. Memory comes from the memory
+daemon, so a machine that only wants memory needs only that one; the
+engine no longer proxies `memory_*`.
+
+**A second machine on your LAN** can share the same memory without
+installing anything: point `LING_MEM_HOST` at the machine that holds the
+store, pair it once through Linggen, and set `LING_MEM_TOKEN` to the
+device token. The hooks and the MCP entry follow those two variables, and
+nothing is installed locally — one store, not two.
 
 ## What you get
 
