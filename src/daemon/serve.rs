@@ -3,6 +3,10 @@
 //!
 //! `ling-mem serve` re-exec target — also what `start` spawns in the
 //! background. Blocks until SIGTERM / SIGINT.
+//!
+//! Binds **loopback** unless `--host` says otherwise, and refuses a wider bind
+//! on a machine with no paired devices — see `http::gate` for both halves of
+//! that rule and why the second machine on the LAN is the case it exists for.
 
 use crate::daemon::pidfile::{self, PidInfo};
 use crate::embed::Embedder;
@@ -11,7 +15,7 @@ use crate::http;
 use crate::http::state::AppState;
 use anyhow::{Context, Result};
 use chrono::Utc;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, SocketAddr};
 use std::path::Path;
 use std::sync::Arc;
 use tokio::net::TcpListener;
@@ -21,8 +25,10 @@ use tokio::net::TcpListener;
 /// `data_dir` is the Linggen home (e.g. `~/.linggen/`); MemoryStore opens
 /// its LanceDB tree underneath at `<data_dir>/memory/memory.lancedb/`.
 /// `skill_dir` is the per-skill data root at `<data_dir>/memory/linggen-memory/`
-/// where the pidfile lives. `port` is the requested bind port on `127.0.0.1`.
-pub async fn run(data_dir: &Path, skill_dir: &Path, port: u16) -> Result<()> {
+/// where the pidfile lives. `port` and `host` are the requested bind address;
+/// `host` defaults to loopback at the CLI, and anything wider is refused unless
+/// this machine has paired devices.
+pub async fn run(data_dir: &Path, skill_dir: &Path, port: u16, host: IpAddr) -> Result<()> {
     // The daemon is the only path that emits logs (the CLI stays quiet by
     // design). `start` redirects this process's stderr into serve.log; the
     // subscriber is what makes `tracing::*` actually write there. `try_init`
@@ -50,7 +56,11 @@ pub async fn run(data_dir: &Path, skill_dir: &Path, port: u16) -> Result<()> {
         pidfile::remove(skill_dir);
     }
 
-    let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
+    // Checked before the listener exists: a refusal must be a daemon that
+    // doesn't start, never a port that is briefly open and unguarded.
+    crate::http::gate::check_bind(host, data_dir)?;
+
+    let addr = SocketAddr::new(host, port);
     let listener = TcpListener::bind(addr)
         .await
         .with_context(|| format!("binding {addr}"))?;
@@ -105,10 +115,16 @@ pub async fn run(data_dir: &Path, skill_dir: &Path, port: u16) -> Result<()> {
     });
 
     let router = http::build_router(state, telemetry);
-    let result = axum::serve(listener, router)
-        .with_graceful_shutdown(shutdown_signal())
-        .await
-        .context("http server");
+    // Connect info, because the gate's first question is where the caller is:
+    // loopback is inside the fence, anything else must present a paired
+    // device's token.
+    let result = axum::serve(
+        listener,
+        router.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await
+    .context("http server");
 
     pidfile::remove(skill_dir);
     tracing::info!("ling-mem daemon stopped");

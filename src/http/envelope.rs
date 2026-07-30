@@ -22,6 +22,7 @@ pub fn ok<T: Serialize>(data: T) -> Response {
 pub enum ErrorCode {
     BadRequest,
     NotFound,
+    Unauthorized,
     Internal,
 }
 
@@ -30,6 +31,7 @@ impl ErrorCode {
         match self {
             ErrorCode::BadRequest => StatusCode::BAD_REQUEST,
             ErrorCode::NotFound => StatusCode::NOT_FOUND,
+            ErrorCode::Unauthorized => StatusCode::UNAUTHORIZED,
             ErrorCode::Internal => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -38,6 +40,7 @@ impl ErrorCode {
         match self {
             ErrorCode::BadRequest => "BAD_REQUEST",
             ErrorCode::NotFound => "NOT_FOUND",
+            ErrorCode::Unauthorized => "UNAUTHORIZED",
             ErrorCode::Internal => "INTERNAL",
         }
     }
@@ -62,6 +65,16 @@ impl ApiError {
     pub fn not_found(msg: impl Into<String>) -> Self {
         Self {
             code: ErrorCode::NotFound,
+            message: msg.into(),
+        }
+    }
+
+    /// The LAN gate's refusal — a caller off this machine without a paired
+    /// device token. Distinct from `bad_request` so a client can tell "you may
+    /// not" from "you asked wrong".
+    pub fn unauthorized(msg: impl Into<String>) -> Self {
+        Self {
+            code: ErrorCode::Unauthorized,
             message: msg.into(),
         }
     }

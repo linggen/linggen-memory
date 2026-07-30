@@ -88,7 +88,12 @@ impl LifecycleOutcome {
 /// test or custom `--data-dir` invocation would spawn a child that wrote
 /// its pidfile to `~/.linggen/memory/...` while the parent polled the
 /// override path and timed out.
-pub async fn start(data_dir: &Path, skill_dir: &Path, port: u16) -> Result<LifecycleOutcome> {
+pub async fn start(
+    data_dir: &Path,
+    skill_dir: &Path,
+    port: u16,
+    host: std::net::IpAddr,
+) -> Result<LifecycleOutcome> {
     if let Some(info) = live_pidfile(skill_dir)? {
         return Ok(LifecycleOutcome::AlreadyRunning(info));
     }
@@ -118,6 +123,11 @@ pub async fn start(data_dir: &Path, skill_dir: &Path, port: u16) -> Result<Lifec
     cmd.arg("serve")
         .arg("--port")
         .arg(port.to_string())
+        // Passed through rather than defaulted in the child: the flag the user
+        // typed is the one that binds, and a wide bind the child refuses shows
+        // up here as "exited before binding" with the reason in serve.log.
+        .arg("--host")
+        .arg(host.to_string())
         .env("LINGGEN_DATA_DIR", data_dir)
         .stdin(Stdio::null())
         .stdout(Stdio::from(log_file))
@@ -180,9 +190,14 @@ pub async fn stop(skill_dir: &Path) -> Result<LifecycleOutcome> {
 }
 
 /// `stop` then `start`. No-op stop when already down.
-pub async fn restart(data_dir: &Path, skill_dir: &Path, port: u16) -> Result<LifecycleOutcome> {
+pub async fn restart(
+    data_dir: &Path,
+    skill_dir: &Path,
+    port: u16,
+    host: std::net::IpAddr,
+) -> Result<LifecycleOutcome> {
     let _ = stop(skill_dir).await?;
-    start(data_dir, skill_dir, port).await
+    start(data_dir, skill_dir, port, host).await
 }
 
 /// Pure inspection — does not spawn or signal anything.

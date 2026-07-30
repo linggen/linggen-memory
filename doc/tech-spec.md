@@ -245,16 +245,27 @@ Pinned in `Cargo.toml`:
 
 Release profile: `strip = true`, `lto = "thin"`, `codegen-units = 1`.
 
+## Network exposure
+
+The daemon binds **loopback** and nothing else. That is the whole story for the ordinary user: one machine, memory for that machine's agents, no port on the network and nothing to configure.
+
+`--host` widens it, for the one case that is real — a second machine on the LAN whose agents should share ONE memory rather than growing their own binary, daemon, and store, which forks the user's biography. Two rules make that safe, and the second is why the first exists:
+
+1. **A wide bind is refused unless this machine has paired devices** (`<data_dir>/paired-devices.json` exists). Opening a port before there is anything to check a caller against is an open store; the daemon fails to start instead, saying so.
+2. **A non-loopback request must carry a paired device's token** in `x-linggen-device`. Loopback passes straight through — the CLI, the Linggen engine, and the local app all talk to `127.0.0.1`, and a process already on this machine is inside the fence. `/api/health` stays open either way: it is a liveness probe carrying a version and nothing about the user.
+
+**The auth is not new.** Both daemons live under the same `~/.linggen`, so this reads the very file Linggen's pairing flow writes — pair once, on the Mac's screen, and both daemons accept that device. Nothing here mints a token; `src/http/gate.rs` only ever reads.
+
 ## Skill integration
 
 The **linggen-memory skill** is a thin wrapper in the main Linggen repo's skills tree. Its responsibilities:
 
 - `SKILL.md` frontmatter: `provides: [memory]`, `app:` launcher pointing at the daemon's bound port (`http://127.0.0.1:<port>/`), `install: install.sh`, `daemon: { subdir: linggen-memory, port: 9528, healthcheck: /api/health }`.
-- Web UI: **served by the daemon itself**. Static HTML/JS/CSS live under `static/` in this repo and are embedded into the binary via `rust-embed`. The skill wrapper does not ship any UI assets — Linggen just opens the daemon URL in an iframe. Calls from the page go to `/api/memory/*` on the same origin; Linggen's `Memory_*` tool dispatch is an alternate entry point that hits the same endpoints.
+- Web UI: **served by the daemon itself**. Static HTML/JS/CSS live under `static/` in this repo and are embedded into the binary via `rust-embed`. The skill wrapper does not ship any UI assets — Linggen just opens the daemon URL in an iframe. Calls from the page go to `/api/memory/*` on the same origin; Linggen's agents reach the same endpoints through this daemon's `/mcp` surface.
 - `install.sh`: detect platform via `uname`, download matching release binary from GitHub Releases, extract to the skill's `bin/` directory.
 - No scripts beyond install — the binary handles everything else.
 
-For Claude Code compatibility, the SKILL.md body documents the CLI so a model invoking the skill via Bash can use it directly (the `Memory_*` tool namespace is a Linggen-only convenience). A CC user gets the same Data Browser at the same URL — all they need is to run `ling-mem serve`.
+For Claude Code compatibility, the SKILL.md body documents the CLI so a model invoking the skill via Bash can use it directly (the `memory_*` MCP tools are the same operations by another door). A CC user gets the same Data Browser at the same URL — all they need is to run `ling-mem serve`.
 
 ## Release process
 

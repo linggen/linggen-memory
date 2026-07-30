@@ -170,6 +170,12 @@ pub enum Command {
     Start {
         #[arg(long, default_value_t = crate::daemon::DEFAULT_PORT)]
         port: u16,
+        /// Bind address. Loopback by default — the ordinary case is this
+        /// machine's own agents. Widen it (e.g. `0.0.0.0`) only to share ONE
+        /// store with a second machine on the LAN, which requires a paired
+        /// device or the daemon refuses to start.
+        #[arg(long, default_value = "127.0.0.1")]
+        host: std::net::IpAddr,
         /// Block in the current process instead of forking. Use this
         /// when something else (launchd, systemd, docker, the user's
         /// terminal) is the supervising parent.
@@ -184,6 +190,12 @@ pub enum Command {
     Serve {
         #[arg(long, default_value_t = crate::daemon::DEFAULT_PORT)]
         port: u16,
+        /// Bind address. Loopback by default — the ordinary case is this
+        /// machine's own agents. Widen it (e.g. `0.0.0.0`) only to share ONE
+        /// store with a second machine on the LAN, which requires a paired
+        /// device or the daemon refuses to start.
+        #[arg(long, default_value = "127.0.0.1")]
+        host: std::net::IpAddr,
     },
 
     /// SIGTERM the running daemon and wait for it to exit. Hidden —
@@ -197,6 +209,12 @@ pub enum Command {
     Restart {
         #[arg(long, default_value_t = crate::daemon::DEFAULT_PORT)]
         port: u16,
+        /// Bind address. Loopback by default — the ordinary case is this
+        /// machine's own agents. Widen it (e.g. `0.0.0.0`) only to share ONE
+        /// store with a second machine on the LAN, which requires a paired
+        /// device or the daemon refuses to start.
+        #[arg(long, default_value = "127.0.0.1")]
+        host: std::net::IpAddr,
     },
 
     /// Report daemon state: pidfile, liveness, health probe. Also surfaces
@@ -746,14 +764,15 @@ pub async fn run(cli: Cli) -> Result<()> {
         // it, forks to background and waits for the port to bind. The
         // hidden `serve` alias maps to `start --foreground` so existing
         // launchd/systemd configs keep working.
-        Command::Serve { port } => {
-            return crate::daemon::serve::run(&data_dir, &skill_dir, port).await
+        Command::Serve { port, host } => {
+            return crate::daemon::serve::run(&data_dir, &skill_dir, port, host).await
         }
-        Command::Start { port, foreground } => {
+        Command::Start { port, host, foreground } => {
             if foreground {
-                return crate::daemon::serve::run(&data_dir, &skill_dir, port).await;
+                return crate::daemon::serve::run(&data_dir, &skill_dir, port, host).await;
             }
-            let outcome = crate::daemon::lifecycle::start(&data_dir, &skill_dir, port).await?;
+            let outcome =
+                crate::daemon::lifecycle::start(&data_dir, &skill_dir, port, host).await?;
             let update = crate::update::check_quiet(&data_dir).await;
             return emit_lifecycle_with_update(&outcome, Some(&update));
         }
@@ -761,9 +780,9 @@ pub async fn run(cli: Cli) -> Result<()> {
             let outcome = crate::daemon::lifecycle::stop(&skill_dir).await?;
             return emit_lifecycle(&outcome);
         }
-        Command::Restart { port } => {
+        Command::Restart { port, host } => {
             let outcome =
-                crate::daemon::lifecycle::restart(&data_dir, &skill_dir, port).await?;
+                crate::daemon::lifecycle::restart(&data_dir, &skill_dir, port, host).await?;
             let update = crate::update::check_quiet(&data_dir).await;
             return emit_lifecycle_with_update(&outcome, Some(&update));
         }
