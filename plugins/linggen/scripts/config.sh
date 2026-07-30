@@ -85,22 +85,29 @@ fi
 # real, so ask it.
 
 probe() { # $1 base url, $2 token — prints a one-line verdict
-    local base="$1" tok="${2:-}" auth=() body code
+    local base="$1" tok="${2:-}" auth=() ver code tools
     [ -n "$tok" ] && auth=(-H "x-linggen-device: $tok")
-    body="$(curl -fsS --max-time 4 --connect-timeout 2 \
-        ${auth[@]+"${auth[@]}"} "$base/api/health" 2>/dev/null)" || {
-        code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 4 --connect-timeout 2 \
-            ${auth[@]+"${auth[@]}"} "$base/api/health" 2>/dev/null)"
-        case "$code" in
-            401) printf 'refused — needs a paired device token (--token)' ;;
-            000) printf 'no answer' ;;
-            *)   printf 'HTTP %s' "$code" ;;
-        esac
-        return 1
-    }
-    printf 'ok%s' "$(printf '%s' "$body" | jq -r '
-        (.version // .data.version // empty) | if . == "" then "" else " · \(.)" end
-    ' 2>/dev/null)"
+
+    # Ask `/mcp` for its tool list, NOT `/api/health`. Health is deliberately
+    # open so a probe works before pairing — which means it answers "ok" for a
+    # daemon this host cannot actually use, and the user would find out later
+    # as silently empty recall. `tools/list` goes through the same gate the
+    # real calls do, so this verdict is the one that matters.
+    tools="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 --connect-timeout 2 \
+        -H 'Content-Type: application/json' ${auth[@]+"${auth[@]}"} \
+        -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' \
+        "$base/mcp" 2>/dev/null)"
+    case "$tools" in
+        200) ;;
+        401|403) printf 'reachable, but this host is not paired — pair on that machine, then --token <t>'; return 1 ;;
+        000) printf 'no answer'; return 1 ;;
+        *)   printf 'HTTP %s from /mcp' "$tools"; return 1 ;;
+    esac
+
+    # Reachable AND allowed. The version is a nicety, from the open probe.
+    ver="$(curl -fsS --max-time 4 --connect-timeout 2 ${auth[@]+"${auth[@]}"} \
+        "$base/api/health" 2>/dev/null | jq -r '.version // .data.version // empty' 2>/dev/null)"
+    printf 'ok%s' "$([ -n "$ver" ] && printf ' · %s' "$ver")"
 }
 
 if [ "$show_only" = 1 ]; then
