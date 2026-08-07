@@ -92,6 +92,19 @@ strip_noise() {
     # as the user speaking learns only what we already told ourselves.
     s{^(?:\[[a-z_]+\]:[ \t]*)?# AGENTS\.md instructions for .*?(?=\n\[(?:user|assistant|developer|system|tool)\]:|\z)}{}gsm;
     s{<INSTRUCTIONS>.*?(?:</INSTRUCTIONS>|(?=\n\[(?:user|assistant|developer|system|tool)\]:)|\z)}{}gs;
+    # The IDE wrapper (570 turns here) is NOT a turn to drop: the editor
+    # prepends active-file and open-tab metadata, and the real sentence sits
+    # underneath it after "My request for Codex:". Delete the scaffolding,
+    # keep what was written — dropping the turn would drop 570 real messages,
+    # which is the opposite of the job.
+    #
+    # Bounded so it cannot cross a speaker: truncation at 2000 chars regularly
+    # cuts the marker off, and an unbounded match then swallows everything up
+    # to the marker in the NEXT turn, eating the messages in between.
+    #
+    # NOTE: no apostrophes anywhere in this block — it lives inside a
+    # single-quoted shell string, and one closes it.
+    s{# Context from my IDE setup:(?:(?!\n\[(?:user|assistant|developer|system|tool)\]:).)*?## My request for Codex:[ \t]*\n?}{}gs;
     s{```[\s\S]*?```}{}g;
     # A speaker whose whole turn was boilerplate leaves an empty label behind.
     # Only when the turn is EMPTY all the way to the next speaker: plenty of
