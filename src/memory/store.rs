@@ -47,6 +47,15 @@ pub struct Filters {
     /// deep-links (`?session=<sid>`) to show only rows the agent wrote
     /// during one engine session.
     pub source_session: Option<String>,
+    /// Scope to the work this path belongs to: rows written under it, plus
+    /// every row that belongs to no project at all.
+    ///
+    /// Not an equality filter, for two reasons. Paths **nest** — a row from
+    /// `~/work/linggen/mobile` is part of the work at `~/work/linggen`, and a
+    /// tag could never say so — and rows with no `cwd` are the person, not the
+    /// project: identity, preferences, cross-project gotchas. Scoping those
+    /// away would be worse than not scoping at all.
+    pub cwd_scope: Option<String>,
 }
 
 impl Filters {
@@ -108,6 +117,16 @@ impl Filters {
 
         if let Some(sid) = &self.source_session {
             clauses.push(format!("source_session = '{}'", escape_sql(sid)));
+        }
+
+        // The path itself, anything nested under it, or nothing at all. The
+        // trailing separator on the LIKE keeps `…/linggen` from claiming
+        // `…/linggen-mobile`, which is a different project sharing a prefix.
+        if let Some(p) = &self.cwd_scope {
+            let p = escape_sql(p.trim_end_matches('/'));
+            clauses.push(format!(
+                "(cwd IS NULL OR cwd = '{p}' OR cwd LIKE '{p}/%')"
+            ));
         }
 
         if clauses.is_empty() {
@@ -1208,6 +1227,7 @@ mod tests {
             since: None,
             until: None,
             source_session: None,
+            cwd_scope: None,
         };
         let sql = f.to_sql().unwrap();
         assert!(sql.contains("array_has(contexts, 'code/linggen')"));
@@ -1220,6 +1240,35 @@ mod tests {
         // tier IS pushed down — not a SQL keyword, so the plain clause works.
         assert!(sql.contains("tier = 'core'"));
         assert!(sql.contains(" AND "));
+    }
+
+    #[tokio::test]
+    async fn cwd_scope_keeps_the_nested_and_the_unscoped() {
+        let f = Filters {
+            cwd_scope: Some("/Users/l/work/linggen".into()),
+            ..Default::default()
+        };
+        let sql = f.to_sql().unwrap();
+        // The project itself, and anything inside it.
+        assert!(sql.contains("cwd = '/Users/l/work/linggen'"), "{sql}");
+        assert!(sql.contains("cwd LIKE '/Users/l/work/linggen/%'"), "{sql}");
+        // And the rows that belong to no project — who the user is, not what
+        // they were working on. Scoping those away is worse than not scoping.
+        assert!(sql.contains("cwd IS NULL"), "{sql}");
+        // A sibling sharing the prefix is a DIFFERENT project: the trailing
+        // separator is what keeps `linggen-mobile` out of `linggen`.
+        assert!(!sql.contains("LIKE '/Users/l/work/linggen%'"), "{sql}");
+    }
+
+    #[tokio::test]
+    async fn cwd_scope_ignores_a_trailing_slash() {
+        let f = Filters {
+            cwd_scope: Some("/Users/l/work/linggen/".into()),
+            ..Default::default()
+        };
+        let sql = f.to_sql().unwrap();
+        assert!(sql.contains("cwd = '/Users/l/work/linggen'"), "{sql}");
+        assert!(sql.contains("cwd LIKE '/Users/l/work/linggen/%'"), "{sql}");
     }
 
     #[tokio::test]

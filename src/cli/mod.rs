@@ -431,6 +431,13 @@ pub struct FilterArgs {
     /// lists a single day's worklist with this. Explicit bounds win.
     #[arg(long, value_name = "YYYY-MM-DD")]
     pub day: Option<String>,
+
+    /// Scope to the work at this path: rows written under it, plus every
+    /// row that belongs to no project. Paths nest, so a parent directory
+    /// covers the repos inside it. `forget` ignores this on its own — it
+    /// matches unscoped rows by design and would take most of the store.
+    #[arg(long = "cwd-scope", visible_alias = "project", value_name = "PATH")]
+    pub cwd_scope: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -713,6 +720,7 @@ impl FilterArgs {
             until,
             tier: self.tier.map(Into::into),
             source_session: None,
+            cwd_scope: self.cwd_scope,
         })
     }
 }
@@ -1535,6 +1543,7 @@ mod tests {
             until: None,
             older_than: None,
             day: None,
+            cwd_scope: None,
         };
         let filters = fa.into_filters().unwrap();
         assert_eq!(filters.contexts, vec!["code/linggen".to_string()]);

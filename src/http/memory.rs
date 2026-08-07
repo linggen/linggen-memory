@@ -275,6 +275,14 @@ pub struct FilterDTO {
     /// wrote during one engine session.
     #[serde(default)]
     pub source_session: Option<String>,
+    /// Scope recall to the work being done at this path — rows written under
+    /// it, plus every row that belongs to no project (see `Filters::cwd_scope`).
+    ///
+    /// Deliberately NOT accepted by `forget` as a standalone filter: it matches
+    /// every unscoped row by design, so a delete carrying only this would take
+    /// most of the store. The empty-filter guard below does not list it.
+    #[serde(default)]
+    pub cwd_scope: Option<String>,
     /// `true` = apply the daemon's configured `episodic_ttl_days` as an
     /// upper bound on `occurred_at` (i.e. "rows that are past their
     /// TTL"). Resolved at handler entry and folded into `until`. The
@@ -323,6 +331,7 @@ impl FilterDTO {
             until: self.until,
             tier: self.tier,
             source_session: self.source_session,
+            cwd_scope: self.cwd_scope,
         })
     }
 }

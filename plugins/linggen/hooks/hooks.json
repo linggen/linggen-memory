@@ -5,6 +5,12 @@
     ],
     "UserPromptSubmit": [
       { "hooks": [{ "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/recall.sh" }] }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "mcp__.*__memory_(add|search)",
+        "hooks": [{ "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/stamp-cwd.sh" }]
+      }
     ]
   }
 }

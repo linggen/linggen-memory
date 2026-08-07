@@ -45,23 +45,28 @@ min_score="${LING_MEM_RECALL_MIN_SCORE:-0}"
 # shellcheck source=./mcp.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/mcp.sh" 2>/dev/null || exit 0
 
-proj=""
-if [ -n "$cwd" ] && [ "$cwd" != "$HOME" ]; then
-  proj="$(basename "$cwd")"
-fi
-
-search_args="$(jq -nc --arg q "$prompt" --argjson l "$limit" '{query:$q, limit:$l}')"
+# Scope the search to the work being done here — rows written under this
+# path, plus every row that belongs to no project (identity, preferences,
+# cross-project gotchas). Sent to the daemon rather than applied to its
+# answer: the scope has to shape the ranking, because a filter applied
+# afterwards can only shrink a list that was already the wrong N. This
+# replaces a client-side `project/<name>` context filter that matched 17 rows
+# out of 1142 and therefore passed everything through the "untagged is
+# global" branch — a filter reading a namespace nothing wrote.
+#
+# `$HOME` is not a project: a session started there means "no particular
+# work", and scoping to it would claim every repo underneath.
+search_args="$(jq -nc --arg q "$prompt" --argjson l "$limit" --arg c "$cwd" --arg home "$HOME" '
+  {query:$q, limit:$l}
+  + (if ($c | length) > 0 and $c != $home then {cwd_scope: $c} else {} end)
+')"
 out="$(mcp_call memory_search "$search_args" "$to")"
 
 [ -z "$out" ] && exit 0
 
-hits="$(printf '%s' "$out" | jq -r --arg proj "$proj" --argjson k "$topk" --argjson min "$min_score" '
+hits="$(printf '%s' "$out" | jq -r --argjson k "$topk" --argjson min "$min_score" '
   (if type == "array" then . else [] end)
   | map(select((.hybrid_score // .score // 0) >= $min))
-  | map(select(
-      ((.contexts // []) | map(select(startswith("project/"))))
-      | (length == 0 or any(. == ("project/" + $proj)))
-    ))
   | .[:$k]
   | .[]
   | "From memory (\(.type), \(.host // "unknown"), \((.created_at // "")[0:10]), score=\((.hybrid_score // .score // 0) * 100 | floor / 100), id=\(.id)): \(.content)"

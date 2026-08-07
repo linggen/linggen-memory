@@ -167,6 +167,7 @@ fn tool_defs() -> Vec<Value> {
                     "query":    {"type": "string", "description": "Natural-language description of what to find."},
                     "contexts": {"type": "array", "items": {"type": "string"}, "description": "Filter to these scope tags (AND). Omit to search globally."},
                     "tier":     {"type": "string", "enum": ["core", "semantic", "episodic"], "description": "Restrict to one tier. Omit to span all."},
+                    "cwd_scope": {"type": "string", "description": "HOST-FILLED — leave it out. Absolute path scoping the search to the work being done there: rows written under it, plus every row that belongs to no project (identity, preferences, cross-project gotchas). Applied before ranking, so unrelated projects cannot crowd out the rows you want."},
                     "limit":    {"type": "integer", "description": "Max rows. Default 10."}
                 },
                 "required": ["query"]
@@ -214,8 +215,9 @@ fn tool_defs() -> Vec<Value> {
                     "type":     {"type": "string", "enum": ["fact", "preference", "decision", "tried", "fixed", "learned", "built"]},
                     "tier":     {"type": "string", "enum": ["core", "semantic", "episodic"], "description": "Destination tier. `episodic` = per-turn working capture (fast, append-only, no search-first; the dream pass remembers each day and the sweep forgets judged rows past TTL) — the default lane for uncertain-durability signal. `semantic` = curated durable facts (search-first). `core` = tiny always-injected universals about the person (search-first)."},
                     "contexts": {"type": "array", "items": {"type": "string"}},
-                    "host":     {"type": "string", "description": "Identify the calling host (e.g. claude-code, codex, cursor). Stamped on the row for cross-host attribution. Optional."},
-                    "source_session": {"type": "string", "description": "Session id that authored this content — pass your host session id on live captures (the recall hook prints it each turn). Makes scan's skip-by-session idempotency real: scanned sessions that already contributed rows are skipped."},
+                    "host":     {"type": "string", "description": "HOST-FILLED — leave it out. Which tool runtime committed the row (claude-code, codex, linggen). The host stamps it from what it already knows; a model guessing at it is how rows end up labelled with an IP address."},
+                    "source_session": {"type": "string", "description": "HOST-FILLED — leave it out. Session id that authored this content. The host stamps it; it exists as a parameter only so a promote pass can carry the ORIGINAL row's session forward, which is the one case the caller knows better."},
+                    "cwd":      {"type": "string", "description": "HOST-FILLED — leave it out. Absolute working directory the write came from; it is what scopes recall to the project you are in. The host stamps it from the session's own cwd, which it knows and you do not."},
                     "replace_ids": {"type": "array", "items": {"type": "string"}, "description": "Row ids this new row replaces — the daemon inserts the row and deletes every listed loser atomically. Use for merges of your own derived notes and for AskUser-resolved conflicts; never separate add + delete calls."},
                     "user_directed": {"type": "boolean", "description": "Assert the user directed this change: their CURRENT message states it as SETTLED (a command \"update X to Y\", a declaration \"my X is now Y\", a commitment \"from now on, X\"), or they just answered your ask. Required when replace_ids targets from=user rows — the daemon BLOCKS such writes otherwise. A hedged reflection (\"X feels about right to me\") does NOT qualify: ask first. Never assert from your own inference."}
                 },
