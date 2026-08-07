@@ -78,8 +78,13 @@ never write them.
 
 Backfill staging, always user-triggered, idempotent:
 
-1. Run `Bash bash ~/.linggen/skills/linggen/scripts/scan.sh <date>`
-   (zero-LLM session walk → `.scan-output.jsonl`).
+1. Run `Bash bash <skill-dir>/scripts/scan.sh <date>` (zero-LLM session
+   walk → `.scan-output.jsonl`). `<skill-dir>` is this skill's own
+   directory — the one holding this `references/`, resolved per
+   SKILL.md (the plugin cache on Claude Code,
+   `${PLUGIN_ROOT}/skills/linggen/` on Codex). Never hard-code an
+   absolute path: the skill is not installed under `~/.linggen/skills`
+   on these hosts.
 2. **Skip covered sessions.** `list` the day's existing rows
    (`tier=episodic` + that `day`, and note promoted twins may live in
    semantic) and collect their `source_session` ids. Drop every
