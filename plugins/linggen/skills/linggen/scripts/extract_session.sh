@@ -65,10 +65,39 @@ DAY_END=$((DAY_START + 86400))
 #   - <command-message>...</command-message>  — CC slash-command args
 #   - ``` fenced code blocks                  — mockups, file contents, ascii art
 strip_noise() {
+  # Harness-injected blocks the host wraps around a conversation: sandbox
+  # rules, the environment dump, AGENTS.md / skills / plugins preambles. They
+  # are identical in every session, say nothing about the person, and on a
+  # Codex rollout they are HALF the extracted transcript — 2014 bytes of 3954
+  # in a measured one — so every judging pass pays for them and reads them as
+  # if they were something the user said.
+  #
+  # Matched to the closing tag when there is one, and otherwise to the next
+  # speaker or end of input: each message is truncated at 2000 chars upstream,
+  # which routinely cuts a 22 KB preamble in half and leaves its closer behind.
+  #
+  # `<environment_context>` carries the cwd on older rollouts, so
+  # `emit_cwd_header_codex` reads it BEFORE this runs.
   perl -0777 -pe '
     s{<system-reminder>.*?</system-reminder>}{}gs;
     s{<command-(?:name|message|args)>.*?</command-(?:name|message|args)>}{}gs;
+    s{<(permissions\ instructions|environment_context|user_instructions
+        |plugins_instructions|skills_instructions|collaboration_mode)>
+      .*?
+      (?:</\1>|(?=\n\[(?:user|assistant|developer|system|tool)\]:)|\z)
+     }{}gsx;
+    # AGENTS.md, delivered as if the user had typed it — a whole turn, not a
+    # line, so the whole turn goes. Same repo file every session; the protocol
+    # it carries is instructions TO the agent, and a judging pass that reads it
+    # as the user speaking learns only what we already told ourselves.
+    s{^(?:\[[a-z_]+\]:[ \t]*)?# AGENTS\.md instructions for .*?(?=\n\[(?:user|assistant|developer|system|tool)\]:|\z)}{}gsm;
+    s{<INSTRUCTIONS>.*?(?:</INSTRUCTIONS>|(?=\n\[(?:user|assistant|developer|system|tool)\]:)|\z)}{}gs;
     s{```[\s\S]*?```}{}g;
+    # A speaker whose whole turn was boilerplate leaves an empty label behind.
+    # Only when the turn is EMPTY all the way to the next speaker: plenty of
+    # real messages simply open with a blank line, and dropping their label
+    # would hand the judging pass an unattributed wall of text.
+    s{^\[[a-z_]+\]:[ \t]*\n(?=[ \t\n]*(?:\[[a-z_]+\]:|\z))}{}gm;
     s{\n{3,}}{\n\n}g;
   '
 }
@@ -138,6 +167,15 @@ emit_cwd_header_codex() {
   local session_cwd
   session_cwd=$(jq -r 'select(.type == "session_meta") | .payload.cwd // empty' "$FILEPATH" 2>/dev/null \
     | head -1)
+  # Older flat rollouts carry no `session_meta` at all — their only record of
+  # where they ran is prose inside the harness's `<environment_context>` block.
+  # Read it before `strip_noise` removes that block, or the session becomes
+  # unattributable: cwd is what scopes a memory to its project, so losing it
+  # here is losing the row's place in the store.
+  if [ -z "$session_cwd" ]; then
+    session_cwd=$(jq -r 'select(.type == "message") | .content[]?.text // empty' "$FILEPATH" 2>/dev/null \
+      | sed -n 's/^Current working directory: *//p' | head -1)
+  fi
   if [ -n "$session_cwd" ]; then
     echo "[SESSION_CWD]: $session_cwd"
     echo ""
