@@ -802,10 +802,17 @@ input[type="text"]:disabled { opacity: 0.6; }
   align-items: start;
 }
 .row:hover { background: var(--panel-2); }
+/* Selection must not read as hover — it used to be the same `--panel-2` fill
+   plus a pale outline, so the row open in the detail pane was indistinguishable
+   from the row under the cursor. Hover tints the panel; selection carries the
+   accent. The ring sits OUTSIDE the border box so the left edge keeps saying
+   which type the row is (it fits: #list has 16px of horizontal padding). */
 .row.selected {
-  background: var(--panel-2);
-  outline: 1px solid var(--accent-soft);
-  outline-offset: -1px;
+  background: color-mix(in srgb, var(--accent-soft) 65%, var(--panel));
+  box-shadow: 0 0 0 2px var(--accent);
+}
+.row.selected:hover {
+  background: color-mix(in srgb, var(--accent-soft) 85%, var(--panel));
 }
 
 .row.t-fact       { border-left-color: var(--t-fact); }
