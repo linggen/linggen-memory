@@ -110,15 +110,29 @@ count_user_turns_cc() {
 }
 
 count_user_turns_codex() {
-  # Codex rollout: `type == "response_item"` with payload.role=="user" and a
-  # text content block; tool-result entries don't count.
-  jq -s '[.[] | select(.type == "response_item"
-                       and (.payload.role // "") == "user")
-              | .payload.content
-              | if type == "array"
-                then map(select((.type // "") == "input_text"
-                                 and (.text // "" | length > 0))) | length
-                else 0 end]
+  # Codex rollout, in EITHER of the two shapes the format has used:
+  #
+  #   newer  {"type":"response_item","payload":{"role":"user","content":[…]}}
+  #   older  {"type":"message","role":"user","content":[…]}          (flat)
+  #
+  # Only the wrapped shape was matched before, so every flat-format rollout
+  # counted zero and the scan skipped it — two files of 62 KB and 83 KB on this
+  # machine alone, holding 16 and 23 real user messages. A counter that reads a
+  # transcript as empty is indistinguishable from a transcript with nothing in
+  # it, which is why this failed silently for months.
+  #
+  # Both shapes carry the same `input_text` content blocks; tool-result entries
+  # have another type and still don't count.
+  jq -s '[.[]
+          | (if   .type == "response_item" then .payload
+             elif .type == "message"       then .
+             else empty end) as $m
+          | select(($m.role // "") == "user")
+          | $m.content
+          | if type == "array"
+            then map(select((.type // "") == "input_text"
+                             and (.text // "" | length > 0))) | length
+            else 0 end]
          | add // 0' "$1" 2>/dev/null || echo 0
 }
 

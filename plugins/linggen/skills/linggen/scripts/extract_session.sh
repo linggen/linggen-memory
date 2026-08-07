@@ -175,12 +175,30 @@ case "$SOURCE" in
     ;;
   Codex)
     emit_cwd_header_codex
-    # Codex stores user/assistant turns as `type == "response_item"` rows;
-    # `payload.role` carries the speaker, `payload.content` is an array of
-    # parts where `input_text` is user prose and `output_text` is the model's.
+    # Codex turns come in either of two shapes, and both must be read or the
+    # transcript comes back EMPTY for a whole session:
+    #
+    #   newer  {"type":"response_item","timestamp":…,"payload":{"role":…,"content":[…]}}
+    #   older  {"type":"message","role":…,"content":[…]}          (flat, NO timestamp)
+    #
+    # Only the wrapped shape was handled, so every flat rollout extracted to
+    # nothing while still looking like a healthy file — it passed the
+    # empty-session filter on bytes and then contributed no text at all. The two
+    # shapes never appear in one file, so reading both cannot double-count.
+    #
+    # `content` is an array of parts in both: `input_text` is the user's prose,
+    # `output_text` the model's.
+    #
+    # DATE GATE. A row that carries a timestamp must match the day asked for.
+    # A flat row carries none, and the day it belongs to is the file's own —
+    # which the caller already resolved before invoking us — so an unstamped
+    # row is taken as in-scope rather than silently dropped.
     jq -r --arg date "$TARGET_DATE" '
-      select(.type == "response_item" and ((.timestamp // "") | startswith($date)))
-      | .payload as $p
+      (if   .type == "response_item" then .payload
+       elif .type == "message"       then .
+       else empty end) as $p
+      | select(((.timestamp // "") == "")
+               or ((.timestamp // "") | startswith($date)))
       | ($p.role // "") as $role
       | ($p.content // []) as $content
       | ($content
