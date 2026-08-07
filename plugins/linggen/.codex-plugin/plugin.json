@@ -1,7 +1,7 @@
 {
   "name": "linggen",
-  "version": "1.7.2",
-  "description": "Linggen for Codex \u2014 two local MCP servers, each tool served in one place: durable cross-host memory from ling-mem, browser control and logged-in X reads from the Linggen engine. Installs its required binaries (ling-mem + the Linggen engine, background download) on first session start.",
+  "version": "1.7.3",
+  "description": "Linggen for Codex — two local MCP servers, each tool served in one place: durable cross-host memory from ling-mem, browser control and logged-in X reads from the Linggen engine. Installs its required binaries (ling-mem + the Linggen engine, background download) on first session start.",
   "author": {
     "name": "Linggen",
     "url": "https://linggen.dev"

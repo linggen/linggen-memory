@@ -1,7 +1,7 @@
 {
   "name": "linggen",
-  "version": "1.7.2",
-  "description": "Linggen for Claude Code \u2014 two local MCP servers, each tool served in one place: durable cross-host memory from ling-mem, browser control in your own Chrome and logged-in X reads from the Linggen engine. Per-turn memory recall built in, and /linggen:config points this host at a Linggen on another machine. Installs its required binaries (ling-mem + the Linggen engine, background download) on first session start.",
+  "version": "1.7.3",
+  "description": "Linggen for Claude Code — two local MCP servers, each tool served in one place: durable cross-host memory from ling-mem, browser control in your own Chrome and logged-in X reads from the Linggen engine. Per-turn memory recall built in, and /linggen:config points this host at a Linggen on another machine. Installs its required binaries (ling-mem + the Linggen engine, background download) on first session start.",
   "author": {
     "name": "Linggen"
   },
