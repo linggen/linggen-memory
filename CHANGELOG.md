@@ -21,6 +21,13 @@
 
 ### Fixed
 
+- **`occurred_at` was silently dropped by `/api/memory/update`** — the
+  store's patch always carried the field; only the endpoint's DTO never
+  asked, so a backdate "succeeded" while changing nothing. Now settable
+  (`occurred_at`) and clearable (`clear_occurred_at`), same three-state
+  shape as `cwd`/`host`. Third member of the silent-drop family after
+  `tier` and `cwd_scope` — a filter or field the shipper never
+  serializes fails as success.
 - **CLI `--cwd-scope` was silently dropped on the daemon path** — the
   shared filter serializer never learned the field (direct-store mode
   honoured it). Forwarded explicitly on `search`/`list` only; `forget`

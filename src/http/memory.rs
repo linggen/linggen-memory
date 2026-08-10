@@ -10,10 +10,9 @@
 use super::envelope::{ok, ApiError};
 use super::state::SharedState;
 use crate::memory::{
-    Memory, MemoryPatch, MemoryStore, MemoryType, Filters, InsertOutcome, Origin, Outcome,
+    Filters, InsertOutcome, Memory, MemoryPatch, MemoryStore, MemoryType, Origin, Outcome,
     SortOrder, Tier,
 };
-use std::sync::Arc;
 use axum::extract::State;
 use axum::response::Response;
 use axum::routing::post;
@@ -22,6 +21,7 @@ use chrono::{DateTime, SubsecRound, Utc};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer};
 use serde_json::{json, Value};
+use std::sync::Arc;
 
 /// Deserialize an `Option<T>` where empty strings, `null`, and missing
 /// keys all collapse to `None`. Wraps any string-or-enum field that LLMs
@@ -160,7 +160,11 @@ pub struct AddRequest {
     pub r#type: Option<MemoryType>,
     /// Origin. Canonical name is `from` (matches the `Memory` field);
     /// accept `origin` as an alias for callers that avoid reserved words.
-    #[serde(default, alias = "origin", deserialize_with = "deserialize_optional_lenient")]
+    #[serde(
+        default,
+        alias = "origin",
+        deserialize_with = "deserialize_optional_lenient"
+    )]
     pub from: Option<Origin>,
     #[serde(default, deserialize_with = "deserialize_optional_lenient")]
     pub outcome: Option<Outcome>,
@@ -255,7 +259,11 @@ pub struct FilterDTO {
     /// don't carry a meaningful tier.
     #[serde(default, deserialize_with = "deserialize_optional_lenient")]
     pub tier: Option<Tier>,
-    #[serde(default, alias = "origin", deserialize_with = "deserialize_optional_lenient")]
+    #[serde(
+        default,
+        alias = "origin",
+        deserialize_with = "deserialize_optional_lenient"
+    )]
     pub from: Option<Origin>,
     #[serde(default, deserialize_with = "deserialize_optional_lenient")]
     pub outcome: Option<Outcome>,
@@ -446,7 +454,11 @@ pub struct UpdateRequest {
     pub r#type: Option<MemoryType>,
     #[serde(default, deserialize_with = "deserialize_optional_lenient")]
     pub tier: Option<Tier>,
-    #[serde(default, alias = "origin", deserialize_with = "deserialize_optional_lenient")]
+    #[serde(
+        default,
+        alias = "origin",
+        deserialize_with = "deserialize_optional_lenient"
+    )]
     pub from: Option<Origin>,
     #[serde(default, deserialize_with = "deserialize_optional_lenient")]
     pub outcome: Option<Outcome>,
@@ -458,6 +470,14 @@ pub struct UpdateRequest {
     pub host: Option<String>,
     #[serde(default)]
     pub clear_host: bool,
+    /// When the remembered thing happened (recall sorts by it). Was silently
+    /// dropped for the endpoint's whole life — the store's patch always
+    /// carried it, only this DTO never asked — which is how a backdate
+    /// "succeeded" while changing nothing.
+    #[serde(default, deserialize_with = "deserialize_optional_datetime")]
+    pub occurred_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub clear_occurred_at: bool,
     /// `Some(true)` = episodic only, `Some(false)` = semantic only,
     /// **`None` (default) = locate the id in whichever table holds it**
     /// before applying the patch.
@@ -871,7 +891,11 @@ async fn search(
     // server-owns-it pattern as `episodic_ttl_days`.)
     let min_score = match req.min_score {
         Some(s) => Some(s),
-        None => Some(crate::http::config::load(&state.data_dir).await.recall_min_score),
+        None => Some(
+            crate::http::config::load(&state.data_dir)
+                .await
+                .recall_min_score,
+        ),
     };
 
     // Hybrid retrieval: each row scored as cosine + an IDF-weighted keyword
@@ -917,8 +941,7 @@ async fn list(
     // best); we only fill in when nothing is set.
     if req.filters.past_ttl && req.filters.until.is_none() {
         let cfg = crate::http::config::load(&state.data_dir).await;
-        let cutoff = chrono::Utc::now()
-            - chrono::Duration::days(cfg.episodic_ttl_days as i64);
+        let cutoff = chrono::Utc::now() - chrono::Duration::days(cfg.episodic_ttl_days as i64);
         req.filters.until = Some(cutoff);
     }
     // `past_ttl` is an episodic-TTL concept and the tool schema promises
@@ -940,7 +963,11 @@ async fn list(
         combined.extend(rows);
     }
     sort_combined(&mut combined, sort);
-    let paged: Vec<_> = combined.into_iter().skip(req.offset).take(req.limit).collect();
+    let paged: Vec<_> = combined
+        .into_iter()
+        .skip(req.offset)
+        .take(req.limit)
+        .collect();
     Ok(ok(facts_public(&paged)))
 }
 
@@ -1022,6 +1049,11 @@ async fn update(
         (None, true) => Some(None),
         (None, false) => None,
     };
+    let occurred_patch = match (req.occurred_at, req.clear_occurred_at) {
+        (Some(v), _) => Some(Some(v)),
+        (None, true) => Some(None),
+        (None, false) => None,
+    };
 
     let patch = MemoryPatch {
         content: req.content,
@@ -1033,6 +1065,7 @@ async fn update(
         outcome: outcome_patch,
         cwd: cwd_patch,
         host: host_patch,
+        occurred_at: occurred_patch,
         ..Default::default()
     };
 
