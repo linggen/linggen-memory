@@ -119,7 +119,10 @@ Backfill staging, always user-triggered, idempotent:
      preference, decision-with-reasoning, re-hit gotcha, state change
      like a shipped milestone, run learning): `add` with the row's
      content **verbatim**, its `type`/`from`/`contexts`, `occurred_at`
-     carried forward (else `created_at`), `source_session` if present.
+     carried forward (else `created_at`), `source_session` if present,
+     `cwd` if present. `cwd` is WHERE the memory came from — carrying
+     it is what keeps the promoted row findable from that project; a
+     row with no `cwd` gets none, never this session's own directory.
      Never pass `id`. Omit tier (defaults semantic); `tier=core` only
      for a narrow universal about the person. Search-first: a quick
      semantic `search` on the gist — but a hit with `tier=episodic`

@@ -241,6 +241,7 @@ pub(crate) async fn get(base: &str, id: &str, format: OutputFormat) -> Result<()
 
 pub(crate) async fn search(base: &str, args: SearchArgs, format: OutputFormat) -> Result<()> {
     let mut body = filter_body(&args.filters);
+    push_cwd_scope(&mut body, &args.filters);
     body["query"] = Value::String(args.query);
     body["limit"] = json!(args.limit);
     if let Some(s) = args.min_score {
@@ -261,6 +262,7 @@ pub(crate) async fn list(base: &str, args: ListArgs, format: OutputFormat) -> Re
     };
     body["limit"] = json!(args.limit);
     body["offset"] = json!(args.offset);
+    push_cwd_scope(&mut body, &args.filters);
     let data = post(base, "/api/memory/list", &body).await?;
     emit_fact_array(&data, format)
 }
@@ -698,6 +700,18 @@ fn build_add_body(
     body
 }
 
+/// Forward `--cwd-scope` on the wire. NOT part of [`filter_body`], which
+/// `forget` also uses: the scope matches every unscoped row by design, so a
+/// bulk delete must never inherit it — only the read verbs (search, list)
+/// ask for it explicitly. This was silently dropped on the daemon path for
+/// its first release (direct-store mode honoured it; `filter_body` didn't
+/// know the field) — the same shipper-omission that once ate `tier` below.
+fn push_cwd_scope(body: &mut Value, filters: &FilterArgs) {
+    if let Some(scope) = &filters.cwd_scope {
+        body["cwd_scope"] = Value::String(scope.clone());
+    }
+}
+
 fn filter_body(filters: &FilterArgs) -> Value {
     let mut body = json!({});
     if !filters.contexts.is_empty() {
@@ -883,5 +897,31 @@ fn cli_tier_str(t: crate::cli::CliTier) -> &'static str {
         crate::cli::CliTier::Core => "core",
         crate::cli::CliTier::Semantic => "semantic",
         crate::cli::CliTier::Episodic => "episodic",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cli::FilterArgs;
+
+    /// `--cwd-scope` reaches the wire on read verbs, and only through the
+    /// explicit push — `filter_body` itself stays scope-free so `forget`
+    /// (which shares it) can never inherit a filter that matches every
+    /// unscoped row.
+    #[test]
+    fn cwd_scope_is_pushed_explicitly_and_never_by_filter_body() {
+        let mut filters = FilterArgs::default();
+        filters.cwd_scope = Some("/home/u/work/repo".into());
+
+        let mut body = filter_body(&filters);
+        assert!(body.get("cwd_scope").is_none(), "filter_body must not carry it");
+
+        push_cwd_scope(&mut body, &filters);
+        assert_eq!(body["cwd_scope"], json!("/home/u/work/repo"));
+
+        let mut empty = filter_body(&FilterArgs::default());
+        push_cwd_scope(&mut empty, &FilterArgs::default());
+        assert!(empty.get("cwd_scope").is_none());
     }
 }

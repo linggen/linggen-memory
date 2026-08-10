@@ -350,6 +350,12 @@ pub(crate) fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
 /// contexts and tags; prefers the longer content (more signal). Scalar
 /// optional fields on the candidate overwrite the existing value only
 /// when the candidate actually carries a value — a `None` never clears.
+///
+/// `cwd` is the exception: it only fills an empty one, never overwrites.
+/// It records where the memory ORIGINATED, and origin stays with the
+/// existing row like `created_at` does — a fact re-said from another repo
+/// must not leave the first repo's scope, or the project that wrote it
+/// can no longer find it.
 fn merge_fact(existing: &Memory, candidate: &Memory) -> Memory {
     let mut merged = existing.clone();
 
@@ -372,7 +378,7 @@ fn merge_fact(existing: &Memory, candidate: &Memory) -> Memory {
     if candidate.outcome.is_some() {
         merged.outcome = candidate.outcome;
     }
-    if candidate.cwd.is_some() {
+    if merged.cwd.is_none() {
         merged.cwd = candidate.cwd.clone();
     }
     if candidate.occurred_at.is_some() {
@@ -1801,6 +1807,25 @@ mod tests {
             vec!["topic:setup".to_string(), "intent:learn".to_string()]
         );
         assert_eq!(store.count().await.unwrap(), 1);
+    }
+
+    /// A dedup merge must not move a row between projects: `cwd` records
+    /// where the memory originated, and a re-say from another repo taking
+    /// it over would hide the row from the project that wrote it. Empty
+    /// stays fillable — a scoped re-say upgrades an unscoped row.
+    #[test]
+    fn merge_keeps_the_existing_cwd_and_fills_an_empty_one() {
+        let mut existing = make_fact("same words", MemoryType::Fact);
+        existing.cwd = Some("/home/u/first-repo".into());
+        let mut candidate = make_fact("same words", MemoryType::Fact);
+        candidate.cwd = Some("/home/u/other-repo".into());
+        let merged = merge_fact(&existing, &candidate);
+        assert_eq!(merged.cwd.as_deref(), Some("/home/u/first-repo"));
+
+        let mut unscoped = make_fact("same words", MemoryType::Fact);
+        unscoped.cwd = None;
+        let merged = merge_fact(&unscoped, &candidate);
+        assert_eq!(merged.cwd.as_deref(), Some("/home/u/other-repo"));
     }
 
     #[tokio::test]

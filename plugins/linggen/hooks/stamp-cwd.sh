@@ -19,6 +19,14 @@
 # Rows with no `cwd` stay visible from everywhere by design: identity,
 # preferences and cross-project gotchas are about the person, not the project.
 #
+# CLAUDE CODE ONLY, and not by choice: Codex's hook runner fires PreToolUse
+# for shell tools only and REJECTS `updatedInput` (openai/codex#18491), so
+# there is no seam between the model and the daemon there. On Codex the
+# per-turn recall is still scoped — recall.sh sends `cwd_scope` itself — but
+# the model's own memory_add/memory_search calls go unstamped. When Codex
+# ships input rewrite, add the PreToolUse matcher to codex.hooks.json and
+# this script serves both hosts unchanged.
+#
 # Bails silently on anything unexpected — a memory write must never fail
 # because attribution could not be worked out.
 
@@ -31,6 +39,17 @@ input="$(cat)"
 tool="$(printf '%s' "$input" | jq -r '.tool_name // empty' 2>/dev/null || true)"
 cwd="$(printf '%s' "$input"  | jq -r '.cwd // empty'       2>/dev/null || true)"
 [ -n "$cwd" ] || exit 0
+
+# A cwd that is not a project must never become one. Stamping `$HOME` (a
+# session started nowhere in particular), the engine's own `~/.linggen`, or a
+# temp dir onto a write HIDES the row from every project search — a scope that
+# is not a project is worse than no scope. Same rule the read side applies in
+# recall.sh, and the same dirs the original backfill refused to stamp.
+tmp="${TMPDIR:-/tmp}"
+case "$cwd" in
+  "$HOME"|"$HOME/.linggen"|"$HOME/.linggen/"*) exit 0 ;;
+  "${tmp%/}"|"${tmp%/}/"*|/tmp|/tmp/*|/private/tmp|/private/tmp/*) exit 0 ;;
+esac
 
 # Which field this tool wants. A write records where it came from; a read asks
 # what is in scope. Same value, opposite direction — see the matching pair in
@@ -49,6 +68,19 @@ esac
 # knows where a memory came from and this hook does not.
 existing="$(printf '%s' "$input" | jq -r --arg f "$field" '.tool_input[$f] // empty' 2>/dev/null || true)"
 [ -n "$existing" ] && exit 0
+
+# A write that names ANOTHER session's row is not this session's authorship.
+# The dream's promote and the scan's backfill carry the original row's
+# source_session — and its cwd, when it had one, rides in the same call. When
+# the original had none, this session's cwd stamped over the gap would rescope
+# someone else's memory to wherever the dream happened to run. The model's own
+# fresh adds pass THIS session's id (recall.sh instructs it every turn), so
+# the guard only trips on carried-forward rows.
+if [ "$field" = "cwd" ]; then
+  src="$(printf '%s' "$input" | jq -r '.tool_input.source_session // empty' 2>/dev/null || true)"
+  sid="$(printf '%s' "$input" | jq -r '.session_id // empty' 2>/dev/null || true)"
+  if [ -n "$src" ] && [ "$src" != "$sid" ]; then exit 0; fi
+fi
 
 updated="$(printf '%s' "$input" \
   | jq -c --arg f "$field" --arg v "$cwd" '.tool_input + {($f): $v}' 2>/dev/null || true)"

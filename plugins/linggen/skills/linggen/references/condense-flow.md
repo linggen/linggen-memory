@@ -63,6 +63,7 @@ memory_add {
   "content": "<current state first; history as a short dated span; keep lessons, drop dead provisional markers>",
   "type": "<most current member's type>",
   "contexts": [<union of members'>],
+  "cwd": "<the members' shared value when they agree; omit otherwise>",
   "replace_ids": ["<every member id>"]
 }
 ```

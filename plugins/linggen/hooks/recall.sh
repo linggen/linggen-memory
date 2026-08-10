@@ -54,11 +54,19 @@ min_score="${LING_MEM_RECALL_MIN_SCORE:-0}"
 # out of 1142 and therefore passed everything through the "untagged is
 # global" branch — a filter reading a namespace nothing wrote.
 #
-# `$HOME` is not a project: a session started there means "no particular
-# work", and scoping to it would claim every repo underneath.
-search_args="$(jq -nc --arg q "$prompt" --argjson l "$limit" --arg c "$cwd" --arg home "$HOME" '
+# A cwd that is not a project must not become a scope. `$HOME` means "no
+# particular work" and would claim every repo underneath; `~/.linggen` is the
+# engine's state dir; a temp dir is nobody's project. Scoping a read to any of
+# these hides every project row from the reader — worse than no scope. Same
+# dirs the write side refuses in stamp-cwd.sh.
+tmp="${TMPDIR:-/tmp}"
+case "$cwd" in
+  "$HOME"|"$HOME/.linggen"|"$HOME/.linggen/"*) cwd="" ;;
+  "${tmp%/}"|"${tmp%/}/"*|/tmp|/tmp/*|/private/tmp|/private/tmp/*) cwd="" ;;
+esac
+search_args="$(jq -nc --arg q "$prompt" --argjson l "$limit" --arg c "$cwd" '
   {query:$q, limit:$l}
-  + (if ($c | length) > 0 and $c != $home then {cwd_scope: $c} else {} end)
+  + (if ($c | length) > 0 then {cwd_scope: $c} else {} end)
 ')"
 out="$(mcp_call memory_search "$search_args" "$to")"
 

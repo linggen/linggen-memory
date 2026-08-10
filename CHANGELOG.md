@@ -1,5 +1,41 @@
 # Changelog
 
+## [Unreleased] — memory scoped by project
+
+### Added
+
+- **Project scoping.** `memory_add` advertises `cwd` and `memory_search`
+  advertises `cwd_scope` (both HOST-FILLED — the environment knows them,
+  the model would only be copying); the daemon applies the scope BEFORE
+  ranking, so an unrelated project cannot crowd the wanted rows out of
+  the top N. Rows with no `cwd` stay visible from everywhere by design.
+  CLI: `--cwd-scope` (alias `--project`) on `search`/`list`.
+- **Plugin: `stamp-cwd.sh` PreToolUse hook** (Claude Code) stamps `cwd`
+  on writes and `cwd_scope` on searches. Guards: a value the caller set
+  is never overwritten; a cwd that is not a project (home, `~/.linggen`,
+  temp) is never stamped; a write naming ANOTHER session's row (the
+  dream's promote, the scan's backfill) is never stamped — its origin
+  rides in the call. `recall.sh` refuses the same non-project scopes on
+  the read side. Codex gets recall scoping only: its hook runner rejects
+  `updatedInput` (openai/codex#18491), so writes go unstamped there.
+
+### Fixed
+
+- **CLI `--cwd-scope` was silently dropped on the daemon path** — the
+  shared filter serializer never learned the field (direct-store mode
+  honoured it). Forwarded explicitly on `search`/`list` only; `forget`
+  stays exempt, because the scope matches every unscoped row by design.
+- **A dedup merge could move a row between projects** — the candidate's
+  `cwd` overwrote the existing row's. Now origin stays: `cwd` only
+  fills an empty one, like `created_at` it records where the row was
+  born.
+- **The dream runbooks buried what they promoted** — promote/condense
+  carried `type`/`contexts`/`occurred_at`/`source_session` forward but
+  not `cwd`, so a promoted row was rescoped to wherever the dream ran
+  (`~/.linggen` on the engine — invisible to every project search).
+  `cwd` joins the carried fields on all three surfaces (engine memory
+  agent, plugin dream-flow, condense-flow).
+
 ## [1.5.0] - 2026-07-28 — lancedb 0.31 (lance 8)
 
 ### Changed
