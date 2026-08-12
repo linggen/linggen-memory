@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased] — memory scoped by project
+## [1.6.0] - 2026-08-12 — memory scoped by project
 
 ### Added
 
