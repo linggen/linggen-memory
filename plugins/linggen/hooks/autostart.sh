@@ -71,6 +71,7 @@ mkdir -p "$DEST" 2>/dev/null || true
 # Install/upgrade the shared binary. install-bin resolves the range pin, verifies
 # SHA-256, won't downgrade a newer shared binary, and replaces a legacy symlink
 # with a real file. Idempotent and cheap when already satisfied.
+LING_MEM_SOURCE="${LING_MEM_SOURCE:-plugin}" \
 bash "$PLUGIN_ROOT/scripts/install-bin.sh" \
   --version "$PIN" --dest "$DEST" --quiet >/dev/null 2>&1 || true
 
@@ -134,7 +135,7 @@ if ! curl -fsS --max-time 2 "${LINGGEN_URL}/api/health" >/dev/null 2>&1 \
     [ -d "$LOCK" ] && find "$LOCK" -maxdepth 0 -mmin +30 -exec rmdir {} \; 2>/dev/null
     if mkdir "$LOCK" 2>/dev/null; then
       (nohup bash -c '
-        curl -fsSL https://linggen.dev/install.sh | bash >>"$1" 2>&1
+        curl -fsSL https://linggen.dev/install.sh | LINGGEN_SOURCE="${LINGGEN_SOURCE:-plugin}" bash >>"$1" 2>&1
         LING="$(command -v ling || true)"
         [ -z "$LING" ] && [ -x "$HOME/.local/bin/ling" ] && LING="$HOME/.local/bin/ling"
         [ -n "$LING" ] && nohup "$LING" --web >/dev/null 2>&1 &

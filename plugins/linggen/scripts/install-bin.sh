@@ -204,6 +204,22 @@ tar -xzf "$TMP/$ASSET" -C "$DEST" ling-mem
 chmod +x "$BIN"
 say "installed $BIN"
 
+# Install-source marker. `ling-mem` reads this on its first launch and reports
+# `via` once, so we learn which door a machine came through. This script is the
+# canonical ling-mem installer — the plugin hook, the skill bootstrap and
+# linggen.dev's install.sh all funnel through it — so the marker is written
+# here rather than in each caller, and every install path gets provenance
+# instead of only the wrapper. The script itself never talks to the network
+# about this: it writes a file, the binary decides whether to report it.
+# Callers label their channel with LING_MEM_SOURCE; unset means direct.
+mkdir -p "$HOME/.linggen" 2>/dev/null || true
+{
+  printf 'via=%s\n' "${LING_MEM_SOURCE:-install-bin}"
+  printf 'installer_version=%s\n' "$("$BIN" --version 2>/dev/null | awk '{print $2}' || echo unknown)"
+  printf 'installed_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+} > "$HOME/.linggen/.ling-mem-install-source" 2>/dev/null \
+  || say "note: could not write install-source marker"
+
 case ":$PATH:" in
   *":$DEST:"*) ;;
   *) say "note: $DEST is not on PATH; add it to your shell rc" ;;
