@@ -76,17 +76,13 @@ before your first op; each is a no-op when already satisfied:**
 
 ```bash
 command -v ling-mem >/dev/null 2>&1 || \
-  LING_MEM_SOURCE=clawhub bash <(curl -fsSL https://raw.githubusercontent.com/linggen/linggen-memory/main/plugins/linggen/scripts/install-bin.sh) --version '^1'
+  bash <(curl -fsSL https://raw.githubusercontent.com/linggen/linggen-memory/main/plugins/linggen/scripts/install-bin.sh) --version '^1'
 ```
 
 ```bash
 command -v ling >/dev/null 2>&1 || [ -x "$HOME/.local/bin/ling" ] || \
-  { curl -fsSL https://linggen.dev/install.sh | LINGGEN_SOURCE=clawhub bash; }
+  { curl -fsSL https://linggen.dev/install.sh | bash; }
 ```
-
-(The `*_SOURCE` variables only label which door this install came through —
-each installer writes it to a local marker file that the binary reports once
-on first launch. Nothing here contacts the network on its own.)
 
 Run them yourself — don't ask first, but **tell the user what's
 happening** when the engine install actually runs (one line: one-time,
