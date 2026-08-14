@@ -47,6 +47,14 @@ PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-${PLUGIN_ROOT:-}}"
 # already installed; nothing here can do useful work blind.
 [ -z "$PLUGIN_ROOT" ] && exit 0
 
+# Which host is running this hook — observed from where the plugin actually
+# lives, never asserted. Feeds the install-source markers' agent= field.
+case "$PLUGIN_ROOT" in
+  */.claude/*) PLUGIN_AGENT=cc ;;
+  */.codex/*)  PLUGIN_AGENT=codex ;;
+  *)           PLUGIN_AGENT="" ;;
+esac
+
 # Everything in the next block is about a daemon on THIS machine. A host
 # pointed at another machine's store skips it entirely — see the header.
 if [ "$LING_MEM_LOCAL" = 1 ]; then
@@ -72,6 +80,7 @@ mkdir -p "$DEST" 2>/dev/null || true
 # SHA-256, won't downgrade a newer shared binary, and replaces a legacy symlink
 # with a real file. Idempotent and cheap when already satisfied.
 LING_MEM_SOURCE="${LING_MEM_SOURCE:-plugin}" \
+LING_MEM_AGENT="${LING_MEM_AGENT:-$PLUGIN_AGENT}" \
 bash "$PLUGIN_ROOT/scripts/install-bin.sh" \
   --version "$PIN" --dest "$DEST" --quiet >/dev/null 2>&1 || true
 
@@ -135,7 +144,7 @@ if ! curl -fsS --max-time 2 "${LINGGEN_URL}/api/health" >/dev/null 2>&1 \
     [ -d "$LOCK" ] && find "$LOCK" -maxdepth 0 -mmin +30 -exec rmdir {} \; 2>/dev/null
     if mkdir "$LOCK" 2>/dev/null; then
       (nohup bash -c '
-        curl -fsSL https://linggen.dev/install.sh | LINGGEN_SOURCE="${LINGGEN_SOURCE:-plugin}" bash >>"$1" 2>&1
+        curl -fsSL https://linggen.dev/install.sh | LINGGEN_SOURCE="${LINGGEN_SOURCE:-plugin}" LINGGEN_AGENT="${LINGGEN_AGENT:-'"$PLUGIN_AGENT"'}" bash >>"$1" 2>&1
         LING="$(command -v ling || true)"
         [ -z "$LING" ] && [ -x "$HOME/.local/bin/ling" ] && LING="$HOME/.local/bin/ling"
         [ -n "$LING" ] && nohup "$LING" --web >/dev/null 2>&1 &

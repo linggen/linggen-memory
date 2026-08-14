@@ -13,13 +13,18 @@
 //! `payload.via` names the distribution channel and nothing more, read from
 //! `~/.linggen/.ling-mem-install-source` — written by install-bin.sh (the
 //! canonical installer every channel funnels through). A label is only set
-//! by a caller that genuinely IS that channel: `plugin` (Claude Code /
-//! Codex session-start hook), `website` (linggen.dev's install.sh, which
-//! chains into install-bin.sh), `vscode-extension`, `install-bin` (the
-//! installer ran with no channel label — hookless marketplace installs and
-//! direct invocations land here), `upgrade` (version change, not a
-//! channel), `unknown` (no marker). Other marker keys are forwarded
-//! verbatim (`installer_version`, `installed_at`).
+//! by a caller that genuinely IS that channel (a hook or app declaring
+//! itself) or that measures it (the skill's scripts/bootstrap.sh derives
+//! the channel from its own on-disk path at run time): `plugin` (Claude
+//! Code / Codex session-start hook), `website` (linggen.dev's install.sh),
+//! `clawhub` / `skills-sh` (bootstrap path fingerprint), `linggen` (the
+//! engine's first-use auto-install), `vscode-extension`, `install-bin`
+//! (no label — direct invocations), `upgrade` (version change, not a
+//! channel), `unknown` (no marker). `agent` (optional) names the host that
+//! ran the install: `cc`, `codex`, `openclaw`, `linggen`, `vscode` —
+//! observed or omitted, never guessed. Other marker keys are forwarded
+//! verbatim (`installer_version`, `installed_at`). Full design:
+//! linggensite/doc/analytics-spec.md.
 //!
 //! On every Memory.* HTTP call:
 //! - `command` event with payload.verb = "memory.search" / "memory.add" / etc.

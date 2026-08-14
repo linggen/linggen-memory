@@ -75,14 +75,13 @@ Linggen and installs nothing. `/linggen:config` is how that is set. On channels 
 before your first op; each is a no-op when already satisfied:**
 
 ```bash
-command -v ling-mem >/dev/null 2>&1 || \
-  bash <(curl -fsSL https://raw.githubusercontent.com/linggen/linggen-memory/main/plugins/linggen/scripts/install-bin.sh) --version '^1'
+bash scripts/bootstrap.sh
 ```
 
-```bash
-command -v ling >/dev/null 2>&1 || [ -x "$HOME/.local/bin/ling" ] || \
-  { curl -fsSL https://linggen.dev/install.sh | bash; }
-```
+(Resolve the path relative to this skill's directory, as above. The script
+checks for both binaries and is a fast no-op when they're present; it also
+labels the install's distribution channel from its own on-disk location —
+a local marker file only, nothing phones home.)
 
 Run them yourself — don't ask first, but **tell the user what's
 happening** when the engine install actually runs (one line: one-time,

@@ -54,10 +54,16 @@ CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/ling-mem"
 
 is_exact_tag() { case "$1" in v[0-9]*.[0-9]*.[0-9]*) return 0 ;; *) return 1 ;; esac; }
 
+# GitHub is blocked or flaky in some regions (notably China); linggen.dev
+# (Cloudflare) mirrors our release traffic at /dl/*. Every network fetch
+# below tries GitHub first, then the mirror.
+MIRROR="https://linggen.dev/dl"
+
 list_release_tags() {
-  curl -fsSL --retry 3 --retry-delay 2 \
-       -H 'Accept: application/vnd.github+json' \
-       "https://api.github.com/repos/${REPO}/releases?per_page=100" \
+  { curl -fsSL --retry 3 --retry-delay 2 \
+         -H 'Accept: application/vnd.github+json' \
+         "https://api.github.com/repos/${REPO}/releases?per_page=100" \
+    || curl -fsSL "${MIRROR}/api/${REPO}/releases"; } \
     | grep -oE '"tag_name"[[:space:]]*:[[:space:]]*"[^"]+"' \
     | sed -E 's/.*"([^"]+)"$/\1/'
 }
@@ -151,19 +157,27 @@ fi
 
 ASSET="ling-mem-${TARGET}.tar.gz"
 BASE="https://github.com/${REPO}/releases/download/${VERSION}"
-URL="${BASE}/${ASSET}"
-SUM_URL="${BASE}/${ASSET}.sha256"
+MIRROR_BASE="${MIRROR}/release/${REPO}/${VERSION}"
+
+# Download with mirror fallback. The SHA-256 check below runs on the result
+# either way, so a compromised or truncated mirror response cannot install.
+fetch_asset() {
+  local name="$1"
+  curl -fsSL --retry 3 --retry-delay 2 "${BASE}/${name}" -o "$TMP/$name" \
+    || { say "GitHub unreachable — using mirror for $name"; \
+         curl -fsSL "${MIRROR_BASE}/${name}" -o "$TMP/$name"; }
+}
 
 TMP="$(mktemp -d -t ling-mem-dl-XXXXXX)"
 trap 'rm -rf "$TMP"' EXIT
 
 say "downloading ling-mem $VERSION ($TARGET)"
-curl -fsSL --retry 3 --retry-delay 2 "$URL" -o "$TMP/$ASSET"
+fetch_asset "$ASSET"
 
 if [ "${LING_MEM_SKIP_CHECKSUM:-0}" = "1" ]; then
   say "WARNING: SHA-256 verification skipped"
 else
-  curl -fsSL --retry 3 --retry-delay 2 "$SUM_URL" -o "$TMP/$ASSET.sha256"
+  fetch_asset "$ASSET.sha256"
 
   # Pull the expected hex digest and reject anything that doesn't look
   # like a real checksum line. Both `shasum -c` and `sha256sum -c` parse
@@ -175,7 +189,7 @@ else
   # first 64-hex token, recompute, compare literal strings.
   expected="$(awk 'match($0, /^[0-9a-fA-F]{64}/) { print toupper(substr($0, RSTART, RLENGTH)); exit }' "$TMP/$ASSET.sha256")"
   if [ -z "$expected" ]; then
-    echo "install-bin: malformed .sha256 from $SUM_URL" >&2
+    echo "install-bin: malformed .sha256 for $ASSET" >&2
     sed -n '1,3p' "$TMP/$ASSET.sha256" >&2
     exit 1
   fi
@@ -211,10 +225,12 @@ say "installed $BIN"
 # here rather than in each caller, and every install path gets provenance
 # instead of only the wrapper. The script itself never talks to the network
 # about this: it writes a file, the binary decides whether to report it.
-# Callers label their channel with LING_MEM_SOURCE; unset means direct.
+# Callers label their channel with LING_MEM_SOURCE (unset means direct) and
+# optionally the host agent with LING_MEM_AGENT (cc/codex/openclaw/linggen).
 mkdir -p "$HOME/.linggen" 2>/dev/null || true
 {
   printf 'via=%s\n' "${LING_MEM_SOURCE:-install-bin}"
+  [ -n "${LING_MEM_AGENT:-}" ] && printf 'agent=%s\n' "$LING_MEM_AGENT"
   printf 'installer_version=%s\n' "$("$BIN" --version 2>/dev/null | awk '{print $2}' || echo unknown)"
   printf 'installed_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 } > "$HOME/.linggen/.ling-mem-install-source" 2>/dev/null \

@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# bootstrap.sh — ensure the ling-mem CLI and the Linggen engine are installed.
+# Run from SKILL.md's first-use gate; each install is a no-op when the binary
+# is already present.
+#
+# Install-channel labels: this script derives via/agent from WHERE THIS FILE
+# IS RUNNING FROM — the skill dir's path is a fingerprint of the channel that
+# delivered it, measured at run time. Never hardcode a channel here: this one
+# file ships through ClawHub, the CC/Codex plugin, and skills.sh, so any
+# static label would be wrong on the other channels. An unrecognized path
+# labels nothing and the installers use their own defaults. The labels only
+# reach a local marker file (~/.linggen/.*-install-source) that the binary
+# reports once on first launch; this script never POSTs anywhere.
+set -euo pipefail
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+via="" agent=""
+case "$here" in
+  */.openclaw/workspace/skills/*) via=clawhub  agent=openclaw ;;
+  */.claude/plugins/*)            via=plugin   agent=cc ;;
+  */.codex/*)                     via=plugin   agent=codex ;;
+  */.agents/skills/*)             via=skills-sh ;;   # shared dir — host unknowable
+  */.claude/skills/*)             agent=cc ;;        # manual stub — door unknowable
+esac
+[ -n "$via" ]   && export LING_MEM_SOURCE="$via" LINGGEN_SOURCE="$via"
+[ -n "$agent" ] && export LING_MEM_AGENT="$agent" LINGGEN_AGENT="$agent"
+
+# ling-mem — the memory backend. Canonical installer, range-pinned to 1.x,
+# SHA-256 verified, installs to ~/.local/bin. Mirror fallback for regions
+# where raw.githubusercontent.com is blocked.
+if ! command -v ling-mem >/dev/null 2>&1; then
+  { curl -fsSL https://raw.githubusercontent.com/linggen/linggen-memory/main/plugins/linggen/scripts/install-bin.sh \
+    || curl -fsSL https://linggen.dev/dl/install-bin.sh; } | bash -s -- --version '^1'
+fi
+
+# Linggen engine — powers the browser/x/agent MCP tools. Optional: memory
+# works with ling-mem alone, so a failure here is reported, not fatal.
+if ! command -v ling >/dev/null 2>&1 && [ ! -x "$HOME/.local/bin/ling" ]; then
+  curl -fsSL https://linggen.dev/install.sh | bash \
+    || echo "bootstrap: engine install failed (memory still works via ling-mem)" >&2
+fi
