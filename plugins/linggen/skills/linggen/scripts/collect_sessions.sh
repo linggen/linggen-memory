@@ -145,7 +145,19 @@ count_user_turns_openclaw() {
 }
 
 count_user_turns_linggen() {
-  jq -s '[.[] | select(.from_id == "user")] | length' "$1" 2>/dev/null || echo 0
+  # `[HIDDEN]`-prefixed rows are the app shell talking to the agent, not the
+  # person: skill pages fire a greeting/context trigger through the same send
+  # path the user types into (EmbedApp prefixes the text, the engine strips the
+  # prefix, and five server read sites filter it back out). Counting them makes
+  # a session nobody spoke in look busy, so scan.sh's empty-session filter never
+  # drops it and the judge reads our own boilerplate as the user's words.
+  #
+  # Anchored with startswith, NOT contains: the marker also appears mid-string
+  # in real content ("Starting autonomous loop for task: [HIDDEN] …"), so a
+  # substring test would eat a genuine message that merely quotes the token.
+  jq -s '[.[] | select(.from_id == "user")
+                | select(((.content // "") | startswith("[HIDDEN]")) | not)]
+         | length' "$1" 2>/dev/null || echo 0
 }
 
 file_bytes() {

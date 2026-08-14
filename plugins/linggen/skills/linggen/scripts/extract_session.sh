@@ -291,6 +291,12 @@ case "$SOURCE" in
         (.from_id == "user" or .from_id == "ling")
         and (.is_observation == false or .is_observation == null)
         and (.timestamp >= $start and .timestamp < $end)
+        # [HIDDEN] marks the app shell prompting the agent through the same
+        # send path the user types into (skill greeting/context triggers) —
+        # our text, not theirs, the same class as the developer boilerplate
+        # strip_noise already drops. Anchored with startswith, not contains:
+        # the marker also occurs mid-string inside real content.
+        and (((.content // "") | startswith("[HIDDEN]")) | not)
       )
       | (.from_id | if . == "ling" then "assistant" else . end) as $role
       | .content // ""
