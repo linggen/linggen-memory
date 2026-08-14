@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.7.0] - 2026-08-14 — works in mainland China
+
+### Added
+
+- **ModelScope fallback for the embedding model.** When huggingface.co is
+  unreachable (blocked in mainland China), the embedder automatically
+  downloads Qwen3-Embedding-0.6B from ModelScope — Qwen's official China
+  distribution — verifies every file against a SHA-256 pinned in code,
+  writes it into the hf-hub cache layout, and retries. First-ever run on a
+  CN machine now works with nothing to configure. (`HF_ENDPOINT` was never
+  an escape hatch here: fastembed's hf-hub client hardcodes the endpoint.)
+- **Mirror fallback in `install-bin.sh`.** The release list and binary
+  tarballs fall back to linggen.dev's `/dl` GitHub mirror when GitHub is
+  unreachable; SHA-256 verification covers the result either way.
+- **Install provenance.** `install-bin.sh` writes the install-source
+  marker itself (`via=` from `LING_MEM_SOURCE`, optional `agent=` from
+  `LING_MEM_AGENT`), so every install path records which door it came
+  through — declared only by callers that genuinely know, never guessed.
+
 ## [1.6.0] - 2026-08-12 — memory scoped by project
 
 ### Added
