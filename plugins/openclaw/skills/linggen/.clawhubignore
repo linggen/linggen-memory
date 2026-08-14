@@ -1,0 +1,8 @@
+# Linggen-only artifacts. Excluded from ClawHub publish because non-
+# Linggen hosts don't run the engine-driven dream mission directly —
+# they invoke `/shared-memory dream` (slash command) instead.
+
+# The Linggen engine ships its own dream mission at install time; this
+# bundled file is obsolete and kept only for backward compatibility
+# with older Linggen installs (removal pending in distribution F).
+assets/mission.md
