@@ -10,6 +10,17 @@
 //! - `install` event whenever the version changes from the last recorded one
 //!   (payload.via = "upgrade", payload.from_version, payload.to_version).
 //!
+//! `payload.via` names the distribution channel and nothing more, read from
+//! `~/.linggen/.ling-mem-install-source` — written by install-bin.sh (the
+//! canonical installer every channel funnels through). A label is only set
+//! by a caller that genuinely IS that channel: `plugin` (Claude Code /
+//! Codex session-start hook), `website` (linggen.dev's install.sh, which
+//! chains into install-bin.sh), `vscode-extension`, `install-bin` (the
+//! installer ran with no channel label — hookless marketplace installs and
+//! direct invocations land here), `upgrade` (version change, not a
+//! channel), `unknown` (no marker). Other marker keys are forwarded
+//! verbatim (`installer_version`, `installed_at`).
+//!
 //! On every Memory.* HTTP call:
 //! - `command` event with payload.verb = "memory.search" / "memory.add" / etc.
 //!
