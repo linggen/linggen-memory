@@ -28,9 +28,15 @@ use crate::memory::MemoryStore;
 use std::sync::Arc;
 use std::time::Duration;
 
-/// How often to measure. Cheap enough to do hourly; frequent enough that a
-/// heavy import is picked up the same day rather than weeks later.
-const CHECK_EVERY: Duration = Duration::from_secs(60 * 60);
+/// How often to look.
+///
+/// Short on purpose. A check that lands while the daemon is busy does
+/// nothing and waits for the next one, so the interval is really "how long
+/// a missed window costs" — at an hour, an active day could skip
+/// maintenance entirely by never having its one instant fall in a quiet
+/// moment. Ten minutes makes catching a genuine lull likely, and the check
+/// itself is a directory walk plus two metadata reads.
+const CHECK_EVERY: Duration = Duration::from_secs(10 * 60);
 
 /// Wait this long after startup before the first check, so a daemon that
 /// was launched to serve one urgent request answers it first.
