@@ -1003,6 +1003,82 @@ impl MemoryStore {
             .context("evicting expired memories")
     }
 
+    /// This table's LanceDB name (`semantic` / `episodic`) — what the
+    /// maintenance walk needs to find the table's directory on disk.
+    pub fn table_name(&self) -> &str {
+        self.table.name()
+    }
+
+    /// `(fragments, uncompacted fragments)` for the *current* version.
+    ///
+    /// Deliberately not a count of files in `data/`: compaction unlinks the
+    /// fragments it merged, but their files stay on disk until a later
+    /// prune can verify no reader holds them (Lance keeps anything younger
+    /// than 7 days unless `delete_unverified` is forced). Counting files
+    /// therefore keeps reporting the pre-compaction number for days, which
+    /// would make the maintenance trigger fire forever against an
+    /// already-clean table.
+    ///
+    /// The second number is Lance's own `num_small_fragments` — its
+    /// verdict on what still wants compacting. Preferring it to a
+    /// homegrown rows-per-fragment ratio means the threshold tracks
+    /// whatever Lance considers small, across version bumps.
+    pub async fn fragment_stats(&self) -> Result<(usize, usize)> {
+        let stats = self.table.stats().await.context("reading table stats")?;
+        Ok((
+            stats.fragment_stats.num_fragments,
+            stats.fragment_stats.num_small_fragments,
+        ))
+    }
+
+    /// Physical maintenance: merge fragments, then drop version metadata
+    /// older than `prune_older_than`. See `memory::maintenance` for why
+    /// this is necessary and how the schedule decides to call it.
+    ///
+    /// **This must never change what the table says.** Compaction rewrites
+    /// rows into fewer files and materializes tombstones; pruning removes
+    /// manifests. Live row content and row count are invariant, and a test
+    /// asserts exactly that.
+    ///
+    /// Order matters: compact first, prune second. Compaction *adds* files
+    /// (the merged fragments land before the versions referencing the old
+    /// ones are removable), so pruning afterwards is what actually returns
+    /// the disk — a compact-only pass legitimately grows the table.
+    ///
+    /// `delete_unverified` is deliberately left unset. Lance only skips
+    /// files newer than 7 days when it cannot verify no transaction is
+    /// mid-flight, and overriding that requires guaranteeing single-process
+    /// ownership of the dataset — which this crate cannot claim while the
+    /// CLI's `--episodic` path bypasses the daemon and writes the store
+    /// directly.
+    ///
+    /// Takes the write lock so a compaction can never interleave with a
+    /// read-modify-write mutation on the same table.
+    pub async fn optimize_storage(&self, prune_older_than: chrono::Duration) -> Result<()> {
+        use lancedb::table::{CompactionOptions, OptimizeAction};
+
+        let _guard = self.write_lock.lock().await;
+
+        self.table
+            .optimize(OptimizeAction::Compact {
+                options: CompactionOptions::default(),
+                remap_options: None,
+            })
+            .await
+            .context("compacting fragments")?;
+
+        self.table
+            .optimize(OptimizeAction::Prune {
+                older_than: Some(prune_older_than),
+                delete_unverified: None,
+                error_if_tagged_old_versions: None,
+            })
+            .await
+            .context("pruning old versions")?;
+
+        Ok(())
+    }
+
     /// All `tier='core'` facts — the always-load identity/preference set.
     ///
     /// No vector, no similarity gate, no pagination cap: core is the small
@@ -1892,4 +1968,107 @@ mod tests {
         assert_eq!(store.count().await.unwrap(), 1);
     }
 
+    // ── physical maintenance ───────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn table_name_reports_the_lancedb_table() {
+        let dir = TempDir::new().unwrap();
+        let semantic = MemoryStore::open_semantic(dir.path()).await.unwrap();
+        let episodic = MemoryStore::open_episodic(dir.path()).await.unwrap();
+        assert_eq!(semantic.table_name(), "semantic");
+        assert_eq!(episodic.table_name(), "episodic");
+    }
+
+    /// THE invariant of the physical lane: it may move bytes around on
+    /// disk, but it may never change what the store says. If this test
+    /// ever fails, maintenance has crossed into the semantic lane and is
+    /// no longer safe to run unattended.
+    #[tokio::test]
+    async fn optimize_storage_preserves_every_row() {
+        let (store, _dir) = fresh_store().await;
+
+        // Write each row in its own call, which is exactly what produces
+        // the one-fragment-per-row shape this pass exists to collapse.
+        for i in 0..12 {
+            store
+                .insert(&[make_fact(&format!("row {i}"), MemoryType::Fact)])
+                .await
+                .unwrap();
+        }
+        // Delete one, so compaction has a tombstone to materialize.
+        let doomed = store
+            .list(&Filters::default(), SortOrder::Newest, 1, 0)
+            .await
+            .unwrap()[0]
+            .id
+            .clone();
+        assert!(store.delete(&doomed).await.unwrap());
+
+        let before = store
+            .list(&Filters::default(), SortOrder::Newest, 100, 0)
+            .await
+            .unwrap();
+        let before_count = store.count().await.unwrap();
+        assert_eq!(before_count, 11);
+
+        store
+            .optimize_storage(chrono::Duration::days(2))
+            .await
+            .unwrap();
+
+        // Same rows, same ids, same content — nothing invented, nothing lost.
+        let after = store
+            .list(&Filters::default(), SortOrder::Newest, 100, 0)
+            .await
+            .unwrap();
+        assert_eq!(store.count().await.unwrap(), before_count);
+        assert_eq!(after.len(), before.len());
+
+        let mut before_rows: Vec<_> = before.iter().map(|m| (&m.id, &m.content)).collect();
+        let mut after_rows: Vec<_> = after.iter().map(|m| (&m.id, &m.content)).collect();
+        before_rows.sort();
+        after_rows.sort();
+        assert_eq!(before_rows, after_rows);
+
+        // And the deleted row stays deleted — compaction must not
+        // resurrect a tombstoned row when it rewrites the fragment.
+        assert!(store.get(&doomed).await.unwrap().is_none());
+    }
+
+    /// Maintenance on an empty table is a no-op, not an error — a fresh
+    /// install runs this loop too.
+    #[tokio::test]
+    async fn optimize_storage_is_safe_on_an_empty_table() {
+        let (store, _dir) = fresh_store().await;
+        store
+            .optimize_storage(chrono::Duration::days(2))
+            .await
+            .unwrap();
+        assert_eq!(store.count().await.unwrap(), 0);
+    }
+
+    /// Rows must still be findable by vector search afterwards — a
+    /// compaction that rewrote fragments but broke retrieval would pass a
+    /// naive count check and still have destroyed the store's purpose.
+    #[tokio::test]
+    async fn optimize_storage_keeps_rows_searchable() {
+        let (store, _dir) = fresh_store().await;
+        for i in 0..8 {
+            let mut fact = make_fact(&format!("row {i}"), MemoryType::Fact);
+            fact.vector = Some(unit_vec_at(i));
+            store.insert(&[fact]).await.unwrap();
+        }
+
+        let probe = unit_vec_at(3);
+        let before = store.search(&probe, &Filters::default(), 1).await.unwrap();
+
+        store
+            .optimize_storage(chrono::Duration::days(2))
+            .await
+            .unwrap();
+
+        let after = store.search(&probe, &Filters::default(), 1).await.unwrap();
+        assert_eq!(after.len(), 1);
+        assert_eq!(after[0].id, before[0].id);
+    }
 }

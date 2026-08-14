@@ -9,6 +9,7 @@
 //! pipelines live in sibling modules.
 
 pub mod hybrid;
+pub mod maintenance;
 pub mod recall;
 pub mod schema;
 pub mod schema_version;

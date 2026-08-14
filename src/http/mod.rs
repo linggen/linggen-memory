@@ -63,7 +63,25 @@ pub fn build_router(state: SharedState, telemetry: Telemetry) -> Router {
         // See `gate.rs`; the daemon also refuses to bind wide in the first
         // place unless this machine has paired devices.
         .layer(middleware::from_fn_with_state(state.clone(), gate::lan_gate))
+        // Outside even the gate: a refused request is still traffic, and
+        // background maintenance must not rewrite tables while anything at
+        // all is knocking.
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            mark_activity_layer,
+        ))
         .with_state(state)
+}
+
+/// Middleware: stamp "the daemon is being used" on every request, so the
+/// background maintenance loop can wait for a genuinely quiet window.
+async fn mark_activity_layer(
+    axum::extract::State(state): axum::extract::State<SharedState>,
+    request: Request,
+    next: Next,
+) -> Response {
+    state.mark_request();
+    next.run(request).await
 }
 
 /// Middleware: emit a `command` telemetry event for every `/api/memory/*`

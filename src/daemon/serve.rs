@@ -105,14 +105,19 @@ pub async fn run(data_dir: &Path, skill_dir: &Path, port: u16, host: IpAddr) -> 
     // caller sets `episodic: true` — same single connection per table.
     let recall = Arc::new(Recall::new(Arc::clone(&semantic), Arc::clone(&episodic)));
     let embedder = Embedder::new().context("initializing embedder")?;
-    let state = Arc::new(AppState {
-        store: semantic,
+    let state = Arc::new(AppState::new(
+        semantic,
         episodic,
         recall,
-        embedder: Arc::new(embedder),
-        data_dir: data_dir.to_path_buf(),
-        port: bound_port,
-    });
+        Arc::new(embedder),
+        data_dir.to_path_buf(),
+        bound_port,
+    ));
+
+    // Background storage upkeep: compaction + version pruning, on a
+    // measured condition, in idle windows. Silent by design — see
+    // `daemon::maintenance`.
+    crate::daemon::maintenance::spawn(Arc::clone(&state));
 
     let router = http::build_router(state, telemetry);
     // Connect info, because the gate's first question is where the caller is:

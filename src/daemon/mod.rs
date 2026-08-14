@@ -17,6 +17,7 @@
 //! processes, `status`, `stop`) read it to find the running port and pid.
 
 pub mod lifecycle;
+pub mod maintenance;
 pub mod pidfile;
 pub mod serve;
 
