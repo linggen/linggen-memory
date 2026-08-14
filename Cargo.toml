@@ -77,6 +77,10 @@ arrow-schema = "58"
 axum = "0.8"
 tower = "0.5"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+# Sync HTTP for the embedding-model ModelScope fallback (embed/model_fetch.rs).
+# Already in the tree via hf-hub; a direct dep so the fallback can stream
+# without touching the async reqwest stack from sync embedder init.
+ureq = "3"
 
 # Static assets for the Data Browser UI. Default behaviour: debug builds
 # read from disk at runtime (live-edit static/ without recompile), release

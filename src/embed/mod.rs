@@ -25,6 +25,9 @@
 //! The daemon (`ling-mem serve`) constructs one [`Embedder`] at startup and
 //! shares it across requests — model load (~1–2 s) happens once.
 
+mod model_fetch;
+pub use model_fetch::ensure_model_cached;
+
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
@@ -78,8 +81,27 @@ impl Embedder {
         tracing::info!(
             "embedder: model={MODEL_REPO} device={device:?} dtype=F16 max_seq_len={MAX_SEQ_LEN}"
         );
-        let inner = Qwen3TextEmbedding::from_hf(MODEL_REPO, &device, DType::F16, MAX_SEQ_LEN)
-            .context("initializing Qwen3 text embedder")?;
+        // First try is the normal path: hf-hub's cache, then huggingface.co.
+        // On failure — almost always the model download failing because
+        // huggingface.co is unreachable (blocked in mainland China) — fetch
+        // the model from ModelScope into the same cache and try once more.
+        // hf-hub is cache-first, so the retry loads offline. Errors that
+        // aren't about missing model bytes (bad device, corrupt weights)
+        // fail again identically on the retry and surface unchanged.
+        let inner = match Qwen3TextEmbedding::from_hf(MODEL_REPO, &device, DType::F16, MAX_SEQ_LEN)
+        {
+            Ok(inner) => inner,
+            Err(first_err) => {
+                tracing::warn!(
+                    "embedder: HuggingFace load failed ({first_err}); \
+                     trying ModelScope fallback"
+                );
+                model_fetch::ensure_model_cached()
+                    .context("downloading embedding model from ModelScope fallback")?;
+                Qwen3TextEmbedding::from_hf(MODEL_REPO, &device, DType::F16, MAX_SEQ_LEN)
+                    .context("initializing Qwen3 text embedder (after ModelScope fallback)")?
+            }
+        };
         Ok(Self {
             inner,
             gate: tokio::sync::Mutex::new(()),
