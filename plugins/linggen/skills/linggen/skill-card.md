@@ -1,7 +1,7 @@
 ## Description: <br>
 Linggen provides durable cross-host memory and browser control through one local MCP server, using a three-tier memory model shared across Claude Code, Codex, and OpenClaw. <br>
 
-Licensed under Apache 2.0; commercial and non-commercial use are both permitted under those terms. <br>
+Licensed under MIT-0 (MIT No Attribution); commercial and non-commercial use are both permitted under those terms. <br>
 
 ## Publisher: <br>
 [linggen](https://clawhub.ai/user/linggen) <br>

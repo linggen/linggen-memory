@@ -140,16 +140,18 @@ Source is open on both ends: client at [`src/telemetry/`](src/telemetry/), recei
 
 MIT. See `LICENSE`.
 
-One subtree is different: **`plugins/linggen/skills/linggen/` is Apache 2.0**, carried
-in its own `LICENSE` there. Skill code tracks the engine's license, not this repo's —
-the bundle originated in the `linggen/skills` repo and kept its terms when the plugin
-tree was scaffolded here. The nearest `LICENSE` governs, so the rest of
-`plugins/linggen/` stays MIT.
+One subtree is different: **`plugins/linggen/skills/linggen/` is MIT-0**, carried in
+its own `LICENSE` there. That subtree is the bundle published to ClawHub, and ClawHub
+distributes *every* skill under MIT-0 — the registry types the field as `"MIT-0"|null`
+and renders `PLATFORM_SKILL_LICENSE` for both, and `clawhub skill publish` sends
+`acceptLicenseTerms: true` on every push. So the bundle states the terms a user
+actually receives; declaring anything stricter there would advertise a grant the
+platform does not pass on. It carried Apache 2.0 until 2026-08-14, inherited from the
+`linggen/skills` repo when the plugin tree was scaffolded here.
 
-This is also what the ClawHub listing should say. If `clawhub inspect linggen` reports
-anything other than Apache-2.0 for the published skill, the registry metadata is stale —
-it is a skill-level field on clawhub.ai with no CLI flag, so republishing will not
-correct it.
+The nearest `LICENSE` governs, so the rest of `plugins/linggen/` stays MIT, and
+everything outside this repo keeps its own terms — the engine is Apache 2.0. Nothing
+but the published skill bundle moved.
 
 ---
 

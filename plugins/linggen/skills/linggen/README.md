@@ -71,5 +71,7 @@ Intel Mac: prebuilt binaries not provided. Build from source with `cargo build -
 
 ## License
 
-- **Skill code** (SKILL.md, install scripts, hooks): Apache 2.0 — see `LICENSE`.
+- **Skill code** (SKILL.md, install scripts, hooks): MIT-0 — see `LICENSE`. This is
+  the license ClawHub grants on every skill it distributes, so the bundle states
+  exactly what a user actually receives.
 - **`ling-mem` daemon binary**: MIT — built from [linggen/linggen-memory](https://github.com/linggen/linggen-memory).
