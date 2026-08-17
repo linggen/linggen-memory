@@ -75,6 +75,14 @@ pub fn build_schema() -> Arc<Schema> {
         ),
         Field::new("source_session", DataType::Utf8, true),
         Field::new("host", DataType::Utf8, true),
+        // Archive pair (2026-08-17): a merge/digest EXPIRES its losers
+        // instead of deleting them. NULL expired_at = live row.
+        Field::new(
+            "expired_at",
+            DataType::Timestamp(TimeUnit::Microsecond, Some(TZ_UTC.into())),
+            true,
+        ),
+        Field::new("superseded_by", DataType::Utf8, true),
     ]))
 }
 
@@ -118,6 +126,14 @@ pub fn memories_to_record_batch(facts: &[Memory]) -> Result<RecordBatch> {
     )
     .with_timezone(TZ_UTC);
 
+    let expired_at = TimestampMicrosecondArray::from_iter(
+        facts
+            .iter()
+            .map(|f| f.expired_at.map(|t| t.timestamp_micros())),
+    )
+    .with_timezone(TZ_UTC);
+    let superseded_bys = StringArray::from_iter(facts.iter().map(|f| f.superseded_by.clone()));
+
     RecordBatch::try_new(
         schema,
         vec![
@@ -136,6 +152,8 @@ pub fn memories_to_record_batch(facts: &[Memory]) -> Result<RecordBatch> {
             Arc::new(occurred_at),
             Arc::new(source_sessions),
             Arc::new(hosts),
+            Arc::new(expired_at),
+            Arc::new(superseded_bys),
         ],
     )
     .context("building facts RecordBatch")
@@ -163,6 +181,10 @@ pub fn record_batch_to_memories(batch: &RecordBatch) -> Result<Vec<Memory>> {
     let created_at = col_timestamp(batch, "created_at")?;
     let updated_at = col_timestamp_opt(batch, "updated_at")?;
     let occurred_at = col_timestamp_opt(batch, "occurred_at")?;
+    // Archive pair — added 2026-08-17; absent on older on-disk tables
+    // until `ensure_late_schema_additions` runs, so decode is lenient.
+    let expired_at = col_timestamp_opt_missing_ok(batch, "expired_at");
+    let superseded_bys = col_utf8_opt_missing_ok(batch, "superseded_by");
 
     let mut out = Vec::with_capacity(n);
     for i in 0..n {
@@ -204,6 +226,8 @@ pub fn record_batch_to_memories(batch: &RecordBatch) -> Result<Vec<Memory>> {
                 .flatten()
                 .map(str::to_string),
             host: hosts.get(i).cloned().flatten(),
+            expired_at: expired_at.get(i).copied().flatten(),
+            superseded_by: superseded_bys.get(i).cloned().flatten(),
         });
     }
     Ok(out)
@@ -284,6 +308,17 @@ fn col_utf8_opt_missing_ok(batch: &RecordBatch, name: &str) -> Vec<Option<String
             }
         })
         .collect()
+}
+
+/// Like [`col_timestamp_opt`] but returns all-None when the column is
+/// absent entirely — same legacy-table leniency as
+/// [`col_utf8_opt_missing_ok`], for timestamp fields added after the
+/// initial schema (e.g. `expired_at`).
+fn col_timestamp_opt_missing_ok(batch: &RecordBatch, name: &str) -> Vec<Option<DateTime<Utc>>> {
+    if batch.column_by_name(name).is_none() {
+        return vec![None; batch.num_rows()];
+    }
+    col_timestamp_opt(batch, name).unwrap_or_else(|_| vec![None; batch.num_rows()])
 }
 
 /// Utf8 column as a Vec mapping row → Option<&str>. Cheap: borrows from the
@@ -437,9 +472,9 @@ mod tests {
     }
 
     #[test]
-    fn schema_has_fifteen_fields() {
+    fn schema_has_seventeen_fields() {
         let schema = build_schema();
-        assert_eq!(schema.fields().len(), 15);
+        assert_eq!(schema.fields().len(), 17);
     }
 
     #[test]
@@ -464,6 +499,8 @@ mod tests {
                 "occurred_at",
                 "source_session",
                 "host",
+                "expired_at",
+                "superseded_by",
             ]
         );
     }

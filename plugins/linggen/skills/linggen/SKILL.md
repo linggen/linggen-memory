@@ -345,7 +345,7 @@ with this session's model, tools, and user.
    your evidence decides what's true now.
 3. **Apply the confidence rule.** Evidence is conclusive AND every
    affected row is your own note (`from=derived`) → solve directly, no
-   ask: one `memory_add` with `replace_ids` (or CLI add-then-delete)
+   ask: one `memory_add` with `replace_ids` (CLI: `add --replace <id>`)
    writing current truth. Evidence is ambiguous, OR any affected row is
    user-voice (`from=user`) → **ask the user, ONE item per question**
    (AskUserQuestion on Claude Code; plain numbered options elsewhere) —
@@ -393,7 +393,7 @@ status-bearing row ("in progress", "OPEN:", "not committed",
 When you capture a status change (shipped / fixed / dormant /
 abandoned), search the subject first and write the new status
 replacing the prior status row(s) on that subject (`replace_ids` over
-MCP; add-then-delete via CLI) — never leave "in progress" beside its
+MCP; `add --replace <id>` via CLI) — never leave "in progress" beside its
 own outcome. Own-notes only; a user-voice predecessor follows the
 merge law. The dream audit's review queue is the backstop for what
 slips through — write-time supersede is the real fix.

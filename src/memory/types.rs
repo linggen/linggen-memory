@@ -115,6 +115,23 @@ pub struct Memory {
     /// rows written before the field was introduced read back as `None`.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub host: Option<String>,
+
+    /// When this row left live memory — a `replace_ids` merge or a
+    /// subject digest archived it. NULL = live. Expired rows are
+    /// invisible to search / list / scans / counts by default (they are
+    /// the archive, not the store), stay on disk for provenance, and
+    /// name their successor in `superseded_by` — which is what makes a
+    /// merge or digest reversible. Direct `get` by id still returns
+    /// them; explicit `delete` still removes them for good.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub expired_at: Option<DateTime<Utc>>,
+
+    /// Id of the row that replaced this one (the merge survivor or the
+    /// digest). Set together with `expired_at`. The unpack query —
+    /// "show me what this digest condensed" — is a list filtered on
+    /// this field with expired rows included.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub superseded_by: Option<String>,
 }
 
 impl Memory {
@@ -141,6 +158,8 @@ impl Memory {
             occurred_at: None,
             source_session: None,
             host: None,
+            expired_at: None,
+            superseded_by: None,
         }
     }
 

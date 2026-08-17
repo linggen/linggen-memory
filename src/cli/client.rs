@@ -176,6 +176,13 @@ pub(crate) async fn add(base: &str, args: AddArgs, format: OutputFormat) -> Resu
         args.skip_dedup,
         host,
     );
+    let mut body = body;
+    if !args.replace_ids.is_empty() {
+        body["replace_ids"] = serde_json::json!(args.replace_ids);
+    }
+    if args.user_directed {
+        body["user_directed"] = serde_json::json!(true);
+    }
 
     let data = post(base, "/api/memory/add", &body).await?;
     emit_add_outcome(&data, format)

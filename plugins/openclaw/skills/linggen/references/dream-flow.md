@@ -136,8 +136,8 @@ Backfill staging, always user-triggered, idempotent:
      (`from=derived` — built/fixed/tried/learned) and the new row
      completes or obsoletes them ("impl not started" → "shipped"),
      write ONE current-truth row with `replace_ids` listing those
-     semantic losers (MCP/HTTP — atomic; CLI: add the winner first,
-     then delete each loser). Never list a user-voice row
+     semantic losers (atomic on every path; CLI:
+     `ling-mem add ... --replace <id> --replace <id>`). Never list a user-voice row
      (`from=user`) or an episodic id.
    - **Skip** noise (activity logs, file-derivable facts,
      single-mention chatter) and already-in-semantic facts: do
@@ -168,8 +168,7 @@ can prove, queue the rest for the user. Two capped passes:
 1. **Condense cited chains** —
    `ling-mem chains --kind cited --derived-only --limit 10`.
    Pre-confirmed id-citation chains of your own notes: collapse each
-   into ONE current-truth row (`replace_ids` over MCP; CLI: add the
-   survivor, then delete members). See `references/condense-flow.md`
+   into ONE current-truth row (`replace_ids` over MCP; CLI: `--replace` on add). See `references/condense-flow.md`
    for drafting rules.
 2. **Merge the provable, queue the rest** —
    `ling-mem chains --kind marker --limit 5` (no `--derived-only`:
@@ -184,8 +183,7 @@ can prove, queue the rest for the user. Two capped passes:
      committed-and-pushed). The store already holds the answer —
      collapse per `references/condense-flow.md` drafting rules,
      `replace_ids` = the marker row + every qualifying neighbor
-     (`replace_ids` over MCP; CLI: add the survivor, then delete
-     members). In doubt on ANY clause (partial completion, subject
+     (`replace_ids` over MCP; CLI: `--replace` on add). In doubt on ANY clause (partial completion, subject
      drift, a user-voice row in the cluster) the bar is NOT met —
      queue instead. A bad queue wastes a click; a bad merge loses a
      row.

@@ -1,7 +1,7 @@
 {
   "id": "linggen",
   "name": "Linggen",
-  "version": "0.1.3",
+  "version": "0.1.2",
   "description": "Durable cross-host memory that recalls itself: core identity in the system prompt, relevant memories every turn, and the project scope stamped on every write. Backed by the local ling-mem daemon, shared with Claude Code and Codex.",
   "activation": {
     "onStartup": true

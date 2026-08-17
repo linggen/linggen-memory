@@ -305,6 +305,15 @@ pub struct FilterDTO {
     /// `since`/`until` win; `day` only fills what's unset.
     #[serde(default)]
     pub day: Option<String>,
+    /// Include archived rows (`expired_at IS NOT NULL`) — losers a
+    /// `replace_ids` merge or digest expired out of live memory. Default
+    /// `false`: the archive serves provenance and unpack, never recall.
+    #[serde(default)]
+    pub include_expired: bool,
+    /// Unpack query: only the archived rows this survivor id replaced.
+    /// Implies `include_expired`.
+    #[serde(default)]
+    pub superseded_by: Option<String>,
 }
 
 impl FilterDTO {
@@ -340,6 +349,8 @@ impl FilterDTO {
             tier: self.tier,
             source_session: self.source_session,
             cwd_scope: self.cwd_scope,
+            include_expired: self.include_expired,
+            superseded_by: self.superseded_by,
         })
     }
 }
@@ -590,7 +601,7 @@ async fn add(
             "action": "added",
             "fact": fact_public(&fact),
         });
-        return Ok(ok(apply_replace_ids(&state, &replace_ids, body).await));
+        return Ok(ok(apply_replace_ids(&state, &replace_ids, &fact.id, body).await));
     }
 
     // Cross-tier dedup. The single-table `insert_with_dedup` below only
@@ -622,7 +633,7 @@ async fn add(
                 "previous_id": existing.id,
                 "fact": fact_public(&merged),
             });
-            return Ok(ok(apply_replace_ids(&state, &replace_ids, body).await));
+            return Ok(ok(apply_replace_ids(&state, &replace_ids, &existing.id, body).await));
         }
         // New row is at a higher tier — promote: delete the lower-tier
         // copy from the other table, then proceed with single-table insert.
@@ -630,7 +641,11 @@ async fn add(
     }
 
     let outcome = store.insert_with_dedup(fact).await?;
-    let body = apply_replace_ids(&state, &replace_ids, outcome_public(&outcome)).await;
+    let survivor = match &outcome {
+        crate::memory::InsertOutcome::Added(f) => f.id.clone(),
+        crate::memory::InsertOutcome::Merged { fact, .. } => fact.id.clone(),
+    };
+    let body = apply_replace_ids(&state, &replace_ids, &survivor, outcome_public(&outcome)).await;
     Ok(ok(body))
 }
 
@@ -750,9 +765,17 @@ async fn guard_user_voice(
 /// conflict whose winner happened to dedup-merge into an existing row would
 /// silently keep all the losers. Hoisting it into a shared helper closes
 /// that gap.
+/// Retire the losers of a merge. Semantic-table losers are EXPIRED, not
+/// deleted (2026-08-17, Liang's call): stamped `expired_at` +
+/// `superseded_by = successor`, they leave every default read but stay on
+/// disk — a merge or digest is reversible via the unpack query
+/// (`superseded_by` filter). Episodic losers stay hard-deleted: staging
+/// is disposable by design, and an immortal staged row would outlive the
+/// sweep that exists to kill it.
 async fn apply_replace_ids(
     state: &SharedState,
     replace_ids: &[String],
+    successor: &str,
     mut body: serde_json::Value,
 ) -> serde_json::Value {
     if replace_ids.is_empty() {
@@ -761,14 +784,9 @@ async fn apply_replace_ids(
     let mut replaced = Vec::new();
     let mut replaced_failed = Vec::new();
     for id in replace_ids {
-        let mut removed = false;
-        for store in [Arc::clone(&state.store), Arc::clone(&state.episodic)] {
-            if store.delete(id).await.unwrap_or(false) {
-                removed = true;
-                break;
-            }
-        }
-        if removed {
+        let retired = state.store.expire(id, successor).await.unwrap_or(false)
+            || state.episodic.delete(id).await.unwrap_or(false);
+        if retired {
             replaced.push(id.clone());
         } else {
             replaced_failed.push(id.clone());

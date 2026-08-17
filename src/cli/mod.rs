@@ -319,6 +319,21 @@ pub struct AddArgs {
     /// cross-host provenance in the dashboard.
     #[arg(long, env = "LING_MEM_HOST")]
     pub host: Option<String>,
+
+    /// Row ids this new row replaces — the merge/digest verb. Atomic on
+    /// the daemon: the survivor is inserted and every listed semantic
+    /// loser is ARCHIVED (`expired_at` + `superseded_by`, recoverable via
+    /// `list --superseded-by`); episodic losers are deleted. Replaces the
+    /// old two-step add-then-delete, which hard-deleted what should have
+    /// been archived. User-voice losers additionally need
+    /// `--user-directed`.
+    #[arg(long = "replace", value_name = "ID")]
+    pub replace_ids: Vec<String>,
+
+    /// Assert the user directed this change (required when --replace
+    /// targets rows in the user's voice; see the merge law).
+    #[arg(long)]
+    pub user_directed: bool,
 }
 
 #[derive(Debug, Args)]
@@ -438,6 +453,17 @@ pub struct FilterArgs {
     /// matches unscoped rows by design and would take most of the store.
     #[arg(long = "cwd-scope", visible_alias = "project", value_name = "PATH")]
     pub cwd_scope: Option<String>,
+
+    /// Include archived rows — losers a `replace_ids` merge or digest
+    /// expired out of live memory. Off by default: the archive is for
+    /// provenance and unpack, not recall.
+    #[arg(long = "include-expired")]
+    pub include_expired: bool,
+
+    /// Unpack a merge/digest: only the archived rows this survivor id
+    /// replaced. Implies --include-expired.
+    #[arg(long = "superseded-by", value_name = "ID")]
+    pub superseded_by: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -721,6 +747,8 @@ impl FilterArgs {
             tier: self.tier.map(Into::into),
             source_session: None,
             cwd_scope: self.cwd_scope,
+            include_expired: self.include_expired,
+            superseded_by: self.superseded_by,
         })
     }
 }
@@ -1544,6 +1572,8 @@ mod tests {
             older_than: None,
             day: None,
             cwd_scope: None,
+            include_expired: false,
+            superseded_by: None,
         };
         let filters = fa.into_filters().unwrap();
         assert_eq!(filters.contexts, vec!["code/linggen".to_string()]);

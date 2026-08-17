@@ -39,6 +39,10 @@ async fn stats(State(state): State<SharedState>) -> Result<Response, ApiError> {
         .await
         .map_err(ApiError::internal)?;
     let episodic = state.episodic.count().await.map_err(ApiError::internal)?;
+    // The archive: rows a replace_ids merge / digest expired out of live
+    // memory. Counted separately — never inside the tier counts — and
+    // surfaced so archived state stays visible state.
+    let expired = state.store.count_expired().await.map_err(ApiError::internal)?;
 
     // Disk footprint. Both tables live inside the single LanceDB
     // database dir (`memory.lancedb/<table>.lance/`). Lance is
@@ -71,6 +75,7 @@ async fn stats(State(state): State<SharedState>) -> Result<Response, ApiError> {
     Ok(ok(json!({
         "total": core + semantic + episodic,
         "per_tier": { "core": core, "semantic": semantic, "episodic": episodic },
+        "expired": expired,
         "disk_bytes": {
             "semantic": semantic_bytes,
             "episodic": episodic_bytes,

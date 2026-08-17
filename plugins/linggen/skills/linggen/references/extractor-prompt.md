@@ -106,7 +106,7 @@ adding each candidate:
    *incompatible* value) → **never overwrite a semantic row on your own.**
    - **If you can ask the user** (a user-triggered `dream` with `AskUser`
      available): surface the existing row, the candidate, and the resolve
-     options; on their pick, write the winner then delete each loser
+     options; on their pick, write the winner with `replace_ids` listing each loser
      (`ling-mem add "<winner>" --type <t> --from <f> [...]` then
      `ling-mem delete <loser-id> --yes` — no atomic replace verb, so
      write-before-delete).

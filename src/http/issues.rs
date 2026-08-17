@@ -42,7 +42,7 @@ pub fn router() -> Router<SharedState> {
 
 // ── Issues sidecar ──────────────────────────────────────────────────────────
 
-const KINDS: &[&str] = &["chain", "stale-status", "contradiction"];
+const KINDS: &[&str] = &["chain", "stale-status", "contradiction", "subject"];
 const OUTCOMES: &[&str] = &["resolved", "dismissed"];
 
 /// One queued review item.
@@ -115,6 +115,21 @@ pub(crate) async fn issued_row_ids(data_dir: &Path) -> std::collections::HashSet
         .await
         .issues
         .into_iter()
+        .flat_map(|i| i.row_ids)
+        .collect()
+}
+
+/// Row ids named by `subject`-kind issues, any status. A rejected digest
+/// cluster is recorded as a (dismissed) subject issue on its seed; the
+/// subject scan excludes those seeds so a ruled-out cluster stops
+/// re-serving — the same cursor discipline the marker lane uses.
+/// Accepted digests need no record: the merge consumes the members.
+pub(crate) async fn subject_ruled_ids(data_dir: &Path) -> std::collections::HashSet<String> {
+    load(data_dir)
+        .await
+        .issues
+        .into_iter()
+        .filter(|i| i.kind == "subject")
         .flat_map(|i| i.row_ids)
         .collect()
 }

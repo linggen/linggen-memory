@@ -90,7 +90,11 @@ async function pollStats() {
     const s = await api('/api/memory/stats');
     el.textContent =
       `${s.total} rows — core ${s.per_tier.core} · long-term ${s.per_tier.semantic}` +
-      ` · short-term ${s.per_tier.episodic} — ${fmtBytes(s.disk_bytes.total)} on disk` +
+      ` · short-term ${s.per_tier.episodic}` +
+      // The archive: rows merges/digests expired out of live memory.
+      // Shown only once it exists — visible state, never a zeroed chip.
+      (s.expired ? ` · archive ${s.expired}` : '') +
+      ` — ${fmtBytes(s.disk_bytes.total)} on disk` +
       ` — last dream ${fmtAgo(s.last_remembered_at)} · ttl ${s.ttl_days}d`;
     el.hidden = false;
   } catch {

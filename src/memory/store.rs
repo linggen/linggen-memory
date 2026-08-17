@@ -56,12 +56,40 @@ pub struct Filters {
     /// project: identity, preferences, cross-project gotchas. Scoping those
     /// away would be worse than not scoping at all.
     pub cwd_scope: Option<String>,
+    /// Include archived rows (`expired_at IS NOT NULL`). Default `false`:
+    /// live memory only — the archive exists for provenance and unpack,
+    /// not for recall.
+    pub include_expired: bool,
+    /// Only the rows one survivor replaced — the unpack query for a merge
+    /// or digest. Implies `include_expired` (the members are archived by
+    /// definition).
+    pub superseded_by: Option<String>,
 }
 
 impl Filters {
+    /// No selective criterion set. `include_expired` alone doesn't count —
+    /// it widens rather than narrows. The `forget` guard keys on this
+    /// (NOT on `to_sql()` returning `None`, which the always-on archive
+    /// gate would defeat: an empty filter still renders
+    /// `expired_at IS NULL`).
+    pub fn is_empty(&self) -> bool {
+        self.contexts.is_empty()
+            && self.types.is_empty()
+            && self.origin.is_none()
+            && self.outcome.is_none()
+            && self.tier.is_none()
+            && self.since.is_none()
+            && self.until.is_none()
+            && self.source_session.is_none()
+            && self.cwd_scope.is_none()
+            && self.superseded_by.is_none()
+    }
+
     /// Render this filter set as a SQL WHERE-clause fragment (without the
-    /// `WHERE` keyword itself). Returns `None` when nothing is filtered —
-    /// callers skip `only_if` in that case.
+    /// `WHERE` keyword itself). Returns `None` only when no clause renders
+    /// at all (an empty filter with `include_expired` set); the default
+    /// archive gate means an otherwise-empty filter still renders
+    /// `expired_at IS NULL`.
     ///
     /// Time fields compare against `COALESCE(occurred_at, created_at)` so
     /// `since` / `until` match whichever timestamp the fact actually carries.
@@ -117,6 +145,15 @@ impl Filters {
 
         if let Some(sid) = &self.source_session {
             clauses.push(format!("source_session = '{}'", escape_sql(sid)));
+        }
+
+        // Archive gate. Ordinary queries see live rows only; the unpack
+        // query (`superseded_by`) targets archived members and implies
+        // include_expired.
+        if let Some(succ) = &self.superseded_by {
+            clauses.push(format!("superseded_by = '{}'", escape_sql(succ)));
+        } else if !self.include_expired {
+            clauses.push("expired_at IS NULL".to_string());
         }
 
         // The path itself, anything nested under it, or nothing at all. The
@@ -233,24 +270,36 @@ impl MemoryPatch {
 /// 2026-05-15). A single safe column add stays well under the complexity
 /// bar that rejected the broader migration scheme.
 async fn ensure_late_schema_additions(table: &lancedb::Table) -> Result<()> {
-    use arrow_schema::{Field, Schema as ArrowSchema};
+    use arrow_schema::{DataType, Field, Schema as ArrowSchema, TimeUnit};
     let current = table
         .schema()
         .await
         .context("reading existing memory table schema")?;
-    if current.field_with_name("host").is_ok() {
+    // Every column added after the initial schema, in add order:
+    // `host` (2026-05-20), the archive pair (2026-08-17).
+    let late: &[(&str, DataType)] = &[
+        ("host", DataType::Utf8),
+        (
+            "expired_at",
+            DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into())),
+        ),
+        ("superseded_by", DataType::Utf8),
+    ];
+    let missing: Vec<Field> = late
+        .iter()
+        .filter(|(name, _)| current.field_with_name(name).is_err())
+        .map(|(name, dt)| Field::new(*name, dt.clone(), true))
+        .collect();
+    if missing.is_empty() {
         return Ok(());
     }
-    let add_schema = Arc::new(ArrowSchema::new(vec![Field::new(
-        "host",
-        arrow_schema::DataType::Utf8,
-        true,
-    )]));
+    let names: Vec<&str> = missing.iter().map(|f| f.name().as_str()).collect();
+    let add_schema = Arc::new(ArrowSchema::new(missing.clone()));
     table
         .add_columns(NewColumnTransform::AllNulls(add_schema), None)
         .await
-        .context("adding `host` column to existing memory table")?;
-    tracing::info!("memory table: added `host` column (NULL for pre-existing rows)");
+        .with_context(|| format!("adding {names:?} column(s) to existing memory table"))?;
+    tracing::info!("memory table: added {names:?} column(s) (NULL for pre-existing rows)");
     Ok(())
 }
 
@@ -938,6 +987,35 @@ impl MemoryStore {
         Ok(removed > 0)
     }
 
+    /// Archive a fact out of live memory: stamp `expired_at = now` and
+    /// record the `successor` id that replaced it. The row leaves every
+    /// default-filtered read (search / list / scans / counts) but stays on
+    /// disk — which is what makes a `replace_ids` merge or a subject
+    /// digest reversible (`Filters::superseded_by` is the unpack query).
+    /// Deliberately does NOT touch `updated_at`: expiring is bookkeeping,
+    /// not activity, and the archived row should keep its original clock.
+    /// Returns `false` if the id wasn't present; expiring an already-
+    /// expired row just restamps it (idempotent in effect).
+    pub async fn expire(&self, id: &str, successor: &str) -> Result<bool> {
+        let _guard = self.write_lock.lock().await;
+        let Some(mut existing) = self.get(id).await? else {
+            return Ok(false);
+        };
+        existing.expired_at = Some(Utc::now().trunc_subsecs(6));
+        existing.superseded_by = Some(successor.to_string());
+        self.upsert(&existing).await?;
+        Ok(true)
+    }
+
+    /// Archived-row count (`expired_at IS NOT NULL`) — surfaced in stats
+    /// so the archive is visible state, never hidden state.
+    pub async fn count_expired(&self) -> Result<usize> {
+        self.table
+            .count_rows(Some("expired_at IS NOT NULL".to_string()))
+            .await
+            .context("counting expired rows in memory table")
+    }
+
     /// Bulk-delete by filter. Returns the number of rows removed.
     ///
     /// Safety: refuses to run with an empty filter — use `Filters::default()`
@@ -953,13 +1031,15 @@ impl MemoryStore {
         // (since origin isn't pushed into SQL anymore). Treat that as
         // non-empty to avoid the "refusing to forget with empty filter"
         // guard accidentally rejecting a perfectly valid origin-only request.
-        let predicate = filters.to_sql();
-        let has_any_filter = predicate.is_some() || filters.origin.is_some();
-        if !has_any_filter {
+        // Structural check, not SQL-shaped: the archive gate makes to_sql()
+        // non-None even for an empty filter, which would wave through a
+        // store-wide delete.
+        if filters.is_empty() {
             return Err(anyhow!(
                 "refusing to forget with empty filter — provide at least one criterion"
             ));
         }
+        let predicate = filters.to_sql();
 
         if filters.origin.is_some() {
             // Origin filter active → list rows that match, delete each by id.
@@ -1294,8 +1374,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn filters_to_sql_is_none_for_default() {
-        assert!(Filters::default().to_sql().is_none());
+    async fn default_filter_renders_only_the_archive_gate() {
+        // The default filter is structurally empty (forget refuses it) but
+        // still renders the live-rows-only gate.
+        assert!(Filters::default().is_empty());
+        assert_eq!(Filters::default().to_sql().as_deref(), Some("expired_at IS NULL"));
+        // Opting into the archive removes the gate — nothing left to render.
+        let all = Filters { include_expired: true, ..Filters::default() };
+        assert!(all.to_sql().is_none());
+        // The unpack query targets one survivor's archived members.
+        let unpack = Filters { superseded_by: Some("abc123".into()), ..Filters::default() };
+        assert!(!unpack.is_empty());
+        assert_eq!(unpack.to_sql().as_deref(), Some("superseded_by = 'abc123'"));
     }
 
     #[tokio::test]
@@ -1310,6 +1400,8 @@ mod tests {
             until: None,
             source_session: None,
             cwd_scope: None,
+            include_expired: false,
+            superseded_by: None,
         };
         let sql = f.to_sql().unwrap();
         assert!(sql.contains("array_has(contexts, 'code/linggen')"));
@@ -1655,6 +1747,65 @@ mod tests {
 
         // Second delete is a no-op but not an error.
         assert!(!store.delete(&id).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn expire_archives_instead_of_deleting() {
+        let (store, _dir) = fresh_store().await;
+        let loser = make_fact("old claim, superseded", MemoryType::Built);
+        let survivor = make_fact("current truth", MemoryType::Built);
+        let (loser_id, survivor_id) = (loser.id.clone(), survivor.id.clone());
+        store.insert(&[loser, survivor]).await.unwrap();
+
+        assert!(store.expire(&loser_id, &survivor_id).await.unwrap());
+
+        // Default reads see live memory only.
+        let live = store
+            .list(&Filters::default(), SortOrder::Newest, 100, 0)
+            .await
+            .unwrap();
+        assert_eq!(live.len(), 1);
+        assert_eq!(live[0].id, survivor_id);
+        assert_eq!(store.count_filtered(&Filters::default()).await.unwrap(), 1);
+        assert_eq!(store.count_expired().await.unwrap(), 1);
+
+        // Direct get still returns the archived row, fields stamped,
+        // original activity clock untouched.
+        let archived = store.get(&loser_id).await.unwrap().unwrap();
+        assert!(archived.expired_at.is_some());
+        assert_eq!(archived.superseded_by.as_deref(), Some(survivor_id.as_str()));
+        assert!(archived.updated_at.is_none());
+
+        // The unpack query finds exactly the survivor's members.
+        let members = store
+            .list(
+                &Filters {
+                    superseded_by: Some(survivor_id.clone()),
+                    ..Filters::default()
+                },
+                SortOrder::Newest,
+                100,
+                0,
+            )
+            .await
+            .unwrap();
+        assert_eq!(members.len(), 1);
+        assert_eq!(members[0].id, loser_id);
+
+        // include_expired widens a plain list back to both rows.
+        let all = store
+            .list(
+                &Filters { include_expired: true, ..Filters::default() },
+                SortOrder::Newest,
+                100,
+                0,
+            )
+            .await
+            .unwrap();
+        assert_eq!(all.len(), 2);
+
+        // Expiring a missing id reports false.
+        assert!(!store.expire("nope-nope-1", &survivor_id).await.unwrap());
     }
 
     #[tokio::test]
