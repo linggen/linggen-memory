@@ -10,9 +10,11 @@ openclaw plugins install clawhub:@linggen/linggen
 
 Restart the gateway and it is on. First activation adds the two MCP servers to
 your `openclaw.json`; the binaries themselves install on first use, **after the
-agent asks you** — the installers ship inside this plugin (no remotely fetched
-script is executed), binaries are SHA-256 verified and range-pinned to 1.x,
-mirrored for regions where GitHub is blocked.
+agent asks you** — the installers ship inside this plugin and refuse
+remote-script fallbacks, so no remotely fetched script is ever executed. The
+`ling-mem` binary is SHA-256 verified and range-pinned to 1.x, mirrored for
+regions where GitHub is blocked; the engine binary comes over TLS from GitHub
+releases (checksum verification on the roadmap).
 
 ## What it can touch
 
@@ -21,8 +23,9 @@ reach before installing:
 
 - **Durable memory** in `~/.linggen` that outlives every session, with
   relevant rows injected into future prompts sent to your configured model.
-- **Local binaries**: `ling-mem` (~30MB) and the Linggen engine (~100MB),
-  installed to `~/.local/bin` on your explicit yes, SHA-verified.
+- **Local binaries**: `ling-mem` (~30MB, SHA-256-verified) and the Linggen
+  engine (~100MB, TLS from GitHub releases), installed to `~/.local/bin` on
+  your explicit yes.
 - **Browser and X tools** (via the engine): agent control of your own Chrome
   with per-site permission prompts, and reads of your logged-in X session.
 - **Session-log backfill** (`/linggen-scan`, user-triggered only): reads local

@@ -32,11 +32,13 @@ esac
 [ -n "$via" ]   && export LING_MEM_SOURCE="$via" LINGGEN_SOURCE="$via"
 [ -n "$agent" ] && export LING_MEM_AGENT="$agent" LINGGEN_AGENT="$agent"
 
-# Both installers ship IN this bundle — no remote script is ever fetched
-# and executed. install-bin.sh (ling-mem, SHA-256-verified binaries,
-# range-pinned to 1.x) and install-engine.sh (the Linggen engine; vendored
-# verbatim from linggensite/public/install.sh) are local siblings of this
-# file; only the release BINARIES they install come over the network.
+# Both installers ship IN this bundle and LINGGEN_NO_REMOTE_SCRIPT=1 makes
+# install-engine.sh refuse its curl fallback outright — this flow never
+# executes a remotely fetched script. What does come over the network are
+# the release BINARIES: ling-mem is SHA-256-verified by install-bin.sh; the
+# engine and bun binaries are fetched from GitHub releases over TLS without
+# a checksum yet (release-manifest verification is on the roadmap).
+export LINGGEN_NO_REMOTE_SCRIPT=1
 
 # ling-mem — the memory backend. Installs to ~/.local/bin.
 if ! command -v ling-mem >/dev/null 2>&1; then

@@ -304,6 +304,13 @@ install_ling_mem() {
       echo "         memory feature is used, so this is non-fatal." >&2
       return 0
     fi
+  elif [ "${LINGGEN_NO_REMOTE_SCRIPT:-0}" = "1" ]; then
+    # A vendored caller (skill/plugin bootstrap) forbids remote script
+    # execution outright. It installs ling-mem itself from its own bundled
+    # installer before running this script, so skipping here loses nothing.
+    echo "Skipping ling-mem install: no local installer beside this script" >&2
+    echo "and LINGGEN_NO_REMOTE_SCRIPT=1 forbids fetching one." >&2
+    return 0
   elif ! { curl -fsSL "$LING_MEM_INSTALL_BIN_URL" \
          || curl -fsSL "https://linggen.dev/dl/install-bin.sh"; } | bash -s -- --version "$pin"; then
     echo "" >&2

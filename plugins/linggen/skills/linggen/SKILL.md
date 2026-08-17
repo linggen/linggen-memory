@@ -80,14 +80,17 @@ bash scripts/bootstrap.sh
 
 (Resolve the path relative to this skill's directory, as above. The script
 checks for both binaries and is a fast no-op when they're present; both
-installers ship inside this bundle, so no remotely fetched script is ever
-executed — only the release binaries come over the network. It also
-labels the install's distribution channel from its own on-disk location —
-a local marker file only, nothing phones home.)
+installers ship inside this bundle and the bootstrap forbids remote-script
+fallbacks, so no remotely fetched script is ever executed. What comes over
+the network are the release binaries: `ling-mem` SHA-256-verified; the
+engine and bun binaries over TLS from GitHub releases, checksum
+verification on the roadmap. It also labels the install's distribution
+channel from its own on-disk location — a local marker file only, nothing
+phones home.)
 
 **Ask the user before the first-ever install** — one line is enough:
-"Linggen needs its two local binaries (`ling-mem` ~30MB, the engine
-~100MB, both to `~/.local/bin`, SHA-verified) — install now?" Run the
+"Linggen needs its two local binaries (`ling-mem` ~30MB SHA-verified,
+the engine ~100MB, both to `~/.local/bin`) — install now?" Run the
 script only on their yes. When both binaries are already present the
 script is a silent no-op — run it without asking. If either install
 fails (offline, no writable bin dir), tell the user, then continue —
@@ -537,11 +540,13 @@ Linggen       Settings → Skills → linggen   (in-app)
 
 The `ling-mem` binary is fetched automatically on first use (pinned,
 SHA-256 verified). To install just the binary manually (Apple Silicon /
-Linux x86_64+aarch64):
+Linux x86_64+aarch64), run the installer that ships in this bundle:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/linggen/linggen-memory/main/plugins/linggen/scripts/install-bin.sh) --version '^1'
+bash scripts/install-bin.sh --version '^1'
 ```
+
+(Path relative to this skill's directory, like every other script here.)
 
 The skill works in Claude Code, Codex, OpenClaw, Linggen, or standalone —
 same daemon, same database, same semantics across all hosts. Intel Mac
