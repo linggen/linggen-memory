@@ -342,25 +342,31 @@ with this session's model, tools, and user.
 1. **Back up, then list.** `ling-mem export` first (one snapshot per
    solve session), then `ling-mem issues --format json` (or the
    `memory_issues` MCP tool). Empty → say so, done.
-2. **Per item, gather evidence at solve time.** Fetch the rows
-   (`ling-mem get <row_id>`). For `stale-status`: check the WORLD —
-   `git log --oneline --since=<row date>` in the named repo, working
-   tree, file existence. The row was written before the world moved;
-   your evidence decides what's true now.
-3. **Apply the confidence rule.** Evidence is conclusive AND every
+2. **Per item, gather evidence at solve time — solve it yourself
+   first.** Fetch the rows (`ling-mem get <row_id>`), then read
+   whatever settles the question: git history
+   (`git log --oneline --since=<row date>` in the named repo), the
+   code, docs, files. The row was written before the world moved;
+   your evidence decides what's true now. Asking the user is the
+   last resort, not a step.
+3. **Apply the confidence rule.** Evidence settles it AND every
    affected row is your own note (`from=derived`) → solve directly, no
    ask: one `memory_add` with `replace_ids` (CLI: `add --replace <id>`)
-   writing current truth. Evidence is ambiguous, OR any affected row is
-   user-voice (`from=user`) → **ask the user, ONE item per question**
-   (AskUserQuestion on Claude Code; plain numbered options elsewhere) —
-   never batch the whole queue into one wall of questions. User-voice
-   fixes carry `user_directed:true` after their answer.
-4. **`subject` items.** Show the user the cluster (a gist per row)
-   and ask: one digest, or keep separate? Digest → write it per the
-   condense drafting rules (`add --tag digest --replace <id>` per
-   member), resolve the issue `resolved`. Keep separate → resolve it
-   `dismissed` — the dismissal IS the ruling; the detector never
-   serves that cluster again.
+   writing current truth. Ask the user ONLY when evidence cannot
+   settle it after a real attempt, or a user-voice row (`from=user`)
+   is affected. When you do ask: **ONE item per question**, phrased
+   as a simple fact question in plain words — one-line gist per fact,
+   then "same thing, or different?" / "which is true now?", with your
+   recommendation (AskUserQuestion on Claude Code; plain numbered
+   options elsewhere). No row ids, commit hashes, or cluster jargon
+   in the question. User-voice fixes carry `user_directed:true` after
+   their answer.
+4. **`subject` items.** Rule on coherence yourself from the full
+   member contents: one genuine subject → digest per the condense
+   drafting rules (`add --tag digest --replace <id>` per member),
+   resolve `resolved`; distinct workstreams → resolve `dismissed` —
+   the dismissal IS the ruling; the detector never serves that
+   cluster again. Ask only when you genuinely can't tell.
 5. **Close as you go.** After each item:
    `ling-mem issue-resolve <id> --outcome resolved --note "<what you did>"`
    (or `memory_issue_resolve`). Not worth fixing → `--outcome dismissed`.

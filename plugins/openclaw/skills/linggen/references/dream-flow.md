@@ -196,6 +196,8 @@ can prove, queue the rest for the user. Two capped passes:
      neighbor (note: the claim + "verify against git/files at solve
      time"), `contradiction` when user-voice rows disagree. `already
      queued` is success — the daemon dedups per (kind, row_ids).
+     Write every note in plain words — it is the solver's whole
+     starting context and may become the user's question.
 
 3. **Digest the quiet** —
    `ling-mem chains --kind subject --derived-only --limit 5`. The
@@ -217,7 +219,8 @@ can prove, queue the rest for the user. Two capped passes:
 
    Never merge below a bar you can defend, and never a marker
    candidate below the completion bar — doubt always queues; solving
-   queued items is `/linggen solve`, with the user present.
+   queued items is `/linggen solve` — the solver works evidence-first
+   and asks the user only when evidence cannot settle it.
 
 ## Reporting (Linggen dashboard)
 
