@@ -17,6 +17,13 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 via="" agent=""
 case "$here" in
   */.openclaw/workspace/skills/*) via=clawhub  agent=openclaw ;;
+  # OpenClaw plugin skills: the manifest's `skills` entries are symlinked into
+  # ~/.openclaw/plugin-skills/, and the package itself lands under extensions/
+  # (local or archive install) or npm/ (ClawHub install) — three paths, one
+  # channel. Whether $BASH_SOURCE resolves the symlink or not, one arm matches.
+  */.openclaw/plugin-skills/*)    via=plugin   agent=openclaw ;;
+  */.openclaw/extensions/*)       via=plugin   agent=openclaw ;;
+  */.openclaw/npm/*)              via=plugin   agent=openclaw ;;
   */.claude/plugins/*)            via=plugin   agent=cc ;;
   */.codex/*)                     via=plugin   agent=codex ;;
   */.agents/skills/*)             via=skills-sh ;;   # shared dir — host unknowable
