@@ -1092,6 +1092,18 @@ body.view-calendar #calendar-view { display: flex; }
 .dcal-chip-pending    { background: color-mix(in srgb, var(--warn) 24%, transparent); color: var(--warn); }
 .dcal-chip-remembered { background: color-mix(in srgb, var(--ok) 24%, transparent); color: var(--ok); }
 .dcal-chip-staging    { background: var(--panel-2); color: var(--text-dim); }
+/* The one clickable chip — jump to Browse filtered to that day. */
+.dcal-chip-view {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--accent);
+  border: none;
+  cursor: pointer;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  text-align: left;
+}
+.dcal-chip-view:hover { background: color-mix(in srgb, var(--accent) 22%, transparent); }
 .dcal-state-dreamed   { background: color-mix(in srgb, var(--ok) 5%, transparent); }
 .dcal-state-scanned   { background: color-mix(in srgb, var(--ok) 2%, transparent); }
 .dcal-state-undreamed { background: color-mix(in srgb, var(--warn) 5%, transparent); }

@@ -219,7 +219,8 @@ function calTooltip(iso, rec, isToday) {
 }
 
 // Read-only chips for one past day — same visual language as the memory
-// app's calendar, minus the action buttons.
+// app's calendar, minus the action buttons. The one navigation
+// affordance is "rows ▸": jump to Browse filtered to that day.
 function calDayChips(iso, rec) {
   const chips = [];
   if (rec?.harvested_at) {
@@ -231,7 +232,32 @@ function calDayChips(iso, rec) {
   } else if (rec?.remembered_at) {
     chips.push(`<div class="dcal-chip dcal-chip-remembered" title="${esc(`dreamed ${fmtAgo(rec.remembered_at)} — ${rec.judged || 0} judged, ${rec.promoted || 0} promoted`)}">dreamed ✓ ${rec.judged || 0}·${rec.promoted || 0}</div>`);
   }
+  if (rec) chips.push(viewRowsChip(iso));
   return chips.length ? `<div class="dcal-chips">${chips.join('')}</div>` : '';
+}
+
+// The jump into Browse — shown on any day the store knows about
+// (record or staged rows). Promoted rows outlive the swept short-term
+// ones, so the day view can be non-empty even after "aged out".
+function viewRowsChip(iso) {
+  return `<button type="button" class="dcal-chip dcal-chip-view" data-view-day="${esc(iso)}" title="${esc(`browse rows created ${iso}`)}">rows ▸</button>`;
+}
+
+// Calendar → Browse: filter to one local day across both tables. Clears
+// search text (day view is a browse, not a query) but keeps nothing
+// else — the All view shows every tier the day touched.
+function openDayInBrowse(iso) {
+  state.filters.day = iso;
+  state.text = '';
+  const input = document.getElementById('query');
+  if (input) input.value = '';
+  if (state.view !== 'all') {
+    state.view = 'all';
+    renderViewBar();
+  }
+  switchUiView('browse');
+  renderFiltersBar();
+  reload();
 }
 
 function renderCalMonth() {
@@ -270,7 +296,7 @@ function renderCalMonth() {
     }
     const num = `<div class="dcal-num${isToday ? ' dcal-today-num' : ''}">${date.getDate()}</div>`;
     const chips = isToday
-      ? (rec?.rows ? `<div class="dcal-chips"><div class="dcal-chip dcal-chip-staging">${rec.rows} staged</div></div>` : '')
+      ? (rec?.rows ? `<div class="dcal-chips"><div class="dcal-chip dcal-chip-staging">${rec.rows} staged</div>${viewRowsChip(iso)}</div>` : '')
       : (isFuture ? '' : calDayChips(iso, rec));
     cells.push(`<div class="${cls.join(' ')}" title="${esc(calTooltip(iso, rec, isToday))}">${num}${chips}</div>`);
   }
@@ -302,6 +328,9 @@ function renderCalMonth() {
       calViewMonth = next.getTime();
       renderCalMonth();
     });
+  });
+  box.querySelectorAll('[data-view-day]').forEach((btn) => {
+    btn.addEventListener('click', () => openDayInBrowse(btn.dataset.viewDay));
   });
 }
 
@@ -377,6 +406,7 @@ function parseQuery(raw) {
     outcome: null,
     since: null,
     until: null,
+    day: null,
   };
   for (const token of raw.split(/\s+/).filter(Boolean)) {
     const match = token.match(/^\/([a-z]+):(.+)$/i);
@@ -412,6 +442,12 @@ function applyFilterToken(field, value, picked) {
       picked[field] = iso;
       return true;
     }
+    case 'day':
+      // Bare local calendar day — the daemon expands it to that day's
+      // local bounds; a timestamp here would be a different filter.
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+      picked.day = value;
+      return true;
     default:
       return false;
   }
@@ -439,6 +475,9 @@ const state = {
     outcome: null,
     since: null,
     until: null,
+    // One local calendar day, YYYY-MM-DD — daemon-side sugar over
+    // since/until (the calendar's "view rows" jump sets this).
+    day: null,
     source_session: null,
   },
   // Storage view — mutually exclusive across the three places a row can
@@ -506,6 +545,7 @@ function hasAnyFilter() {
     f.outcome !== null ||
     f.since !== null ||
     f.until !== null ||
+    f.day !== null ||
     f.source_session !== null
   );
 }
@@ -520,6 +560,7 @@ function mergeFilters(picked) {
   if (picked.outcome !== null) f.outcome = picked.outcome;
   if (picked.since !== null)   f.since = picked.since;
   if (picked.until !== null)   f.until = picked.until;
+  if (picked.day !== null)     f.day = picked.day;
 }
 
 function clearFilters() {
@@ -530,6 +571,7 @@ function clearFilters() {
     outcome: null,
     since: null,
     until: null,
+    day: null,
     source_session: null,
   };
 }
@@ -565,6 +607,7 @@ function filterPayload() {
   if (f.outcome) body.outcome = f.outcome;
   if (f.since)   body.since = f.since;
   if (f.until)   body.until = f.until;
+  if (f.day)     body.day = f.day;
   if (f.source_session) body.source_session = f.source_session;
   // Storage view: 'episodic' is a top-level flag on the request (switches
   // table); 'core' / 'semantic' add a `tier` filter inside the semantic
@@ -596,14 +639,10 @@ function isSearchMode() {
   return state.text.trim().length > 0;
 }
 
-// Fetch rows for the current view. For semantic-only views (`core`,
-// `semantic`) and episodic-only, this is one round-trip. For `all`
-// the daemon's list/search endpoint is single-table by design (the
-// `episodic: true` flag flips which table is queried), so we fan out
-// two parallel requests and merge — concat + sort by created_at desc,
-// then trim to `limit`. Loses clean pagination beyond the first page
-// in `all` mode, which is fine for the typical store size; loadMore()
-// is suppressed there.
+// Fetch rows for the current view — one round-trip in every mode. Tab
+// views (`core` / `semantic` / `episodic`) pin to one table; `all`
+// spans both server-side (list merges + sorts + offsets as one result
+// set; search fuses via RRF), so no client-side merge anywhere.
 // Tag rows with their storage origin (`_storage`: 'episodic' | 'semantic')
 // so the detail pane can show the right tier even after the All-view
 // merge loses the per-fetch context. The episodic table doesn't carry
@@ -719,12 +758,10 @@ async function reload() {
         });
     state.loaded = rows;
     state.offset = rows.length;
-    // Pagination via offset only works when the request hits a single
-    // table. Search is capped at SEARCH_LIMIT (no offset); `all` mode
-    // fans out two requests we can't offset together. Both → no more.
-    state.hasMore = !isSearchMode()
-                 && state.view !== 'all'
-                 && rows.length === LIST_LIMIT;
+    // Every list view pages via offset — the daemon merges + sorts +
+    // offsets both tables as one result set, so `all` pages too.
+    // Search stays capped at SEARCH_LIMIT: relevance-ranked, no offset.
+    state.hasMore = !isSearchMode() && rows.length === LIST_LIMIT;
     renderList();
     updateCount();
   } catch (err) {
@@ -778,6 +815,7 @@ function activeFilterChips() {
   if (f.outcome) chips.push(filterChip('outcome', f.outcome));
   if (f.since)   chips.push(filterChip('since', f.since));
   if (f.until)   chips.push(filterChip('until', f.until));
+  if (f.day)     chips.push(filterChip('day', f.day));
   if (f.source_session) chips.push(filterChip('source_session', f.source_session));
   return chips;
 }
@@ -2404,6 +2442,7 @@ document.getElementById('view-tabs').addEventListener('click', (e) => {
 // (e.g. the memory skill's "Open in ling-mem console ↗" buttons after
 // a hippocampus run). Accepted params:
 //   ?since=<ISO ts or YYYY-MM-DD>  → state.filters.since
+//   ?day=<YYYY-MM-DD>              → state.filters.day (one local day)
 //   ?session=<source_session id>   → state.filters.source_session
 //   ?tier=core|semantic|episodic   → state.view
 // Anything else is ignored.
@@ -2411,6 +2450,8 @@ document.getElementById('view-tabs').addEventListener('click', (e) => {
   const sp = new URLSearchParams(window.location.search);
   const since = sp.get('since');
   if (since) state.filters.since = since;
+  const day = sp.get('day');
+  if (day && /^\d{4}-\d{2}-\d{2}$/.test(day)) state.filters.day = day;
   const session = sp.get('session');
   if (session) state.filters.source_session = session;
   const tier = sp.get('tier');
