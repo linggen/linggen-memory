@@ -105,6 +105,20 @@ pub(crate) async fn open_count(data_dir: &Path) -> usize {
     load(data_dir).await.issues.iter().filter(|i| i.status == "open").count()
 }
 
+/// Every row id referenced by any issue, whatever its status. The marker
+/// scan excludes these from candidate selection: an open item is already
+/// queued, a closed one was already ruled on — re-surfacing either burns
+/// a capped slot without advancing the cursor (a lane that only queues
+/// cannot advance its own cursor).
+pub(crate) async fn issued_row_ids(data_dir: &Path) -> std::collections::HashSet<String> {
+    load(data_dir)
+        .await
+        .issues
+        .into_iter()
+        .flat_map(|i| i.row_ids)
+        .collect()
+}
+
 // ── Handlers ────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]

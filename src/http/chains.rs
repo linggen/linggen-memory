@@ -16,7 +16,9 @@
 //! - **`marker`** (tier-2) — rows carrying provisional-state language
 //!   ("OPEN:", "uncommitted", "pending", …), each with its nearest
 //!   stored-vector neighbors. Candidates only: the caller must confirm
-//!   a real supersession before merging.
+//!   a real supersession before merging. Rows already named by a review
+//!   issue (any status) are excluded, so each capped page surfaces fresh
+//!   candidates instead of re-serving the queue.
 //! - **`subject`** (v2) — star clusters over stored vectors: a seed row
 //!   plus every row within `SUBJECT_FLOOR` cosine of it, minimum
 //!   [`SUBJECT_MIN_ROWS`] members. Feeds the digest pass — N same-subject
@@ -38,7 +40,7 @@ use axum::response::Response;
 use axum::{Json, Router};
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub fn router() -> Router<SharedState> {
     use axum::routing::post;
@@ -121,7 +123,10 @@ async fn chains(
 
     match kind {
         "cited" => Ok(ok(cited_chains(&rows, limit, offset, req.derived_only))),
-        "marker" => Ok(ok(marker_candidates(&rows, limit, offset, req.derived_only))),
+        "marker" => {
+            let issued = super::issues::issued_row_ids(&state.data_dir).await;
+            Ok(ok(marker_candidates(&rows, limit, offset, req.derived_only, &issued)))
+        }
         "subject" => Ok(ok(subject_clusters(&rows, limit, offset, req.derived_only))),
         other => Err(ApiError::bad_request(format!(
             "invalid kind {other:?}: expected \"cited\", \"marker\", or \"subject\""
@@ -247,8 +252,17 @@ fn contains_id(content: &str, id: &str) -> bool {
 
 /// Rows carrying provisional-state markers, each with its nearest
 /// stored-vector neighbors. Rows already inside a cited chain are
-/// skipped — the tier-1 pass owns them.
-fn marker_candidates(rows: &[Memory], limit: usize, offset: usize, derived_only: bool) -> Value {
+/// skipped — the tier-1 pass owns them. Rows named by a review issue
+/// (`issued`, any status) are skipped too — queueing consumes nothing,
+/// so without this the same oldest candidates re-queue as "already
+/// queued" forever and the scan never reaches the rest of the store.
+fn marker_candidates(
+    rows: &[Memory],
+    limit: usize,
+    offset: usize,
+    derived_only: bool,
+    issued: &HashSet<String>,
+) -> Value {
     let in_cited: Vec<bool> = {
         let edges = citation_edges(rows);
         let mut flags = vec![false; rows.len()];
@@ -259,13 +273,24 @@ fn marker_candidates(rows: &[Memory], limit: usize, offset: usize, derived_only:
         flags
     };
 
-    let marked: Vec<(usize, &'static str)> = rows
-        .iter()
-        .enumerate()
-        .filter(|(i, row)| !in_cited[*i] && row.tier != Tier::Core)
-        .filter(|(_, row)| !derived_only || is_derived_note(row))
-        .filter_map(|(i, row)| find_marker(&row.content).map(|m| (i, m)))
-        .collect();
+    let (marked, queued_skipped): (Vec<(usize, &'static str)>, usize) = {
+        let mut kept = Vec::new();
+        let mut skipped = 0usize;
+        let candidates = rows
+            .iter()
+            .enumerate()
+            .filter(|(i, row)| !in_cited[*i] && row.tier != Tier::Core)
+            .filter(|(_, row)| !derived_only || is_derived_note(row))
+            .filter_map(|(i, row)| find_marker(&row.content).map(|m| (i, m)));
+        for (i, marker) in candidates {
+            if issued.contains(&rows[i].id) {
+                skipped += 1;
+            } else {
+                kept.push((i, marker));
+            }
+        }
+        (kept, skipped)
+    };
 
     let total = marked.len();
     // Neighbors are computed for the requested page only — the O(N)
@@ -289,6 +314,10 @@ fn marker_candidates(rows: &[Memory], limit: usize, offset: usize, derived_only:
         "scanned": rows.len(),
         "total": total,
         "offset": offset,
+        // Marker rows hidden because a review issue already names them —
+        // reported so a caller never mistakes a filtered scan for a clean
+        // store.
+        "queued_skipped": queued_skipped,
         "candidates": page,
     })
 }
@@ -545,10 +574,25 @@ mod tests {
             row("bbbbbbbbbb", "merged, see aaaaaaaaaa", Origin::Derived),
             row("cccccccccc", "feature X design locked, impl not started", Origin::Derived),
         ];
-        let out = marker_candidates(&rows, 10, 0, false);
+        let out = marker_candidates(&rows, 10, 0, false, &HashSet::new());
         // aaaaaaaaaa is in a cited chain → excluded; cccccccccc matches.
         assert_eq!(out["total"], 1);
         assert_eq!(out["candidates"][0]["row"]["id"], "cccccccccc");
         assert_eq!(out["candidates"][0]["marker"], "not started");
+        assert_eq!(out["queued_skipped"], 0);
+    }
+
+    #[test]
+    fn marker_rows_named_by_issues_are_skipped_and_counted() {
+        let rows = vec![
+            row("aaaaaaaaaa", "migration deferred until the schema lands", Origin::Derived),
+            row("bbbbbbbbbb", "feature X design locked, impl not started", Origin::Derived),
+        ];
+        let issued: HashSet<String> = ["aaaaaaaaaa".to_string()].into();
+        let out = marker_candidates(&rows, 10, 0, false, &issued);
+        // The queued row no longer burns a slot; the fresh one surfaces.
+        assert_eq!(out["total"], 1);
+        assert_eq!(out["queued_skipped"], 1);
+        assert_eq!(out["candidates"][0]["row"]["id"], "bbbbbbbbbb");
     }
 }

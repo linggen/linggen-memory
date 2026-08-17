@@ -1,7 +1,7 @@
 {
   "id": "linggen",
   "name": "Linggen",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Durable cross-host memory that recalls itself: core identity in the system prompt, relevant memories every turn, and the project scope stamped on every write. Backed by the local ling-mem daemon, shared with Claude Code and Codex.",
   "activation": {
     "onStartup": true
@@ -10,13 +10,41 @@
     "./skills"
   ],
   "commandAliases": [
-    { "name": "linggen-config", "kind": "runtime-slash", "cliCommand": "linggen" },
-    { "name": "linggen-dream", "kind": "runtime-slash", "cliCommand": "linggen" },
-    { "name": "linggen-list", "kind": "runtime-slash", "cliCommand": "linggen" },
-    { "name": "linggen-scan", "kind": "runtime-slash", "cliCommand": "linggen" },
-    { "name": "linggen-search", "kind": "runtime-slash", "cliCommand": "linggen" },
-    { "name": "linggen-solve", "kind": "runtime-slash", "cliCommand": "linggen" },
-    { "name": "linggen-status", "kind": "runtime-slash", "cliCommand": "linggen" }
+    {
+      "name": "linggen-config",
+      "kind": "runtime-slash",
+      "cliCommand": "linggen"
+    },
+    {
+      "name": "linggen-dream",
+      "kind": "runtime-slash",
+      "cliCommand": "linggen"
+    },
+    {
+      "name": "linggen-list",
+      "kind": "runtime-slash",
+      "cliCommand": "linggen"
+    },
+    {
+      "name": "linggen-scan",
+      "kind": "runtime-slash",
+      "cliCommand": "linggen"
+    },
+    {
+      "name": "linggen-search",
+      "kind": "runtime-slash",
+      "cliCommand": "linggen"
+    },
+    {
+      "name": "linggen-solve",
+      "kind": "runtime-slash",
+      "cliCommand": "linggen"
+    },
+    {
+      "name": "linggen-status",
+      "kind": "runtime-slash",
+      "cliCommand": "linggen"
+    }
   ],
   "configSchema": {
     "type": "object",
