@@ -5,7 +5,7 @@ Codex sessions write to — one `ling-mem` daemon, one LanceDB store, every host
 reading and writing the same memory.
 
 ```bash
-openclaw plugins install clawhub:@linggen/openclaw-plugin
+openclaw plugins install clawhub:@linggen/linggen
 ```
 
 Restart the gateway and it is on. First activation installs the `ling-mem` binary
