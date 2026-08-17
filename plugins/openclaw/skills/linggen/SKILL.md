@@ -334,8 +334,9 @@ first.
 
 The review queue holds what a dream audit could NOT solve with
 confidence: uncertain merges (`chain`), status claims likely overtaken
-by the world (`stale-status`), and conflicts needing the user's pick
-(`contradiction`). The daemon only bookkeeps; **you are the solver**,
+by the world (`stale-status`), conflicts needing the user's pick
+(`contradiction`), and digest clusters of doubtful subject coherence
+(`subject`). The daemon only bookkeeps; **you are the solver**,
 with this session's model, tools, and user.
 
 1. **Back up, then list.** `ling-mem export` first (one snapshot per
@@ -354,10 +355,16 @@ with this session's model, tools, and user.
    (AskUserQuestion on Claude Code; plain numbered options elsewhere) —
    never batch the whole queue into one wall of questions. User-voice
    fixes carry `user_directed:true` after their answer.
-4. **Close as you go.** After each item:
+4. **`subject` items.** Show the user the cluster (a gist per row)
+   and ask: one digest, or keep separate? Digest → write it per the
+   condense drafting rules (`add --tag digest --replace <id>` per
+   member), resolve the issue `resolved`. Keep separate → resolve it
+   `dismissed` — the dismissal IS the ruling; the detector never
+   serves that cluster again.
+5. **Close as you go.** After each item:
    `ling-mem issue-resolve <id> --outcome resolved --note "<what you did>"`
    (or `memory_issue_resolve`). Not worth fixing → `--outcome dismissed`.
-5. **Report one line per item** — `SOLVED <id> <what changed>` /
+6. **Report one line per item** — `SOLVED <id> <what changed>` /
    `DISMISSED <id> <why>` — then a closing count.
 
 ### Chat-mode rules

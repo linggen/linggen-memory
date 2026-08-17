@@ -170,7 +170,7 @@ can prove, queue the rest for the user. Two capped passes:
    Pre-confirmed id-citation chains of your own notes: collapse each
    into ONE current-truth row (`replace_ids` over MCP; CLI: `--replace` on add). See `references/condense-flow.md`
    for drafting rules.
-2. **Merge the provable, queue the rest** —
+2. **Markers — merge the provable, queue the rest** —
    `ling-mem chains --kind marker --limit 5` (no `--derived-only`:
    user-voice candidates still need queueing). The daemon excludes
    rows a review issue already names (`queued_skipped` reports how
@@ -197,9 +197,27 @@ can prove, queue the rest for the user. Two capped passes:
      time"), `contradiction` when user-voice rows disagree. `already
      queued` is success — the daemon dedups per (kind, row_ids).
 
-   **Never merge `subject` clusters in a dream**, and never a marker
-   candidate below the bar — solving queued items is `/linggen
-   solve`, with the user present.
+3. **Digest the quiet** —
+   `ling-mem chains --kind subject --derived-only --limit 5`. The
+   daemon serves only QUIET clusters (newest member >30 days), only
+   your own notes, never rows a prior subject ruling covers. Per
+   cluster, exactly one of:
+   - **DIGEST** — confident the members (or a coherent 3+ subset)
+     share ONE subject: one digest row per the condense drafting
+     rules — `ling-mem add ... --tag digest --replace <id>` per
+     member of the coherent subset only; outliers untouched. Members
+     are archived, not deleted — a wrong digest is an unpack, which
+     is why this runs unattended.
+   - **QUEUE** — subject coherence doubtful:
+     `ling-mem issue-add --kind subject --row <id> [--row <id> …]
+     "<subject question + a gist per member>"` listing ALL member
+     ids (that is what stops the cluster re-forming around a
+     neighboring seed). The user rules in solve; keep-separate
+     becomes a permanent exclusion.
+
+   Never merge below a bar you can defend, and never a marker
+   candidate below the completion bar — doubt always queues; solving
+   queued items is `/linggen solve`, with the user present.
 
 ## Reporting (Linggen dashboard)
 

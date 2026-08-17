@@ -1,6 +1,6 @@
 {
   "name": "@linggen/linggen",
-  "version": "0.1.4",
+  "version": "0.1.3",
   "description": "OpenClaw plugin for Linggen — automatic memory recall, always-on core identity, project-scoped writes, and the local ling-mem + engine MCP servers.",
   "type": "module",
   "license": "MIT",
