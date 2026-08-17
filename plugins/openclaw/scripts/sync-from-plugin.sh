@@ -15,6 +15,20 @@ source_root="$(cd "$here/../linggen" && pwd)"
 
 echo "==> syncing from $source_root"
 
+# Vendor the installers INTO the skill first, so every artifact that carries
+# bootstrap.sh also carries what it runs — no remote script execution at
+# install time (a ClawScan review finding). install-bin.sh is canonical at
+# plugins/linggen/scripts/; install-engine.sh is vendored VERBATIM from
+# linggensite/public/install.sh when that checkout is present (byte-identical
+# on purpose — drift is an md5 diff away).
+cp "$source_root/scripts/install-bin.sh" "$source_root/skills/linggen/scripts/install-bin.sh"
+chmod +x "$source_root/skills/linggen/scripts/install-bin.sh"
+site_install="$source_root/../../../linggensite/public/install.sh"
+if [ -f "$site_install" ]; then
+  cp "$site_install" "$source_root/skills/linggen/scripts/install-engine.sh"
+  chmod +x "$source_root/skills/linggen/scripts/install-engine.sh"
+fi
+
 rm -rf "$here/skills" "$here/commands"
 mkdir -p "$here/skills" "$here/commands" "$here/scripts"
 

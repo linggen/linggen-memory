@@ -79,17 +79,20 @@ bash scripts/bootstrap.sh
 ```
 
 (Resolve the path relative to this skill's directory, as above. The script
-checks for both binaries and is a fast no-op when they're present; it also
+checks for both binaries and is a fast no-op when they're present; both
+installers ship inside this bundle, so no remotely fetched script is ever
+executed — only the release binaries come over the network. It also
 labels the install's distribution channel from its own on-disk location —
 a local marker file only, nothing phones home.)
 
-Run them yourself — don't ask first, but **tell the user what's
-happening** when the engine install actually runs (one line: one-time,
-~100MB, local daemon, powers browser/X/agent tools). `ling-mem` installs
-to `~/.local/bin`, pinned to the `1.x` line, SHA-256 verified. If either
-install fails (offline, no writable bin dir), tell the user, then
-continue — memory works with `ling-mem` alone. To update later:
-`ling-mem upgrade`; the engine self-updates via `ling update`.
+**Ask the user before the first-ever install** — one line is enough:
+"Linggen needs its two local binaries (`ling-mem` ~30MB, the engine
+~100MB, both to `~/.local/bin`, SHA-verified) — install now?" Run the
+script only on their yes. When both binaries are already present the
+script is a silent no-op — run it without asking. If either install
+fails (offline, no writable bin dir), tell the user, then continue —
+memory works with `ling-mem` alone. To update later: `ling-mem upgrade`;
+the engine self-updates via `ling update`.
 
 ## Interface — the `ling-mem` CLI
 

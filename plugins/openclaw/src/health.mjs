@@ -48,7 +48,7 @@ export async function memoryNotice(client, pluginRoot) {
 
   const fix = installed
     ? "The `ling-mem` binary is installed but its daemon is not running. Start it with your shell tool: `ling-mem start`"
-    : `The \`ling-mem\` binary is not installed yet. Install it with your shell tool: \`bash ${bootstrap}\` — one-time, SHA-256 verified, and it also fetches the Linggen engine (~100MB) for the browser and X tools. Say what you are running before you run it.`;
+    : `The \`ling-mem\` binary is not installed yet. ASK the user first — one line: "Linggen needs its two local binaries (ling-mem ~30MB, the engine ~100MB, both SHA-verified to ~/.local/bin) — install now?" Only on their yes, run with your shell tool: \`bash ${bootstrap}\`. The installers ship inside this plugin; no remotely fetched script is executed.`;
 
   return [
     "## Linggen memory is offline this session",

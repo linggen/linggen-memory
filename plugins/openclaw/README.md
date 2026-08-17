@@ -8,10 +8,32 @@ reading and writing the same memory.
 openclaw plugins install clawhub:@linggen/linggen
 ```
 
-Restart the gateway and it is on. First activation installs the `ling-mem` binary
-(range-pinned to 1.x, SHA-256 verified, mirrored for regions where GitHub is
-blocked), starts the daemons, and adds two MCP servers to your `openclaw.json`.
-Nothing to configure.
+Restart the gateway and it is on. First activation adds the two MCP servers to
+your `openclaw.json`; the binaries themselves install on first use, **after the
+agent asks you** — the installers ship inside this plugin (no remotely fetched
+script is executed), binaries are SHA-256 verified and range-pinned to 1.x,
+mirrored for regions where GitHub is blocked.
+
+## What it can touch
+
+Full disclosure up front — this is a capable bundle, and you should know its
+reach before installing:
+
+- **Durable memory** in `~/.linggen` that outlives every session, with
+  relevant rows injected into future prompts sent to your configured model.
+- **Local binaries**: `ling-mem` (~30MB) and the Linggen engine (~100MB),
+  installed to `~/.local/bin` on your explicit yes, SHA-verified.
+- **Browser and X tools** (via the engine): agent control of your own Chrome
+  with per-site permission prompts, and reads of your logged-in X session.
+- **Session-log backfill** (`/linggen-scan`, user-triggered only): reads local
+  agent transcripts to stage durable memories; secret-filtered, never
+  automatic.
+- **LAN reach is opt-in**: daemons bind loopback; widening to a second
+  machine requires explicit pairing (`/linggen-config`).
+
+Nothing phones home: telemetry is anonymous counts with strict no-content
+rules ([privacy](https://linggen.dev/privacy)), and `LINGGEN_NO_TELEMETRY=1`
+turns it off.
 
 ## What it does
 

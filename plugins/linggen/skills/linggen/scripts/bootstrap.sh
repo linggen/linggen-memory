@@ -32,17 +32,20 @@ esac
 [ -n "$via" ]   && export LING_MEM_SOURCE="$via" LINGGEN_SOURCE="$via"
 [ -n "$agent" ] && export LING_MEM_AGENT="$agent" LINGGEN_AGENT="$agent"
 
-# ling-mem — the memory backend. Canonical installer, range-pinned to 1.x,
-# SHA-256 verified, installs to ~/.local/bin. Mirror fallback for regions
-# where raw.githubusercontent.com is blocked.
+# Both installers ship IN this bundle — no remote script is ever fetched
+# and executed. install-bin.sh (ling-mem, SHA-256-verified binaries,
+# range-pinned to 1.x) and install-engine.sh (the Linggen engine; vendored
+# verbatim from linggensite/public/install.sh) are local siblings of this
+# file; only the release BINARIES they install come over the network.
+
+# ling-mem — the memory backend. Installs to ~/.local/bin.
 if ! command -v ling-mem >/dev/null 2>&1; then
-  { curl -fsSL https://raw.githubusercontent.com/linggen/linggen-memory/main/plugins/linggen/scripts/install-bin.sh \
-    || curl -fsSL https://linggen.dev/dl/install-bin.sh; } | bash -s -- --version '^1'
+  bash "$here/install-bin.sh" --version '^1'
 fi
 
 # Linggen engine — powers the browser/x/agent MCP tools. Optional: memory
 # works with ling-mem alone, so a failure here is reported, not fatal.
 if ! command -v ling >/dev/null 2>&1 && [ ! -x "$HOME/.local/bin/ling" ]; then
-  curl -fsSL https://linggen.dev/install.sh | bash \
+  bash "$here/install-engine.sh" \
     || echo "bootstrap: engine install failed (memory still works via ling-mem)" >&2
 fi
