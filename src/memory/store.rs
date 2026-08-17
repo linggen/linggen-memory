@@ -504,7 +504,15 @@ impl MemoryStore {
             .to_str()
             .ok_or_else(|| anyhow!("memory path is not valid UTF-8: {}", lancedb_dir.display()))?;
 
+        // Strong read consistency: the store is shared across processes — the
+        // daemon holds its table handles for its whole lifetime while CLI
+        // invocations (`add --episodic`, scan staging) commit new versions
+        // directly. Without this, a long-lived handle stays pinned at its
+        // open-time version and daemon reads (`list`, `get`, `days`) miss
+        // every external commit until restart. Zero = check the manifest on
+        // every read; local-disk cost is negligible at this store's scale.
         let conn = connect(uri)
+            .read_consistency_interval(std::time::Duration::ZERO)
             .execute()
             .await
             .with_context(|| format!("opening LanceDB at {uri}"))?;
@@ -1293,6 +1301,24 @@ mod tests {
         // True isolation: the semantic row is invisible to the episodic store
         // even though they share one LanceDB connection.
         assert!(episodic.get(&fact_id).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn external_commits_visible_without_reopen() {
+        let dir = TempDir::new().unwrap();
+        // Long-lived handle first (the daemon), then a second independent
+        // open of the same table (a CLI invocation) that commits a row.
+        let daemon = MemoryStore::open_episodic(dir.path()).await.unwrap();
+        let cli = MemoryStore::open_episodic(dir.path()).await.unwrap();
+
+        let staged = make_fact("staged from a second process", MemoryType::Learned);
+        let staged_id = staged.id.clone();
+        cli.insert(&[staged]).await.unwrap();
+
+        // The pre-existing handle must see the external commit on its next
+        // read — no reopen, no restart.
+        assert_eq!(daemon.count().await.unwrap(), 1);
+        assert!(daemon.get(&staged_id).await.unwrap().is_some());
     }
 
     #[tokio::test]
