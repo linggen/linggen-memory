@@ -50,8 +50,9 @@ const OUTCOMES: &[&str] = &["resolved", "dismissed"];
 pub struct IssueRecord {
     pub id: String,
     /// What the audit saw: `chain` (uncertain merge candidate),
-    /// `stale-status` (a status claim older than the world), or
-    /// `contradiction` (conflicting rows needing the user's pick).
+    /// `stale-status` (a status claim older than the world),
+    /// `contradiction` (conflicting rows needing the user's pick), or
+    /// `subject` (digest cluster of doubtful subject coherence).
     pub kind: String,
     /// The memory row ids this item is about.
     #[serde(default)]

@@ -518,16 +518,17 @@ pub struct IssuesArgs {
 #[derive(Debug, Args)]
 pub struct IssueAddArgs {
     /// What the audit saw: `chain` (uncertain merge candidate),
-    /// `stale-status` (claim likely overtaken by the world), or
-    /// `contradiction` (conflicting rows needing the user's pick).
-    #[arg(long, value_parser = ["chain", "stale-status", "contradiction"])]
+    /// `stale-status` (claim likely overtaken by the world),
+    /// `contradiction` (conflicting rows needing the user's pick), or
+    /// `subject` (digest cluster of doubtful subject coherence).
+    #[arg(long, value_parser = ["chain", "stale-status", "contradiction", "subject"])]
     pub kind: String,
 
     /// Memory row id(s) the item is about (repeatable).
     #[arg(long = "row", value_name = "ROW_ID")]
     pub row_ids: Vec<String>,
 
-    /// What a solver should check — the item's whole context.
+    /// What a solver should check — the item's whole context, in plain words.
     pub note: String,
 }
 

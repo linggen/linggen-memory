@@ -298,7 +298,7 @@ fn tool_defs() -> Vec<Value> {
         }),
         json!({
             "name": "memory_issues",
-            "description": "Review queue — items the dream audit could not solve with confidence (uncertain merges, stale status claims, user-voice contradictions). Returns the facts only; YOU are the solver: gather evidence (e.g. git history for a stale status claim), ask the user one item at a time when their call is needed, write the fix via memory_add + replace_ids, then close the item with memory_issue_resolve.",
+            "description": "Review queue — items the dream audit could not solve with confidence (uncertain merges, stale status claims, user-voice contradictions, doubtful digest clusters). Returns the facts only; YOU are the solver: solve each item yourself first — gather evidence (full rows, git history, code, docs) until it settles the question — and write the fix via memory_add + replace_ids, then close the item with memory_issue_resolve. Ask the user only when evidence cannot settle it or a user-voice row is involved: ONE item at a time, phrased as a simple fact question in plain words with your recommendation — no row ids, commit hashes, or cluster jargon.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -313,9 +313,9 @@ fn tool_defs() -> Vec<Value> {
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "kind":    {"type": "string", "enum": ["chain", "stale-status", "contradiction"], "description": "What you saw: `chain` = uncertain merge candidate; `stale-status` = a status claim likely overtaken by the world (verify against git/files at solve time); `contradiction` = conflicting rows needing the user's pick."},
+                    "kind":    {"type": "string", "enum": ["chain", "stale-status", "contradiction", "subject"], "description": "What you saw: `chain` = uncertain merge candidate; `stale-status` = a status claim likely overtaken by the world (verify against git/files at solve time); `contradiction` = conflicting rows needing the user's pick; `subject` = digest cluster of doubtful subject coherence (list ALL member ids)."},
                     "row_ids": {"type": "array", "items": {"type": "string"}, "description": "The memory row ids this item is about."},
-                    "note":    {"type": "string", "description": "What you saw and what a solver should check — the item's whole context, since the solver starts from this line alone."}
+                    "note":    {"type": "string", "description": "What you saw and what a solver should check — the item's whole context, since the solver starts from this line alone. Write it in plain words; it may become the user's question."}
                 },
                 "required": ["kind", "note"]
             }
