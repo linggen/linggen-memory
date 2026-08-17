@@ -22,6 +22,7 @@ struct Inner {
     product: &'static str,
     data_dir: PathBuf,
     client: reqwest::Client,
+    digest: crate::telemetry::digest::Digest,
 }
 
 impl Telemetry {
@@ -48,6 +49,7 @@ impl Telemetry {
                 product,
                 data_dir: data_dir.to_path_buf(),
                 client,
+                digest: crate::telemetry::digest::Digest::load(data_dir, product),
             }),
         }
     }
@@ -88,6 +90,66 @@ impl Telemetry {
         // Read-modify-write: preserve last_command_day across launch.
         state.last_version = APP_VERSION.into();
         let _ = save_state(&state_path, &state);
+
+        self.ship_digests();
+    }
+
+    /// Count one occurrence of `key` in today's local digest. Nothing is sent
+    /// now; completed days ship as one `digest` event each. `key` is a dotted
+    /// enum identifier (`memory.search`) — never free text.
+    pub fn bump(&self, key: &str) {
+        if !self.inner.enabled || self.inner.installation_id.is_empty() {
+            return;
+        }
+        self.inner.digest.bump(key);
+        self.ship_digests();
+    }
+
+    /// Count an error bucket: `error.<stage>.<code>`. `code` is normalized to
+    /// the enum charset defensively so a dynamically built code can never
+    /// smuggle content into a count key.
+    pub fn error(&self, stage: &str, code: &str) {
+        let code: String = code
+            .to_ascii_lowercase()
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
+            .take(32)
+            .collect();
+        let code = if code.is_empty() { "other".to_string() } else { code };
+        self.bump(&format!("error.{stage}.{code}"));
+    }
+
+    /// Ship every completed day as one `digest` event. Days are removed from
+    /// the local file before the POST (the double-send guard) and merged back
+    /// on failure so the next trigger retries them.
+    fn ship_digests(&self) {
+        // A one-shot CLI invocation may have no async runtime; counts stay
+        // in the local file and the daemon ships them later.
+        let Ok(handle) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        for (day, counts) in self.inner.digest.take_completed() {
+            let payload = serde_json::json!({ "day": &day, "counts": &counts });
+            let body = serde_json::json!({
+                "installation_id": self.inner.installation_id,
+                "event_type": "digest",
+                "app_version": APP_VERSION,
+                "platform": platform_name(),
+                "product": self.inner.product,
+                "payload": payload,
+            });
+            let client = self.inner.client.clone();
+            let this = self.clone();
+            handle.spawn(async move {
+                let ok = matches!(
+                    client.post(TRACK_URL).json(&body).send().await,
+                    Ok(resp) if resp.status().is_success()
+                );
+                if !ok {
+                    this.inner.digest.restore(&day, counts);
+                }
+            });
+        }
     }
 
     /// Record a Memory.* call. Non-blocking. `verb` is the bare method

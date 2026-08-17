@@ -56,6 +56,8 @@
 //! analytics are involved.
 
 #[cfg(feature = "telemetry")]
+mod digest;
+#[cfg(feature = "telemetry")]
 mod imp;
 
 #[cfg(feature = "telemetry")]
@@ -75,4 +77,6 @@ impl Telemetry {
     }
     pub fn launch(&self) {}
     pub fn command(&self, _verb: &str) {}
+    pub fn bump(&self, _key: &str) {}
+    pub fn error(&self, _stage: &str, _code: &str) {}
 }

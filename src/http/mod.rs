@@ -92,10 +92,33 @@ async fn command_telemetry_layer(
     request: Request,
     next: Next,
 ) -> Response {
-    if let Some(verb) = request.uri().path().strip_prefix("/api/memory/") {
-        if !verb.is_empty() {
-            telemetry.command(&format!("memory.{verb}"));
+    // Sanitize to the digest key charset: the segment comes off the URL, and
+    // an arbitrary path must never become a count key.
+    let verb: Option<String> = request
+        .uri()
+        .path()
+        .strip_prefix("/api/memory/")
+        .map(|v| v.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-').take(24).collect())
+        .filter(|v: &String| !v.is_empty());
+
+    let response = next.run(request).await;
+
+    if let Some(verb) = verb {
+        telemetry.command(&format!("memory.{verb}"));
+        // Digest counts split by outcome; the daily `command` row above keeps
+        // the DAU contract unchanged.
+        let status = response.status();
+        if status.is_success() {
+            telemetry.bump(&format!("memory.{verb}"));
+        } else {
+            let code = match status.as_u16() {
+                401 | 403 => "auth_required",
+                429 => "quota",
+                s if s >= 500 => "server",
+                _ => "request",
+            };
+            telemetry.error("memory", code);
         }
     }
-    next.run(request).await
+    response
 }
