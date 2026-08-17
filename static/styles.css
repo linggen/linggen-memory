@@ -277,20 +277,24 @@ input[type="text"]:disabled { opacity: 0.6; }
   min-height: 0;
 }
 
+/* The PANE scrolls, not the list — so the load-more footer sits in the
+   scroll flow after the last row (reachable at the bottom) instead of
+   floating below the list and eating a row of viewport. */
 #list-pane {
   display: flex;
   flex-direction: column;
   border-right: 1px solid var(--border);
   min-height: 0;
+  overflow: auto;
 }
 
 #list {
-  flex: 1;
-  overflow: auto;
+  flex: 1 0 auto;
   padding: 10px 16px;
 }
 
 #list-footer {
+  flex: 0 0 auto;
   padding: 10px 16px;
   border-top: 1px solid var(--border);
   text-align: center;

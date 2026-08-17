@@ -220,8 +220,8 @@ function calTooltip(iso, rec, isToday) {
 
 // Read-only chips for one past day — same visual language as the memory
 // app's calendar, minus the action buttons. The one navigation
-// affordance is "rows ▸": jump to Browse filtered to that day.
-function calDayChips(iso, rec) {
+// affordance is "N rows ▸": jump to Browse filtered to that day.
+function calDayChips(iso, rec, nRows) {
   const chips = [];
   if (rec?.harvested_at) {
     chips.push(`<div class="dcal-chip dcal-chip-scanned" title="${esc(`scanned ${fmtAgo(rec.harvested_at)}`)}">scanned ✓</div>`);
@@ -232,15 +232,15 @@ function calDayChips(iso, rec) {
   } else if (rec?.remembered_at) {
     chips.push(`<div class="dcal-chip dcal-chip-remembered" title="${esc(`dreamed ${fmtAgo(rec.remembered_at)} — ${rec.judged || 0} judged, ${rec.promoted || 0} promoted`)}">dreamed ✓ ${rec.judged || 0}·${rec.promoted || 0}</div>`);
   }
-  if (rec) chips.push(viewRowsChip(iso));
+  if (nRows > 0) chips.push(viewRowsChip(iso, nRows));
   return chips.length ? `<div class="dcal-chips">${chips.join('')}</div>` : '';
 }
 
-// The jump into Browse — shown on any day the store knows about
-// (record or staged rows). Promoted rows outlive the swept short-term
-// ones, so the day view can be non-empty even after "aged out".
-function viewRowsChip(iso) {
-  return `<button type="button" class="dcal-chip dcal-chip-view" data-view-day="${esc(iso)}" title="${esc(`browse rows created ${iso}`)}">rows ▸</button>`;
+// The jump into Browse — shown on any day holding rows (the rollup's
+// `row_days` counts both tables on the same clock the `day` filter
+// uses), whether or not the dream pipeline ever touched that day.
+function viewRowsChip(iso, n) {
+  return `<button type="button" class="dcal-chip dcal-chip-view" data-view-day="${esc(iso)}" title="${esc(`browse the ${n} row${n === 1 ? '' : 's'} of ${iso}`)}">${n} rows ▸</button>`;
 }
 
 // Calendar → Browse: filter to one local day across both tables. Clears
@@ -264,6 +264,7 @@ function renderCalMonth() {
   const box = document.getElementById('cal-month');
   if (!box || !calRollup) return;
   const byDate = new Map(calRollup.days.map((d) => [d.date, d]));
+  const rowDays = calRollup.row_days || {};
   const todayIso = calRollup.today;
   const today = new Date(`${todayIso}T12:00:00`);
   const view = calViewMonth
@@ -295,9 +296,10 @@ function renderCalMonth() {
       if (bucket !== 'none') cls.push(`dcal-state-${bucket}`);
     }
     const num = `<div class="dcal-num${isToday ? ' dcal-today-num' : ''}">${date.getDate()}</div>`;
+    const nRows = rowDays[iso] || 0;
     const chips = isToday
-      ? (rec?.rows ? `<div class="dcal-chips"><div class="dcal-chip dcal-chip-staging">${rec.rows} staged</div>${viewRowsChip(iso)}</div>` : '')
-      : (isFuture ? '' : calDayChips(iso, rec));
+      ? (nRows ? `<div class="dcal-chips">${rec?.rows ? `<div class="dcal-chip dcal-chip-staging">${rec.rows} staged</div>` : ''}${viewRowsChip(iso, nRows)}</div>` : '')
+      : (isFuture ? '' : calDayChips(iso, rec, nRows));
     cells.push(`<div class="${cls.join(' ')}" title="${esc(calTooltip(iso, rec, isToday))}">${num}${chips}</div>`);
   }
 

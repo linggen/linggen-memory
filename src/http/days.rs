@@ -203,10 +203,26 @@ async fn days(
     let cfg = crate::http::config::load(&state.data_dir).await;
     let ttl_cutoff = Utc::now() - chrono::Duration::days(cfg.episodic_ttl_days as i64);
 
+    // Rows per local day across BOTH tables — which days hold rows at
+    // all. Feeds the console calendar's "rows ▸" jump; kept OUT of the
+    // dream-pipeline `days` union below so a semantic row from May never
+    // creates a phantom scan/dream worklist day. Counted on the same
+    // COALESCE(occurred_at, created_at) clock the `day` list filter
+    // matches, so the jump lands on exactly this many rows.
+    let mut row_days: BTreeMap<String, u32> = BTreeMap::new();
+    for row in state
+        .store
+        .list(&Filters::default(), SortOrder::Oldest, usize::MAX, 0)
+        .await?
+    {
+        *row_days.entry(local_day(row.effective_timestamp())).or_default() += 1;
+    }
+
     // Bucket live episodic rows per local day.
     let mut live: BTreeMap<String, DayLive> = BTreeMap::new();
     for row in all_episodic(&state).await? {
         let day = local_day(row.effective_timestamp());
+        *row_days.entry(day.clone()).or_default() += 1;
         let judged = days_state
             .days
             .get(&day)
@@ -302,6 +318,7 @@ async fn days(
         "total_days": total_days,
         "scanned_days": scanned_days,
         "dreamed_days": dreamed_days,
+        "row_days": row_days,
         "days": out,
     })))
 }
