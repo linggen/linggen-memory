@@ -260,10 +260,19 @@ The daemon binds **loopback** and nothing else. That is the whole story for the 
 
 The **linggen-memory skill** is a thin wrapper in the main Linggen repo's skills tree. Its responsibilities:
 
-- `SKILL.md` frontmatter: `provides: [memory]`, `app:` launcher pointing at the daemon's bound port (`http://127.0.0.1:<port>/`), `install: install.sh`, `daemon: { subdir: linggen-memory, port: 9528, healthcheck: /api/health }`.
+- `SKILL.md` frontmatter: `provides: [memory]`, `app:` launcher pointing at the daemon's bound port (`http://127.0.0.1:<port>/`), `daemon: { subdir: linggen-memory, port: 9528, healthcheck: /api/health }`. **No `install:` key** — see below.
 - Web UI: **served by the daemon itself**. Static HTML/JS/CSS live under `static/` in this repo and are embedded into the binary via `rust-embed`. The skill wrapper does not ship any UI assets — Linggen just opens the daemon URL in an iframe. Calls from the page go to `/api/memory/*` on the same origin; Linggen's agents reach the same endpoints through this daemon's `/mcp` surface.
-- `install.sh`: detect platform via `uname`, download matching release binary from GitHub Releases, extract to the skill's `bin/` directory.
-- No scripts beyond install — the binary handles everything else.
+- **No install script** (removed 2026-08-18). The skill installs nothing:
+  the bundle arrives with the skill itself; the `ling-mem` binary is a
+  singleton at `~/.local/bin/ling-mem` placed only by
+  `plugins/*/scripts/install-bin.sh` (semver range, SHA-256 verified,
+  never downgraded), driven by the plugin's `autostart.sh` hook or the
+  SKILL.md first-use gate; and host wiring belongs to each host's own
+  plugin. The script that used to do all three was a second writer for
+  every one of them — it installed v1.0.0 over the real binary and
+  double-registered the recall hook.
+- The skill does ship `scripts/` (the web UI + session collectors) and
+  `hooks/recall.sh`, contrary to the older note here that said otherwise.
 
 For Claude Code compatibility, the SKILL.md body documents the CLI so a model invoking the skill via Bash can use it directly (the `memory_*` MCP tools are the same operations by another door). A CC user gets the same Data Browser at the same URL — all they need is to run `ling-mem serve`.
 
