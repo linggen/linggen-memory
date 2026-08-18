@@ -1,5 +1,71 @@
 # Changelog
 
+## [1.7.1] - 2026-08-18 — the store keeps itself
+
+### Added
+
+- **Merges archive their losers instead of deleting them.** A
+  `replace_ids` merge (or digest) stamps its semantic losers with
+  `expired_at` + `superseded_by`. Archived rows leave search, list,
+  scans, and counts but stay on disk, so every merge is reversible:
+  `list --superseded-by <survivor>` unpacks one, `--include-expired`
+  widens any read, `stats` reports the archive count. Episodic losers
+  stay hard-deleted — staging is disposable. `add` gains
+  `--replace` / `--user-directed`, retiring the two-step
+  add-then-delete that bypassed the archive. Additive columns, no
+  schema-version bump.
+- **The daemon compacts its own tables.** Lance commits a fresh
+  manifest per write and each manifest lists every fragment, so disk
+  cost grows quadratically in writes: the real store held 1067 rows in
+  17.4 MB of fragments under 117 MB of manifests across 1150 versions —
+  82% bookkeeping about bookkeeping. Maintenance now runs in the
+  daemon's quiet windows.
+- **Daily telemetry digest.** Verb calls accumulate in
+  `~/.linggen/telemetry/ling-mem-digest.json` and each completed UTC day
+  ships as one digest event — successes as `memory.<verb>`, failures as
+  `error.memory.<code>` (coarse status buckets, never messages). The
+  daily command row and DAU contract are unchanged.
+- **The console pages every view, and the calendar knows where rows
+  live.** `load more` works in the All view (search stays
+  relevance-capped); the `days` response gains `row_days` — rows per
+  local day across both tables — so every day holding rows gets an
+  "N rows ▸" jump to Browse filtered to that day, dream state or not.
+  New day filter throughout: chip, `/day:` token, `?day=` deep link.
+- **Native OpenClaw plugin** (`@linggen/linggen`) with automatic memory
+  recall, plus `scripts/publish-openclaw.sh` for one-command ClawHub
+  publishing.
+- **`subject` issue kind** in the `memory_issue_add` MCP schema and the
+  CLI `issue-add` enum — the daemon already accepted it, so hosts had
+  been bypassing both via raw HTTP.
+
+### Changed
+
+- **Maintenance looks every 10 minutes, not every hour.** A check that
+  lands while the daemon is busy skips and waits for the next one, so
+  the interval is really "what a missed window costs". The check is a
+  directory walk plus two metadata reads — looking six times as often
+  is free, and makes catching a genuine lull likely instead of lucky.
+- **The audit's marker lane advances its own cursor.** The capped
+  marker page re-served the same oldest candidates every run — they
+  re-queued as "already queued" while 185 of 190 candidates stayed
+  unreachable. The scan now excludes rows any review issue names and
+  reports `queued_skipped`, so a filtered scan is never mistaken for a
+  clean store.
+
+### Fixed
+
+- **Daemon reads missed every external commit until restart.** The
+  daemon holds its table handles for its whole lifetime while CLI
+  invocations (`add --episodic`, scan staging) commit new versions
+  directly to the store; with LanceDB's default
+  `read_consistency_interval` those handles stayed pinned at their
+  open-time version, so `list` / `get` / `days` never saw the new rows.
+  Now `Duration::ZERO` — the manifest is checked on every read, at
+  negligible local-disk cost. Covered by a regression test that fails
+  on the old default.
+- **`scan` skips `[HIDDEN]` messages** — those are the app shell
+  prompting the agent, not the user speaking.
+
 ## [1.7.0] - 2026-08-14 — works in mainland China
 
 ### Added
