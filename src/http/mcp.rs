@@ -37,7 +37,7 @@ const LOOPBACK_TIMEOUT: Duration = Duration::from_secs(10);
 /// every connected host (Claude Code, Codex, Cursor, …) the ling-mem
 /// doctrine without per-host CLAUDE.md edits. Keep it tight — each token
 /// here costs every session.
-const INSTRUCTIONS: &str = r#"ling-mem provides durable cross-session memory for this user — shared across Claude Code, Codex, OpenClaw, and Linggen. Memory is how the agent grows up: a fact earns its place only if a future session would make better predictions because the fact exists. Focus on the user, not the task.
+const INSTRUCTIONS: &str = r#"ling-mem provides durable cross-session memory for this user — shared across Claude Code, Codex, OpenClaw, and Linggen. Memory is how the agent grows up: a fact earns its place only if a future session would make better predictions because the fact exists. Focus on the user, not the task. This text is the canonical memory protocol — every host injects it from here; no host carries its own copy.
 
 # The three tiers
 
@@ -47,16 +47,21 @@ const INSTRUCTIONS: &str = r#"ling-mem provides durable cross-session memory for
 
 # When to SEARCH (before answering)
 
-Call memory_search when the user's question could connect to past preferences, decisions, or gotchas. Chip every fact you actually use: "From memory: …".
+Call memory_search when the user's question could connect to past preferences, decisions, or gotchas. Retrieval is visible: every fact that shapes your reply gets a chip in the chat text with its age — "From memory (3 months ago): …" — relative time, one per line for multiple hits, a stale warning past 12 months, and no silent use. When two rows on one subject surface, reconcile them in prose ordered by timestamp — the user sees the synthesis and can correct it.
 
 # When to SAVE (call memory_add)
 
 **Per-turn capture → episodic.** Each turn, append genuinely-noteworthy signal to `tier=episodic` — fast, no search-first, no confirmation. **Anchor relative time before writing** (substitution against today's date, not math — e.g. if today is 2026-07-07, "turned 3 last month" → "turned 3 in 2026-06, as of 2026-07-07"): "yesterday"/"last month"/"recently" in stored content rots silently. **Project-scoped is fine; episodic is staging, not user-biography.** Capture: shipped milestones, decisions + *why*, non-obvious learnings from a run/experiment. E.g. "Shipped Linggen 1.0"; "Sanji docking: dropped dock-wall cost, treat all cost-points uniformly"; "BlueBoat cruise tops out ~0.2 m/s". If a future session would be smarter for it, stage it — the dream pass dedupes and promotes.
 
-**Curated writes → core / semantic** (high confidence) follow the read-before-write rule: **Always memory_search the candidate content before a core/semantic memory_add.** Write-time dedup is cheaper than read-time cleanup. Merge authority follows voice:
+**Curated writes → core / semantic** (high confidence) follow the read-before-write rule: **Always memory_search the candidate content before a core/semantic memory_add.** Write-time dedup is cheaper than read-time cleanup.
+
+**What counts as a conflict — the step models most often skip.** Not just same subject with a different value. Also: the same *kind of claim* in different phrasing ("under 100 words" vs "around 150 words" IS a conflict, not a new fact); and ≥2 prior rows already on one subject — that's pre-existing drift, never add a third without resolving. Heuristic: if search returned a row whose type matches and subject overlaps, assume conflict until you've read it and confirmed same-value (skip the write) or unrelated. Default to "conflict" when ambiguous; a spurious ask is cheap, a drifted row follows the user forever.
+
+Merge authority follows voice:
 - Near-duplicate exists → skip the add; if yours is better-phrased and every matching row is your own note (`from=derived` — built/fixed/tried/learned), write the merged row with `replace_ids` listing the losers (one atomic call).
 - Conflict among **your own notes only** → no ask needed: merge to one current-truth row via `replace_ids`.
-- Conflict touching the **user's voice** (`from=user` — preference/decision/identity) → ask via the host's ask-user primitive, then write the winner with `replace_ids` carrying every loser AND `user_directed: true`. Do not write on top of a conflict; never separate add + delete. The daemon mechanically BLOCKS a replace/rewrite of `from=user` rows without `user_directed: true` — the flag asserts the user directed the change: their CURRENT message states it as settled (a command "update X to Y", a declaration "my X is now Y", a commitment "from now on, X"), or they just answered your ask. A hedged reflection ("X feels about right to me", "I think I prefer X") does NOT qualify — that's a contradiction: ask first. Never assert the flag from your own inference.
+- Conflict touching the **user's voice** (`from=user` — preference/decision/identity) → ask via the host's ask-user primitive; each option must show the full row content + stored date (never terse labels), one option per existing row so prior drift collapses in one decision, plus "all are true" and free-text options. On the pick, act fully in the SAME turn: new/free-text value wins → one memory_add with `replace_ids` carrying EVERY loser AND `user_directed: true`; an existing row wins → no write; "all true" → leave them. Never separate add + delete. The daemon mechanically BLOCKS a replace/rewrite of `from=user` rows without `user_directed: true` — the flag asserts the user directed the change: their CURRENT message states it as settled (a command "update X to Y", a declaration "my X is now Y", a commitment "from now on, X"), or they just answered your ask. A hedged reflection ("X feels about right to me", "I think I prefer X") does NOT qualify — that's a contradiction: ask first. Never assert the flag from your own inference.
+- **Resolved rows land in the loser's tier**, not your writer-default: if the old conflicting row was semantic, the replacement is semantic — otherwise you leave a parallel copy in another tier beside the still-living old row.
 
 HIGH-SIGNAL — promote straight to core/semantic (search-first), don't leave these in episodic:
 - Name + relationship ("my cat <name>", "my wife <name>") → tier=core, type=fact
@@ -66,10 +71,11 @@ HIGH-SIGNAL — promote straight to core/semantic (search-first), don't leave th
 - Commitment ("always X", "never Y", "from now on Z") → tier=core, type=preference
 - Cross-project tech gotcha that will recur → default tier, type=learned
 
-Explicit imperatives — act immediately:
-- "remember X" → save, reply "Saved."
-- "forget X" → search + delete, reply "Deleted: …"
-- "update X to Y" → search + edit, reply "Updated."
+Explicit imperatives — the user already chose; skip the ask but still search first:
+- "remember X" → search the subject; exact match → "Already saved.", else memory_add → "Saved."
+- "forget X" → search + memory_delete every matching row → "Deleted: …"
+- "update X to Y" → search + one memory_add with `replace_ids` listing every prior matching row → "Updated." Never separate add + delete.
+Pass `user_directed: true` on these — and never leave drifted siblings behind after an explicit instruction. Detect imperatives semantically in any language ("记住 X", "以后别再 X"), not by keyword.
 
 # When NOT to save
 
@@ -167,7 +173,7 @@ fn tool_defs() -> Vec<Value> {
                     "query":    {"type": "string", "description": "Natural-language description of what to find."},
                     "contexts": {"type": "array", "items": {"type": "string"}, "description": "Filter to these scope tags (AND). Omit to search globally."},
                     "tier":     {"type": "string", "enum": ["core", "semantic", "episodic"], "description": "Restrict to one tier. Omit to span all."},
-                    "cwd_scope": {"type": "string", "description": "HOST-FILLED — leave it out. Absolute path scoping the search to the work being done there: rows written under it, plus every row that belongs to no project (identity, preferences, cross-project gotchas). Applied before ranking, so unrelated projects cannot crowd out the rows you want."},
+                    "cwd_scope": {"type": "string", "description": "HOST-FILLED — leave it out; the host stamps the session cwd to scope results to this project plus project-free rows."},
                     "limit":    {"type": "integer", "description": "Max rows. Default 10."}
                 },
                 "required": ["query"]
@@ -213,13 +219,13 @@ fn tool_defs() -> Vec<Value> {
                 "properties": {
                     "content":  {"type": "string", "description": "The fact text the model will see when this row is recalled."},
                     "type":     {"type": "string", "enum": ["fact", "preference", "decision", "tried", "fixed", "learned", "built"]},
-                    "tier":     {"type": "string", "enum": ["core", "semantic", "episodic"], "description": "Destination tier. `episodic` = per-turn working capture (fast, append-only, no search-first; the dream pass remembers each day and the sweep forgets judged rows past TTL) — the default lane for uncertain-durability signal. `semantic` = curated durable facts (search-first). `core` = tiny always-injected universals about the person (search-first)."},
+                    "tier":     {"type": "string", "enum": ["core", "semantic", "episodic"], "description": "Destination tier: episodic = per-turn staging (default, no search-first); semantic = curated durable facts (search-first); core = tiny always-injected universals (search-first). Doctrine in the server instructions."},
                     "contexts": {"type": "array", "items": {"type": "string"}},
-                    "host":     {"type": "string", "description": "HOST-FILLED — leave it out. Which tool runtime committed the row (claude-code, codex, linggen). The host stamps it from what it already knows; a model guessing at it is how rows end up labelled with an IP address."},
-                    "source_session": {"type": "string", "description": "HOST-FILLED — leave it out. Session id that authored this content. The host stamps it; it exists as a parameter only so a promote pass can carry the ORIGINAL row's session forward, which is the one case the caller knows better."},
-                    "cwd":      {"type": "string", "description": "HOST-FILLED — leave it out. Absolute working directory the write came from; it is what scopes recall to the project you are in. The host stamps it from the session's own cwd, which it knows and you do not."},
-                    "replace_ids": {"type": "array", "items": {"type": "string"}, "description": "Row ids this new row replaces — the daemon inserts the row and deletes every listed loser atomically. Use for merges of your own derived notes and for AskUser-resolved conflicts; never separate add + delete calls."},
-                    "user_directed": {"type": "boolean", "description": "Assert the user directed this change: their CURRENT message states it as SETTLED (a command \"update X to Y\", a declaration \"my X is now Y\", a commitment \"from now on, X\"), or they just answered your ask. Required when replace_ids targets from=user rows — the daemon BLOCKS such writes otherwise. A hedged reflection (\"X feels about right to me\") does NOT qualify: ask first. Never assert from your own inference."}
+                    "host":     {"type": "string", "description": "HOST-FILLED — leave it out; the host stamps the committing runtime."},
+                    "source_session": {"type": "string", "description": "HOST-FILLED — leave it out; pass only when a promote pass carries the original row's session forward."},
+                    "cwd":      {"type": "string", "description": "HOST-FILLED — leave it out; the host stamps the session's own cwd, which scopes recall."},
+                    "replace_ids": {"type": "array", "items": {"type": "string"}, "description": "Row ids this row replaces — inserted and deleted atomically. For merges and resolved conflicts; never separate add + delete calls."},
+                    "user_directed": {"type": "boolean", "description": "Assert the user directed this change (a settled command/declaration, or they just answered your ask). Required when replace_ids targets from=user rows — the daemon BLOCKS such writes otherwise. Hedged reflections don't qualify; see the server instructions."}
                 },
                 "required": ["content"]
             }
