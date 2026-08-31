@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.7.2] - 2026-08-31 — one doctrine, served from here
+
+### Changed
+
+- The MCP server's `instructions` are now the canonical memory protocol —
+  every host, the Linggen engine included, injects them instead of carrying
+  its own copy. The text gains the piece hosts kept skipping: what counts
+  as a conflict (same kind of claim, not just same subject), merge authority
+  by voice, resolved rows landing in the loser's tier, and explicit
+  imperatives that search first but skip the ask.
+- Tool-schema descriptions tightened: HOST-FILLED fields say who stamps
+  them and why, `tier` and `replace_ids` describe what the daemon actually
+  does.
+
+### Docs
+
+- `release-targets.md` keeps the version-number table and channel map
+  (stale rows fixed); how to cut a release lives in the cross-product
+  checklist, `linggen/doc/release-checklist.md`.
+- The memory skill has no install script — the tech spec says so.
+
 ## [1.7.1] - 2026-08-18 — the store keeps itself
 
 ### Added
