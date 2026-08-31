@@ -278,16 +278,9 @@ For Claude Code compatibility, the SKILL.md body documents the CLI so a model in
 
 ## Release process
 
-GitHub Actions cross-compile on tag push (`v*`):
-
-| Target triple | User platform |
-|:--|:--|
-| `aarch64-apple-darwin` | macOS Apple Silicon |
-| `x86_64-apple-darwin` | macOS Intel |
-| `x86_64-unknown-linux-gnu` | Linux x86_64 |
-| `aarch64-unknown-linux-gnu` | Linux ARM64 |
-
-Each release asset: `ling-mem-<target>.tar.gz` with the binary + LICENSE + a minimal `README`. Code signing (macOS Developer ID) is optional for v0.1 but recommended — existing `SIGNING.md` has the playbook.
+The order, scripts, targets and local-swap rule live in the cross-product
+release checklist: `linggen/doc/release-checklist.md` (§ 1, ling-mem). Where
+each channel pins: `doc/release-targets.md`.
 
 ## Versioning
 

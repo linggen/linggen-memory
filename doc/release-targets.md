@@ -1,43 +1,38 @@
 # Release targets
 
-Where a `ling-mem` / shared-memory release has to land, in order. The binary
-GitHub release is the source of truth; every channel pins to it.
+Where a `ling-mem` release lands and what each channel pins to. The binary
+GitHub release is the source of truth; every channel resolves against it.
+How to cut the release — the order, the scripts, the local swap — is the
+cross-product checklist: `linggen/doc/release-checklist.md`.
 
 ## Version numbers (don't conflate)
 
 | Number | Lives in | Tracks |
 |---|---|---|
-| **binary tag** `vX.Y.Z` | GitHub releases on `linggen/linggen-memory` | the compiled `ling-mem` binary |
-| **binary pin** | `plugins/shared-memory/VERSION` (+ `install-bin.sh` default) | which release plugins/skills fetch (exact tag or `~X.Y` range) |
-| **plugin content** `X.Y.Z` | `.claude-plugin/plugin.json` + `.codex-plugin/plugin.json` | the CC/Codex plugin **bundle** (hooks, SKILL.md). May LEAD the binary |
-| **ClawHub version** | ClawHub registry (immutable per publish) | the OpenClaw skill bundle |
-| **store schema** `N` | `schema_version.rs::STORE_SCHEMA_VERSION` (sidecar `SCHEMA_VERSION`) | on-disk store layout; bumps only on layout change → MAJOR binary release |
+| **binary tag** `vX.Y.Z` | GitHub releases on `linggen/linggen-memory` | the compiled `ling-mem` binary — three targets, each `ling-mem-<target>.tar.gz` + `.sha256` (macos-aarch64, linux-x86_64, linux-aarch64; no macos-x86_64 since 1.7.0) |
+| **binary pin** `^1` | `plugins/linggen/hooks/autostart.sh` (`PIN="${LING_MEM_VERSION:-^1}"`); the engine's `LING_MEM_PIN` matches | which release hosts fetch — a semver range resolved by `install-bin.sh` against the release list, so a patch/minor binary reaches users with no plugin release |
+| **plugin content** `X.Y.Z` | `plugins/linggen/.claude-plugin/plugin.json`, `plugins/linggen/.codex-plugin/plugin.json`, `plugins/openclaw/openclaw.plugin.json` | the plugin **bundle** (hooks, SKILL.md). Moves only when the bundle changes; may lead or lag the binary |
+| **ClawHub version** | ClawHub registry (immutable per publish) | the OpenClaw skill bundle; a doc-only fix still needs a bump |
+| **store schema** `N` | `schema_version.rs::STORE_SCHEMA_VERSION` (sidecar `SCHEMA_VERSION`) | on-disk store layout; bumps only on a layout change → MAJOR binary release, outside the `^1` range (`doc/schema-versioning.md`) |
 
 skills.sh has no version — it tracks repo `HEAD`.
-
-## Release order
-
-1. **Binary** — `scripts/release.sh` builds and publishes the GitHub release **manually — there is no CI** (`.github/workflows` does not exist): macOS `aarch64` is built locally and `codesign --force --sign -`'d before the tarball (Sequoia SIGKILLs unsigned), Linux `x86_64` is built natively on DS242 over ssh, then the tarball is `scp`'d back and `gh release upload`'d from the mac (which holds the `gh` auth). Each target ships `ling-mem-<target>.tar.gz` + `.sha256`.
-2. **Binary pin** — if the binary changed, bump `plugins/shared-memory/VERSION` (exact tag, or a `~X.Y` range post-1.0). Skip if the binary is unchanged.
-3. **Plugin bundle** — bump `.claude-plugin` + `.codex-plugin` `version` whenever the bundle (hooks/SKILL.md) changes, even if the binary didn't. `build-plugin.sh` stamps only `VERSION` from Cargo — it must NOT touch the manifest versions.
-4. **Channels** — push the targets below.
 
 ## Channels
 
 | Target | Source | Publish / update | Status |
 |---|---|---|---|
-| **GitHub release** (binary) | `linggen/linggen-memory` tag `v*` | `scripts/release.sh` — manual (mac local + DS242 linux, no CI) | live |
-| **Claude Code — decentralized** | repo marketplace | users: `/plugin marketplace add linggen/linggen-memory` → install | live |
-| **Claude Code — community marketplace** | `anthropics/claude-plugins-community` | submit at claude.ai/settings/plugins/submit (`claude plugin validate --strict` first); CI pins a SHA on approval | submitted, pending review |
+| **GitHub release** (binary) | `linggen/linggen-memory` tag `v*` | mac: `scripts/release.sh vX.Y.Z --draft` locally (ad-hoc codesigned); linux: `build-linux.yml` dispatch onto the draft; then publish | live |
+| **Claude Code — decentralized** | repo marketplace (`.claude-plugin/marketplace.json`) | users: `/plugin marketplace add linggen/linggen-memory` → install | live |
+| **Claude Code — community marketplace** | `anthropics/claude-plugins-community` | submit at claude.ai/settings/plugins/submit (`claude plugin validate --strict` first); CI pins a SHA on approval | submitted; acceptance not yet observed |
 | **Claude Code — official** | `claude-plugins-official` | invite-only (Anthropic) | future |
-| **Codex — self-host repo marketplace** | `.agents/plugins/marketplace.json` in `linggen/linggen-memory` | users: `codex plugin marketplace add linggen/linggen-memory` → `codex plugin add shared-memory@linggen-memory` | live |
+| **Codex — self-host repo marketplace** | `.agents/plugins/marketplace.json` | users: `codex plugin marketplace add linggen/linggen-memory` → `codex plugin add linggen@linggen-memory` | live |
 | **Codex — official directory** | OpenAI Codex Plugin Directory | curated, self-serve "coming soon" | future |
-| **skills.sh** | auto-discovers `SKILL.md` in `linggen/linggen-memory` | no publish step; tracks repo `HEAD`. `npx skills add linggen/linggen-memory@shared-memory` | live |
-| **ClawHub** | `clawhub skill publish <abs-path> --slug linggen --version X.Y.Z` | immutable versions — a doc-only fix needs a bump; auto-runs ClawScan | live |
-| **Linggen** | in-app marketplace (`/api/marketplace/install`) | engine-side install; UI: Settings → Skills | ⚠️ binary-bootstrap gap (engine session) |
+| **skills.sh** | auto-discovers `SKILL.md` in `linggen/linggen-memory` | no publish step; tracks repo `HEAD`. `npx skills add linggen/linggen-memory@linggen` | live |
+| **ClawHub** | `clawhub skill publish <abs-path> --slug linggen --version X.Y.Z` | immutable versions; auto-runs ClawScan | live |
+| **Linggen** | engine auto-install on first memory use (`memory_http.rs`: `install-bin.sh`, `^1`, linggen.dev/dl mirror fallback) | nothing to publish — the engine installs the binary itself | live |
 
 ## Notes
 
 - ClawHub slug is **`linggen`** (owner `linggen` → clawhub.ai/linggen/linggen); the old `ling-mem` slug redirects (renamed 2026-07-10, skill v2.0.0).
-- ClawHub / skills.sh / community-marketplace SKILL.md must self-reference the right slug and the per-platform install (no curl fan-out — `install-shared-memory.sh` is retired).
-- Post-1.0: switch the binary pin from an exact tag to a `^1` range so patch/minor binaries reach users without a plugin release (`install-bin.sh` resolves ranges; the store-schema guard makes it safe). See `doc/schema-versioning.md`.
+- ClawHub / skills.sh / community-marketplace SKILL.md must self-reference the right slug and the per-platform install — no curl fan-out (`install-shared-memory.sh` is retired).
+- MCP server `instructions` in `src/http/mcp.rs` are the canonical memory protocol; every host (including the engine) injects them from there. A doctrine change is a binary release.
