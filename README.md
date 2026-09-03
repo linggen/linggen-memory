@@ -1,28 +1,71 @@
 # linggen-memory
 
-**A semantic memory store for AI assistants.**
+**Not a memory store. The whole memory lifecycle.**
 
-`ling-mem` is a single-binary CLI + optional web UI that remembers useful facts about you and your work across every session, every tool, and every project. LanceDB-backed, local-first, markdown-native where it counts.
+Most memory tools for AI agents do one slice — a database, a vector index, a place to put strings. `ling-mem` runs the full loop: it captures signal as you work, recalls it with citations, reconciles what contradicts, consolidates every night, forgets what never earned its place, and queues what only you can settle.
 
-Built as the default memory skill for [Linggen](https://github.com/linggen/linggen); works equally well invoked from Claude Code or any tool that can shell out.
+One local daemon. No SaaS, no API key, no signup. The same store in Claude Code, Codex, OpenClaw, and Linggen.
 
-> 🚀 **Status: v1.0.0 — stable** (contract frozen: store schema + CLI/HTTP/MCP API). Prebuilt binaries for macOS Apple Silicon and Linux x86_64. The pre-refactor code-indexing tool is preserved at the `v0-legacy` git tag.
+> **Status: v1.7.2 — stable.** Store schema and the CLI/HTTP/MCP contract are frozen. Prebuilt binaries for macOS Apple Silicon and Linux x86_64. The pre-refactor code-indexing tool is preserved at the `v0-legacy` git tag.
 
 ---
 
-## What it does
+## How it works
 
-- **Remembers across sessions.** Facts about who you are, how you prefer to work, what you've tried, what worked, what didn't.
-- **Semantic retrieval.** Everything stored gets embedded (1024-dim via `Qwen3-Embedding-0.6B`, multilingual). Find "berth calibration" by asking about "dock alignment."
-- **Typed facts.** Four default categories — `fact / preference / decision / learned` — plus `tried / fixed / built` for trajectory-level patterns.
-- **Forgetting is first-class.** `delete` by id, `forget` by filter — refuses empty filters as a guardrail.
-- **Self-updating.** `ling-mem upgrade --check` reports the latest release; `ling-mem start`, `restart`, and `status` all embed the same cached probe in their JSON so the agent can prompt the user when a new version ships without making extra network calls. `upgrade --yes` swaps the binary atomically and restarts the daemon. (`self-update` still works as an alias.)
-- **Three ways to use it:**
-  - As the **`linggen` skill on Linggen** — web app UI + `Memory_*` tool dispatch in the agent.
-  - As the **`shared-memory` skill on Claude Code / Codex / OpenClaw** — SKILL.md body, model calls the CLI via Bash, recall hook injects context every turn.
-  - **Standalone** — any script or tool can shell out to `ling-mem`.
+```
+   ┌──────────────────────── IN YOUR TURN ────────────────────────┐
+   │  the Linggen engine + the plugin — on every host             │
+   │                                                              │
+   │     capture  ──▶  recall  ──▶  scope  ──▶  reconcile         │
+   └───────────────────────────┬──────────────────────────────────┘
+                        writes │  ▲ reads
+                               ▼  │
+   ╔══════════════════════════════════════════════════════════════╗
+   ║  ling-mem — one local daemon, one store                      ║
+   ║  every row and every mechanical operation. no model inside.  ║
+   ╚══════════════════════════════════════════════════════════════╝
+                         reads │  ▲ writes back
+                               ▼  │
+   ┌─────────────────────── AT 3AM, UNATTENDED ───────────────────┐
+   │  the memory agent running the dream mission                  │
+   │                                                              │
+   │     dream  ──▶  forget  ──▶  audit  ──▶  review queue        │
+   └───────────────────────────┬──────────────────────────────────┘
+                               ▼  what it cannot settle alone
+                       ┌────────────────────┐
+                       │  solve — with you  │
+                       └────────────────────┘
+```
 
-See `doc/product-spec.md` for the full product story and `doc/tech-spec.md` for the implementation contract.
+Both halves of the loop meet at the same store. **The day half runs anywhere the plugin is installed.** The night half needs [Linggen](https://github.com/linggen/linggen), which ships the mission scheduler — install it alongside Claude Code or Codex to close the loop.
+
+| stage | when | what it does |
+|---|---|---|
+| **capture** | live | Signal is saved in the turn it appears. What you state outright goes to long-term; the rest stages in short-term. |
+| **recall** | live | Relevant rows surface at the start of every turn, and anything used in a reply is cited inline. |
+| **scope** | live | Every row records the project it came from, so recall is scoped to where you are asking — plus everything that is about *you*. |
+| **reconcile** | live | The agent rewrites its own notes freely. What you said changes only with you, and the store refuses a silent rewrite of your voice. |
+| **dream** | nightly | Each unjudged day is reviewed one at a time. Durable rows are promoted; nothing unjudged is ever deleted. |
+| **forget** | nightly | Once a day is judged, its staging rows fade after about a week unless they were promoted. Mechanical, no model in the loop. |
+| **audit** | nightly | Proven chains collapse into one current row. Merges archive rather than delete, so any of it can be unpacked. |
+| **solve** | with you | The agent drains the review queue with you present, fixing what evidence proves and asking about the rest one question at a time. |
+
+---
+
+## The parts
+
+- **`ling-mem`** — the single binary and local daemon that owns the store (LanceDB + `Qwen3-Embedding-0.6B`, 1024-dim, multilingual). It performs every mechanical operation: write, search, dedup, archive, export. No LLM runs inside it, and every frontend goes through it, so removing a frontend never loses a row.
+- **The Linggen engine** — memory tools for every agent, the always-on identity block at the top of each session, per-turn recall injection, and the capture protocol in the system prompt. This is the half that runs while you type.
+- **The memory agent + dream mission** — the offline judgment brain, on a 3am schedule with a 24-hour catch-up if the machine was asleep. The memory app's buttons trigger the same mission, so the UI and the schedule cannot drift apart.
+- **The `linggen` plugin & skill** — the same store inside Claude Code, Codex, and OpenClaw: recall each turn, the capture protocol, runbooks, and the memory app UI (calendar, dashboard, row browser). Any other host reaches the same rows over the daemon's `/mcp` `memory_*` group.
+
+## Three tiers
+
+Rows are separated by how durable they have proven to be, and the nightly pass is what moves them between shelves.
+
+- **Core** — a handful of high-confidence universals about the person (name, role, hard work rules). Present in every session, costing no retrieval.
+- **Long-term** — everything else durable, retrieved on demand. *State and lessons, never events* — the test is whether the row would still matter in three months.
+- **Short-term** — per-turn working capture. Events and uncertain signal land here cheaply; the dream decides what earns a place before the rest fades.
 
 ---
 
@@ -44,37 +87,32 @@ ling-mem list --type preference --since 2026-01-01 --format text
 ling-mem forget --context trip-japan-2026 --yes
 ```
 
-Default output is NDJSON on stdout — any model / script / shell can parse it. Pass `--format text` for human-readable lines.
+Default output is NDJSON on stdout — any model, script, or shell can parse it. Pass `--format text` for human-readable lines.
 
-The daemon (`ling-mem start`) also serves a built-in Data Browser at `http://127.0.0.1:9528` for hands-on filter / edit / batch-delete.
+The daemon (`ling-mem start`) also serves a built-in Data Browser at `http://127.0.0.1:9528` for hands-on filter / edit / batch-delete. Every row is yours to read, edit, or delete.
 
 ---
 
 ## Install
 
-The `ling-mem` binary ships as part of the **`shared-memory` skill** (in the [linggen/skills](https://github.com/linggen/skills) repo at `shared-memory/`). Installing the skill is the recommended path — it fetches the prebuilt binary, wires up the SKILL.md, and seeds the core memory files.
-
-Best experience: **Linggen agent**, which exposes typed `Memory_query` / `Memory_write` tools and a built-in dashboard. The skill also works with **any other agent** that can shell out (Claude Code, Codex, OpenClaw, plain scripts) — they just call the `ling-mem` CLI directly.
-
-Install from your agent's own marketplace — it manages updates and (on Claude
-Code / Codex) the per-turn recall hook. Pick **one** channel per host:
+Install from your agent's own marketplace — it manages updates and, on Claude Code and Codex, the per-turn recall hook. Pick **one** channel per host.
 
 ```text
-Claude Code   /plugin marketplace add linggen/linggen-memory
-              /plugin install shared-memory@linggen-memory
+Claude Code   claude plugin marketplace add linggen/linggen-memory
+              claude plugin install linggen@linggen-memory
 Codex         codex plugin marketplace add linggen/linggen-memory
-              codex plugin add shared-memory@linggen-memory
+              codex plugin add linggen@linggen-memory
 OpenClaw      clawhub install linggen
-Any agent     npx skills add linggen/linggen-memory@shared-memory
+Any agent     npx skills add linggen/linggen-memory@linggen
 Linggen       Settings → Skills → shared-memory   (in-app)
 ```
 
-The `ling-mem` binary is fetched automatically on first use (pinned, SHA-256
-verified) to the one cross-host location `~/.local/bin/ling-mem`. To install
-just the binary manually:
+Run these in your shell, not in the agent prompt — the `@linggen-memory` qualifier is required. On Claude Code and Codex, restart the agent afterwards to load the plugin.
+
+The `ling-mem` binary is fetched automatically on first use (pinned, SHA-256 verified) to the one cross-host location `~/.local/bin/ling-mem`. To install just the binary manually:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/linggen/linggen-memory/main/plugins/shared-memory/scripts/install-bin.sh) --version '^1'
+bash <(curl -fsSL https://raw.githubusercontent.com/linggen/linggen-memory/main/plugins/linggen/scripts/install-bin.sh) --version '^1'
 ```
 
 Prebuilt binaries for macOS Apple Silicon and Linux x86_64 are on the [releases page](https://github.com/linggen/linggen-memory/releases).
@@ -101,18 +139,26 @@ linggen-memory/
 │                       #  LanceDB store)
 ├── static/             # Data Browser UI (baked into the binary via rust-embed,
 │                       #  served at 127.0.0.1:9528 by the daemon)
+├── plugins/
+│   ├── linggen/        # Claude Code + Codex plugin — recall hook, commands,
+│   │                   #  and the published `linggen` skill
+│   └── openclaw/       # OpenClaw plugin
 ├── doc/
-│   ├── product-spec.md # features, user-facing behavior, scenarios
-│   ├── tech-spec.md    # schema, storage, CLI contract, release process
-│   └── ui-spec.md      # Data Browser UI: layout, endpoints, interactions
+│   ├── product-spec.md      # features, user-facing behavior, scenarios
+│   ├── tech-spec.md         # schema, storage, CLI contract, release process
+│   ├── ui-spec.md           # Data Browser UI: layout, endpoints, interactions
+│   ├── release-targets.md   # channel map
+│   └── schema-versioning.md # store schema compatibility rules
+├── benchmark/          # retrieval + consolidation evaluation
 ├── scripts/            # release.sh + Dockerfile.linux (multi-arch buildx)
+├── tests/
 ├── assets/             # icon etc.
 ├── CHANGELOG.md        # release notes per version
 ├── LICENSE             # MIT
 └── README.md           # you are here
 ```
 
-The thin **skill wrapper** (SKILL.md + dashboard + install.sh + scan/extract scripts) lives in the [`linggen/skills` repo at `ling-mem/`](https://github.com/linggen/skills/tree/main/ling-mem) — separate from this binary's source.
+The engine half of the system — the memory tools, the memory agent, and the dream mission — lives in the [`linggen/linggen`](https://github.com/linggen/linggen) engine repo. The product spec for the system as a whole is [`doc/memory-spec.md`](https://github.com/linggen/linggen/blob/main/doc/memory-spec.md) there, and the overview page is at [linggen.dev/memory](https://linggen.dev/memory).
 
 ---
 
@@ -132,7 +178,7 @@ What's **never** sent: fact content, query text, embeddings, file paths, your IP
 - Runtime: set `LING_MEM_NO_TELEMETRY=1`, or `touch ~/.linggen/no-telemetry`.
 - Compile time: build with `cargo build --release --no-default-features` (no telemetry code is even linked in).
 
-Source is open on both ends: client at [`src/telemetry/`](src/telemetry/), receiver at [`linggensite/functions/api/_lib/analytics.ts`](https://github.com/linggen/linggensite/blob/main/functions/api/_lib/analytics.ts).
+The client side is open and in this repo: [`src/telemetry/`](src/telemetry/) — read exactly what is sent. The receiver is a Cloudflare function on `linggen.dev`, which is not a public repo.
 
 ---
 
