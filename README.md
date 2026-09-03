@@ -1,8 +1,8 @@
 # linggen-memory
 
-**Not a memory store. The whole memory lifecycle.**
+**Not just remember and recall. Everything a brain does.**
 
-Most memory tools for AI agents do one slice — a database, a vector index, a place to put strings. `ling-mem` runs the full loop: it captures signal as you work, recalls it with citations, reconciles what contradicts, consolidates every night, forgets what never earned its place, and queues what only you can settle.
+The most important thing in a memory system is not storing a fact, and it is not finding it again. A good one does what a brain does — holds some things for a day and others for years, brings back what matters, lets go of what does not, collapses duplicates, merges what belongs together, checks its own work, and settles contradictions when it finds them. That is what `ling-mem` does.
 
 One local daemon. No SaaS, no API key, no signup. The same store in Claude Code, Codex, OpenClaw, and Linggen.
 
