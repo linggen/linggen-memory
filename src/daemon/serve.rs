@@ -51,9 +51,14 @@ pub async fn run(data_dir: &Path, skill_dir: &Path, port: u16, host: IpAddr) -> 
                 existing.port
             );
         }
-        // Stale pidfile — owner crashed without cleanup. Remove and proceed.
-        tracing::warn!("stale pidfile (pid {} not alive); overwriting", existing.pid);
-        pidfile::remove(skill_dir);
+        // Stale pidfile — owner crashed without cleanup. Left in place until
+        // this process has actually bound: `pidfile::write` replaces it
+        // atomically after the bind, so a bind that fails leaves the file —
+        // and whatever it still describes — untouched.
+        tracing::warn!(
+            "stale pidfile (pid {} not alive); overwriting after bind",
+            existing.pid
+        );
     }
 
     // Checked before the listener exists: a refusal must be a daemon that
@@ -131,7 +136,15 @@ pub async fn run(data_dir: &Path, skill_dir: &Path, port: u16, host: IpAddr) -> 
     .await
     .context("http server");
 
-    pidfile::remove(skill_dir);
+    // Only the file this process wrote. A daemon that lost the bind never
+    // gets here; this guards the day one somehow does.
+    let ours = pidfile::read(skill_dir)
+        .ok()
+        .flatten()
+        .map_or(true, |i| i.pid == std::process::id());
+    if ours {
+        pidfile::remove(skill_dir);
+    }
     tracing::info!("ling-mem daemon stopped");
     result
 }

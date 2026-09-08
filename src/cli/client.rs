@@ -18,6 +18,7 @@ use crate::cli::{
     AddArgs, CliMemoryType, CliOrigin, CliOutcome, FilterArgs, ForgetArgs, ListArgs, OutputFormat,
     SearchArgs, UpdateArgs,
 };
+use crate::daemon::lifecycle::LifecycleOutcome;
 use crate::daemon::pidfile;
 use crate::memory::Memory;
 use anyhow::{anyhow, Context, Result};
@@ -95,7 +96,24 @@ pub(crate) async fn try_running_or_start(
     )
     .await
     {
-        Ok(_) => try_running_daemon(skill_dir).await,
+        Ok(outcome) => {
+            let url = try_running_daemon(skill_dir).await;
+            if url.is_none() {
+                // Was already up by pid, yet silent over HTTP: either this
+                // shell cannot reach loopback (a sandbox, typically) or the
+                // daemon is wedged. Say so — "no daemon" sends the user
+                // chasing a ghost. A daemon we just started gets no such
+                // note: it may still be opening its store when probed.
+                if let LifecycleOutcome::AlreadyRunning(info) = &outcome {
+                    eprintln!(
+                        "ling-mem: daemon pid {} on port {} is up but did not answer this shell \
+                         (sandbox without loopback access, or a wedged daemon?); using direct store",
+                        info.pid, info.port
+                    );
+                }
+            }
+            url
+        }
         Err(e) => {
             eprintln!("ling-mem: autostart failed ({e}); using direct store");
             None

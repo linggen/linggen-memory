@@ -1,5 +1,20 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- **A sandboxed shell can no longer delete a live daemon's pidfile.**
+  Codex's seatbelt denies `kill(pid, 0)` on processes it didn't spawn
+  (EPERM) and closes loopback. The CLI read EPERM as "dead", removed
+  `daemon.json`, and spawned a second `serve` that died on the held port —
+  after which every `ling-mem status` on every host said `not_running`
+  while the daemon kept serving MCP. Now only `ESRCH` means dead; a pidfile
+  is retired only when its pid is gone *and* its port is free (a held port
+  is an error, never a deletion); `serve` overwrites a stale file after
+  binding instead of removing it before; and a daemon that is up but
+  unreachable from the calling shell is reported as exactly that.
+
 ## [1.7.2] - 2026-08-31 — one doctrine, served from here
 
 ### Changed

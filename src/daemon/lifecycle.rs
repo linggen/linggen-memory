@@ -165,7 +165,7 @@ pub async fn stop(skill_dir: &Path) -> Result<LifecycleOutcome> {
         return Ok(LifecycleOutcome::NotRunning);
     };
     if !pidfile::pid_is_alive(info.pid) {
-        pidfile::remove(skill_dir);
+        retire_if_stale(skill_dir, &info)?;
         return Ok(LifecycleOutcome::NotRunning);
     }
 
@@ -240,17 +240,36 @@ async fn probe_health(port: u16) -> String {
 }
 
 /// Return `Some(info)` only when the pidfile exists *and* its pid is alive.
-/// Stale files are cleaned up as a side effect so callers see consistent
-/// state on retry.
+/// A file whose pid is gone is retired via [`retire_if_stale`] so callers
+/// see consistent state on retry — unless its port is still bound, which
+/// is an error, never a deletion.
 fn live_pidfile(skill_dir: &Path) -> Result<Option<PidInfo>> {
     match pidfile::read(skill_dir)? {
         Some(info) if pidfile::pid_is_alive(info.pid) => Ok(Some(info)),
-        Some(_) => {
-            pidfile::remove(skill_dir);
+        Some(info) => {
+            retire_if_stale(skill_dir, &info)?;
             Ok(None)
         }
         None => Ok(None),
     }
+}
+
+/// The pidfile's pid is gone. Remove the file only when its port is free
+/// too: a held port means something still serves there, and a file this
+/// process cannot prove stale is not its to delete. The one time this
+/// mattered, the "gone" pid was a live daemon that a sandboxed shell was
+/// not allowed to signal — and the deletion orphaned it from every host.
+fn retire_if_stale(skill_dir: &Path, info: &PidInfo) -> Result<()> {
+    if pidfile::port_is_free(info.port) {
+        pidfile::remove(skill_dir);
+        return Ok(());
+    }
+    Err(anyhow!(
+        "daemon.json names pid {} (gone), but port {} is still bound — leaving the file alone; \
+         free the port, then `ling-mem start`",
+        info.pid,
+        info.port
+    ))
 }
 
 #[cfg(unix)]
@@ -275,3 +294,57 @@ const _: () = {
     // documented in one place without a separate `use` dance.
     let _ = DEFAULT_PORT;
 };
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+    use std::net::{Ipv4Addr, TcpListener};
+
+    fn reaped_pid() -> u32 {
+        let mut child = std::process::Command::new("true")
+            .spawn()
+            .expect("spawn true");
+        let pid = child.id();
+        child.wait().expect("reap");
+        pid
+    }
+
+    fn info(pid: u32, port: u16) -> PidInfo {
+        PidInfo {
+            pid,
+            port,
+            started_at: Utc::now(),
+            version: "test".into(),
+        }
+    }
+
+    #[test]
+    fn live_pidfile_returns_a_live_owner_untouched() {
+        let dir = tempfile::tempdir().unwrap();
+        pidfile::write(dir.path(), &info(std::process::id(), 1)).unwrap();
+        let got = live_pidfile(dir.path()).unwrap().expect("own pid is alive");
+        assert_eq!(got.pid, std::process::id());
+        assert!(pidfile::path(dir.path()).exists());
+    }
+
+    #[test]
+    fn live_pidfile_refuses_to_retire_a_file_whose_port_is_bound() {
+        let dir = tempfile::tempdir().unwrap();
+        let holder = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = holder.local_addr().unwrap().port();
+        pidfile::write(dir.path(), &info(reaped_pid(), port)).unwrap();
+
+        let err = live_pidfile(dir.path()).expect_err("held port must not be retired");
+        assert!(err.to_string().contains("still bound"), "{err}");
+        assert!(pidfile::path(dir.path()).exists(), "pidfile must survive");
+
+        drop(holder);
+        assert!(pidfile::wait_until_free(port));
+        assert!(live_pidfile(dir.path()).unwrap().is_none());
+        assert!(
+            !pidfile::path(dir.path()).exists(),
+            "stale file retired once the port is free"
+        );
+    }
+}
