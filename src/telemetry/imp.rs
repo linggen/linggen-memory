@@ -71,7 +71,10 @@ impl Telemetry {
             // as install. `via` comes from the install-source marker
             // file written by the installer; missing → "unknown".
             let mut p = read_install_source(&self.inner.data_dir, self.inner.product);
-            p.insert("via".into(), p.get("via").cloned().unwrap_or_else(|| "unknown".into()));
+            p.insert(
+                "via".into(),
+                p.get("via").cloned().unwrap_or_else(|| "unknown".into()),
+            );
             Some(p)
         } else if state.last_version != APP_VERSION {
             let mut p = std::collections::BTreeMap::new();
@@ -84,7 +87,10 @@ impl Telemetry {
         };
 
         if let Some(payload) = install_payload {
-            self.spawn_post("install", Some(serde_json::to_value(payload).unwrap_or(serde_json::Value::Null)));
+            self.spawn_post(
+                "install",
+                Some(serde_json::to_value(payload).unwrap_or(serde_json::Value::Null)),
+            );
         }
 
         // Read-modify-write: preserve last_command_day across launch.
@@ -115,7 +121,11 @@ impl Telemetry {
             .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
             .take(32)
             .collect();
-        let code = if code.is_empty() { "other".to_string() } else { code };
+        let code = if code.is_empty() {
+            "other".to_string()
+        } else {
+            code
+        };
         self.bump(&format!("error.{stage}.{code}"));
     }
 
@@ -189,11 +199,7 @@ impl Telemetry {
         });
         let client = self.inner.client.clone();
         tokio::spawn(async move {
-            let _ = client
-                .post(TRACK_URL)
-                .json(&body)
-                .send()
-                .await;
+            let _ = client.post(TRACK_URL).json(&body).send().await;
             // Errors are intentionally swallowed — we never want telemetry
             // to surface to the user. Rely on server-side observability.
         });
@@ -223,7 +229,10 @@ fn load_or_create_installation_id(data_dir: &Path) -> std::io::Result<String> {
 // ── opt-out ─────────────────────────────────────────────────────────────────
 
 fn is_opted_out(data_dir: &Path) -> bool {
-    if matches!(std::env::var("LING_MEM_NO_TELEMETRY").as_deref(), Ok("1") | Ok("true") | Ok("yes")) {
+    if matches!(
+        std::env::var("LING_MEM_NO_TELEMETRY").as_deref(),
+        Ok("1") | Ok("true") | Ok("yes")
+    ) {
         return true;
     }
     if data_dir.join("no-telemetry").exists() {
@@ -276,7 +285,10 @@ fn save_state(path: &Path, state: &State) -> std::io::Result<()> {
 /// Read the install-source marker file written by the installer (wrapper,
 /// linggen-engine bootstrap, clawhub, brew, etc.) into a payload map.
 /// Missing file → empty map; caller fills in `via=unknown`.
-fn read_install_source(data_dir: &Path, product: &str) -> std::collections::BTreeMap<String, String> {
+fn read_install_source(
+    data_dir: &Path,
+    product: &str,
+) -> std::collections::BTreeMap<String, String> {
     let path = data_dir.join(format!(".{product}-install-source"));
     let mut map = std::collections::BTreeMap::new();
     if let Ok(text) = std::fs::read_to_string(&path) {
@@ -306,5 +318,3 @@ fn platform_name() -> &'static str {
         "unknown"
     }
 }
-
-

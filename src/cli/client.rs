@@ -74,10 +74,7 @@ pub(crate) async fn try_running_daemon(skill_dir: &Path) -> Option<String> {
 /// `MemoryStore` mode. Failures we surface to stderr so the user can see
 /// *why* the daemon path was skipped — silent fallback would hide real
 /// problems (e.g. port in use, binary missing).
-pub(crate) async fn try_running_or_start(
-    data_dir: &Path,
-    skill_dir: &Path,
-) -> Option<String> {
+pub(crate) async fn try_running_or_start(data_dir: &Path, skill_dir: &Path) -> Option<String> {
     if let Some(url) = try_running_daemon(skill_dir).await {
         return Some(url);
     }
@@ -331,12 +328,7 @@ pub(crate) async fn update(base: &str, args: UpdateArgs, format: OutputFormat) -
     emit_fact_value(&data, format)
 }
 
-pub(crate) async fn delete(
-    base: &str,
-    id: &str,
-    yes: bool,
-    format: OutputFormat,
-) -> Result<()> {
+pub(crate) async fn delete(base: &str, id: &str, yes: bool, format: OutputFormat) -> Result<()> {
     if !yes {
         return Err(anyhow!(
             "refusing to delete without --yes (scripted calls must pass the flag)"
@@ -346,7 +338,10 @@ pub(crate) async fn delete(
     match format {
         OutputFormat::Json => writeln_ndjson(&data),
         OutputFormat::Text => {
-            let removed = data.get("removed").and_then(|v| v.as_bool()).unwrap_or(false);
+            let removed = data
+                .get("removed")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
             println!("{} {}", if removed { "deleted" } else { "not found" }, id);
             Ok(())
         }
@@ -459,9 +454,17 @@ pub(crate) async fn chains(
                 .into_iter()
                 .flatten()
             {
-                let derived = chain.get("derived_only").and_then(|v| v.as_bool()).unwrap_or(false);
+                let derived = chain
+                    .get("derived_only")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
                 println!("— chain (derived_only={derived})");
-                for row in chain.get("rows").and_then(|v| v.as_array()).into_iter().flatten() {
+                for row in chain
+                    .get("rows")
+                    .and_then(|v| v.as_array())
+                    .into_iter()
+                    .flatten()
+                {
                     println!("    {}", gist(row));
                 }
             }
@@ -471,10 +474,21 @@ pub(crate) async fn chains(
                 .into_iter()
                 .flatten()
             {
-                let seed = cluster.get("seed_id").and_then(|v| v.as_str()).unwrap_or("?");
-                let derived = cluster.get("derived_only").and_then(|v| v.as_bool()).unwrap_or(false);
+                let seed = cluster
+                    .get("seed_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?");
+                let derived = cluster
+                    .get("derived_only")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
                 println!("— cluster (seed {seed}, derived_only={derived})");
-                for row in cluster.get("rows").and_then(|v| v.as_array()).into_iter().flatten() {
+                for row in cluster
+                    .get("rows")
+                    .and_then(|v| v.as_array())
+                    .into_iter()
+                    .flatten()
+                {
                     let score = row.get("score").and_then(|v| v.as_f64()).unwrap_or(0.0);
                     println!("    ~{score:.2} {}", gist(row));
                 }
@@ -486,12 +500,20 @@ pub(crate) async fn chains(
                 .flatten()
             {
                 let marker = cand.get("marker").and_then(|v| v.as_str()).unwrap_or("?");
-                let derived = cand.get("derived_only").and_then(|v| v.as_bool()).unwrap_or(false);
+                let derived = cand
+                    .get("derived_only")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
                 println!("— candidate [{marker}] (derived_only={derived})");
                 if let Some(row) = cand.get("row") {
                     println!("    {}", gist(row));
                 }
-                for n in cand.get("neighbors").and_then(|v| v.as_array()).into_iter().flatten() {
+                for n in cand
+                    .get("neighbors")
+                    .and_then(|v| v.as_array())
+                    .into_iter()
+                    .flatten()
+                {
                     let score = n.get("score").and_then(|v| v.as_f64()).unwrap_or(0.0);
                     if let Some(row) = n.get("row") {
                         println!("      ~{score:.2} {}", gist(row));
@@ -550,7 +572,11 @@ pub(crate) async fn issue_add(
         OutputFormat::Text => {
             let issue = data.get("issue").cloned().unwrap_or_default();
             let id = issue.get("id").and_then(|v| v.as_str()).unwrap_or("?");
-            if data.get("deduped").and_then(|v| v.as_bool()).unwrap_or(false) {
+            if data
+                .get("deduped")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+            {
                 println!("{id} already queued");
             } else {
                 println!("{id} queued");
@@ -576,7 +602,11 @@ pub(crate) async fn issue_resolve(
             let issue = data.get("issue").cloned().unwrap_or_default();
             let id = issue.get("id").and_then(|v| v.as_str()).unwrap_or("?");
             let status = issue.get("status").and_then(|v| v.as_str()).unwrap_or("?");
-            if data.get("already_closed").and_then(|v| v.as_bool()).unwrap_or(false) {
+            if data
+                .get("already_closed")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+            {
                 println!("{id} was already {status}");
             } else {
                 println!("{id} → {status}");
@@ -602,7 +632,10 @@ pub(crate) async fn remember_day(
         OutputFormat::Json => writeln_ndjson(&data),
         OutputFormat::Text => {
             let date = data.get("date").and_then(|v| v.as_str()).unwrap_or("?");
-            println!("remembered {date} (judged +{}, promoted +{})", args.judged, args.promoted);
+            println!(
+                "remembered {date} (judged +{}, promoted +{})",
+                args.judged, args.promoted
+            );
             Ok(())
         }
     }
@@ -667,7 +700,9 @@ pub(crate) async fn stats(base: &str, format: OutputFormat) -> Result<()> {
                 n(&["remembered_days"]),
                 n(&["ttl_days"]),
                 n(&["schema_version"]),
-                data.get("embedding_model").and_then(|v| v.as_str()).unwrap_or("?"),
+                data.get("embedding_model")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?"),
             );
             Ok(())
         }
@@ -821,8 +856,8 @@ fn emit_add_outcome(data: &Value, format: OutputFormat) -> Result<()> {
 }
 
 fn emit_fact_value(data: &Value, format: OutputFormat) -> Result<()> {
-    let fact: Memory = serde_json::from_value(data.clone())
-        .context("parsing fact from daemon response")?;
+    let fact: Memory =
+        serde_json::from_value(data.clone()).context("parsing fact from daemon response")?;
     super::emit_fact(&fact, format)
 }
 
@@ -859,7 +894,13 @@ fn emit_scored_fact_array(data: &Value, format: OutputFormat) -> Result<()> {
                 let id = v.get("id").and_then(|s| s.as_str()).unwrap_or("");
                 let typ = v.get("type").and_then(|s| s.as_str()).unwrap_or("");
                 let content = v.get("content").and_then(|s| s.as_str()).unwrap_or("");
-                println!("{:.2} {} [{}] {}", score, id, typ, super::truncate(content, 120));
+                println!(
+                    "{:.2} {} [{}] {}",
+                    score,
+                    id,
+                    typ,
+                    super::truncate(content, 120)
+                );
             }
         }
     }
@@ -940,7 +981,10 @@ mod tests {
         filters.cwd_scope = Some("/home/u/work/repo".into());
 
         let mut body = filter_body(&filters);
-        assert!(body.get("cwd_scope").is_none(), "filter_body must not carry it");
+        assert!(
+            body.get("cwd_scope").is_none(),
+            "filter_body must not carry it"
+        );
 
         push_cwd_scope(&mut body, &filters);
         assert_eq!(body["cwd_scope"], json!("/home/u/work/repo"));

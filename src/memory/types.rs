@@ -132,6 +132,20 @@ pub struct Memory {
     /// this field with expired rows included.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub superseded_by: Option<String>,
+
+    /// Whose memory this is. NULL = the store owner's — every row written
+    /// from this machine, and every row from before the field existed.
+    /// Set only on rows that arrive from another person's device: the
+    /// engine stamps the paired phone's account (Mac-minted, never
+    /// phone-asserted), or `device:<id>` while that phone is signed out.
+    /// Recall, list, delete and the dream see one account at a time
+    /// (`Filters::account`), so two phones on one Mac never share a person.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub account_id: Option<String>,
+
+    /// Display name for `account_id` — a label, never a key.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub account_name: Option<String>,
 }
 
 impl Memory {
@@ -160,6 +174,8 @@ impl Memory {
             host: None,
             expired_at: None,
             superseded_by: None,
+            account_id: None,
+            account_name: None,
         }
     }
 

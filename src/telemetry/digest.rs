@@ -31,13 +31,18 @@ pub(crate) struct Digest {
 
 impl Digest {
     pub fn load(data_dir: &Path, product: &str) -> Self {
-        let path = data_dir.join("telemetry").join(format!("{product}-digest.json"));
+        let path = data_dir
+            .join("telemetry")
+            .join(format!("{product}-digest.json"));
         let days = std::fs::read(&path)
             .ok()
             .and_then(|bytes| serde_json::from_slice::<DigestFile>(&bytes).ok())
             .map(|f| f.days)
             .unwrap_or_default();
-        Self { path, days: Mutex::new(days) }
+        Self {
+            path,
+            days: Mutex::new(days),
+        }
     }
 
     /// Increment `key` for today and persist. Cheap enough for per-call use;
@@ -47,7 +52,11 @@ impl Digest {
             Ok(g) => g,
             Err(_) => return,
         };
-        *days.entry(today_utc_date()).or_default().entry(key.to_string()).or_insert(0) += 1;
+        *days
+            .entry(today_utc_date())
+            .or_default()
+            .entry(key.to_string())
+            .or_insert(0) += 1;
         save(&self.path, &days);
     }
 
@@ -144,7 +153,10 @@ mod tests {
         // Today is not completed, so nothing ships yet.
         assert!(digest.take_completed().is_empty());
         // Simulate a past day.
-        digest.restore("2020-01-01", BTreeMap::from([("chat.turn_ok".to_string(), 5)]));
+        digest.restore(
+            "2020-01-01",
+            BTreeMap::from([("chat.turn_ok".to_string(), 5)]),
+        );
         let taken = digest.take_completed();
         assert_eq!(taken.len(), 1);
         assert_eq!(taken[0].0, "2020-01-01");

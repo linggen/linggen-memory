@@ -84,12 +84,17 @@ impl Recall {
         // kept so recall can surface it (Reconcile, memory-spec §2).
         let mut pool: Vec<Candidate> = Vec::with_capacity(semantic.len() + episodic.len());
         for cand in semantic.into_iter().chain(episodic) {
-            if !pool.iter().any(|kept| is_near_dup(&kept.memory, &cand.memory)) {
+            if !pool
+                .iter()
+                .any(|kept| is_near_dup(&kept.memory, &cand.memory))
+            {
                 pool.push(cand);
             }
         }
 
-        Ok(crate::memory::hybrid::fuse(pool, query_text, limit, min_score))
+        Ok(crate::memory::hybrid::fuse(
+            pool, query_text, limit, min_score,
+        ))
     }
 }
 

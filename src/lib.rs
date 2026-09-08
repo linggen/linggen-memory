@@ -10,8 +10,8 @@ pub mod cli;
 pub mod daemon;
 pub mod embed;
 mod hash;
-pub mod memory;
 pub mod http;
+pub mod memory;
 pub mod telemetry;
 pub mod update;
 

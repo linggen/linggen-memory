@@ -159,8 +159,14 @@ mod tests {
         write_version(d.path(), STORE_SCHEMA_VERSION + 1).unwrap();
         let c = classify(d.path());
         assert!(matches!(c, Compat::TooNew { .. }));
-        assert!(refuse_message(c, d.path()).unwrap().contains("upgrade ling-mem")
-            || refuse_message(c, d.path()).unwrap().contains("ling-mem upgrade"));
+        assert!(
+            refuse_message(c, d.path())
+                .unwrap()
+                .contains("upgrade ling-mem")
+                || refuse_message(c, d.path())
+                    .unwrap()
+                    .contains("ling-mem upgrade")
+        );
     }
 
     #[test]

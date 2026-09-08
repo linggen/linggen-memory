@@ -10,8 +10,8 @@
 use super::envelope::{ok, ApiError};
 use super::state::SharedState;
 use crate::memory::{
-    Filters, InsertOutcome, Memory, MemoryPatch, MemoryStore, MemoryType, Origin, Outcome,
-    SortOrder, Tier,
+    AccountScope, Filters, InsertOutcome, Memory, MemoryPatch, MemoryStore, MemoryType, Origin,
+    Outcome, SortOrder, Tier,
 };
 use axum::extract::State;
 use axum::response::Response;
@@ -145,6 +145,8 @@ pub fn router() -> Router<SharedState> {
         .route("/api/memory/update", post(update))
         .route("/api/memory/delete", post(delete))
         .route("/api/memory/forget", post(forget))
+        .route("/api/memory/restamp", post(restamp))
+        .route("/api/memory/accounts", post(accounts))
 }
 
 // ── Request DTOs ────────────────────────────────────────────────────────────
@@ -213,6 +215,15 @@ pub struct AddRequest {
     /// user's voice). Derived-row replaces never need it.
     #[serde(default)]
     pub user_directed: bool,
+    /// Whose memory this is. Absent = the store owner's. Set by the
+    /// engine for a row arriving from another person's paired phone —
+    /// Mac-minted from the pairing record, never taken from the phone's
+    /// own claim — as the account id, or `device:<id>` while that phone
+    /// is signed out. See `Memory::account_id`.
+    #[serde(default)]
+    pub account_id: Option<String>,
+    #[serde(default)]
+    pub account_name: Option<String>,
 }
 
 /// Bulk insert. Each element is a plain [`AddRequest`]; the whole batch is
@@ -239,6 +250,26 @@ pub struct GetRequest {
     /// that internally.
     #[serde(default)]
     pub episodic: Option<bool>,
+    #[serde(flatten)]
+    pub scope: AccountScopeDTO,
+}
+
+/// Whose rows a by-id verb may touch. Absent = the store owner's, so a
+/// row that belongs to another person answers "not found" rather than
+/// being read, edited or deleted across the line. The engine fills it
+/// for a phone; local callers never need to.
+#[derive(Debug, Default, Deserialize)]
+pub struct AccountScopeDTO {
+    #[serde(default)]
+    pub account: Option<String>,
+    #[serde(default)]
+    pub all_accounts: bool,
+}
+
+impl AccountScopeDTO {
+    fn scope(self) -> AccountScope {
+        AccountScope::from_args(self.account, self.all_accounts)
+    }
 }
 
 /// Filter block shared by `search`, `list`, and `forget`. All fields
@@ -248,6 +279,14 @@ pub struct GetRequest {
 pub struct FilterDTO {
     #[serde(default)]
     pub contexts: Vec<String>,
+    /// Match rows carrying ANY of these contexts (OR), alongside the AND
+    /// of `contexts`. The phone's pull: "rows tagged with an app I run".
+    #[serde(default)]
+    pub contexts_any: Vec<String>,
+    /// Whose rows. Absent = the store owner's; an account id = that
+    /// person's; `all_accounts: true` = everyone's (maintenance only).
+    #[serde(flatten)]
+    pub scope: AccountScopeDTO,
     /// Narrow to one `MemoryType`. Linggen's tool schema is singular;
     /// internally we convert to `Filters.types: Vec<MemoryType>`.
     #[serde(default, deserialize_with = "deserialize_optional_lenient")]
@@ -341,6 +380,8 @@ impl FilterDTO {
         self.resolve_day()?;
         Ok(Filters {
             contexts: self.contexts,
+            contexts_any: self.contexts_any,
+            account: self.scope.scope(),
             types: self.r#type.into_iter().collect(),
             origin: self.from,
             outcome: self.outcome,
@@ -499,6 +540,8 @@ pub struct UpdateRequest {
     /// (tier, contexts, tags) stay unguarded.
     #[serde(default)]
     pub user_directed: bool,
+    #[serde(flatten)]
+    pub scope: AccountScopeDTO,
 }
 
 #[derive(Debug, Deserialize)]
@@ -509,6 +552,23 @@ pub struct DeleteRequest {
     /// before deleting.
     #[serde(default)]
     pub episodic: Option<bool>,
+    #[serde(flatten)]
+    pub scope: AccountScopeDTO,
+}
+
+/// Move every row stamped `from` to an account — the once-only re-stamp
+/// when a phone that wrote under its device id signs in.
+#[derive(Debug, Deserialize)]
+pub struct RestampRequest {
+    /// The stamp to replace, e.g. `device:<id>`.
+    pub from: String,
+    /// The account to move the rows to. Absent or empty = the store owner
+    /// (the rows lose their stamp): the phone that signed in was the
+    /// owner's all along.
+    #[serde(default)]
+    pub account_id: Option<String>,
+    #[serde(default)]
+    pub account_name: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -574,6 +634,8 @@ async fn add(
     fact.occurred_at = req.occurred_at;
     fact.source_session = req.source_session;
     fact.host = req.host;
+    fact.account_id = req.account_id.filter(|a| !a.trim().is_empty());
+    fact.account_name = req.account_name.filter(|a| !a.trim().is_empty());
     if episodic {
         // The row's table marks it as episodic; keep `tier` in sync so
         // callers filtering by tier alone don't see lies. Overrides any
@@ -601,7 +663,9 @@ async fn add(
             "action": "added",
             "fact": fact_public(&fact),
         });
-        return Ok(ok(apply_replace_ids(&state, &replace_ids, &fact.id, body).await));
+        return Ok(ok(
+            apply_replace_ids(&state, &replace_ids, &fact.id, body).await
+        ));
     }
 
     // Cross-tier dedup. The single-table `insert_with_dedup` below only
@@ -633,7 +697,13 @@ async fn add(
                 "previous_id": existing.id,
                 "fact": fact_public(&merged),
             });
-            return Ok(ok(apply_replace_ids(&state, &replace_ids, &existing.id, body).await));
+            return Ok(ok(apply_replace_ids(
+                &state,
+                &replace_ids,
+                &existing.id,
+                body,
+            )
+            .await));
         }
         // New row is at a higher tier — promote: delete the lower-tier
         // copy from the other table, then proceed with single-table insert.
@@ -879,8 +949,12 @@ async fn get(
     State(state): State<SharedState>,
     Json(req): Json<GetRequest>,
 ) -> Result<Response, ApiError> {
+    let scope = req.scope.scope();
     for store in stores_for_read(&state, req.episodic) {
         if let Some(fact) = store.get(&req.id).await? {
+            if !scope.admits(&fact) {
+                break;
+            }
             return Ok(ok(fact_public(&fact)));
         }
     }
@@ -1101,6 +1175,9 @@ async fn update(
     let Some((current_store, existing)) = located else {
         return Err(ApiError::not_found(format!("no fact with id {}", req.id)));
     };
+    if !req.scope.scope().admits(&existing) {
+        return Err(ApiError::not_found(format!("no fact with id {}", req.id)));
+    }
 
     let target_tier = patch.tier.unwrap_or(existing.tier);
     let target_is_episodic = matches!(target_tier, Tier::Episodic);
@@ -1135,12 +1212,67 @@ async fn delete(
     State(state): State<SharedState>,
     Json(req): Json<DeleteRequest>,
 ) -> Result<Response, ApiError> {
+    let scope = req.scope.scope();
     for store in stores_for_read(&state, req.episodic) {
+        // Fetch first: a row outside the caller's account is simply not
+        // theirs to remove, and it answers exactly as a missing one does.
+        let Some(fact) = store.get(&req.id).await? else {
+            continue;
+        };
+        if !scope.admits(&fact) {
+            break;
+        }
         if store.delete(&req.id).await? {
             return Ok(ok(json!({"id": req.id, "removed": true})));
         }
     }
     Ok(ok(json!({"id": req.id, "removed": false})))
+}
+
+/// `POST /api/memory/restamp` — re-own every row stamped `from` (both
+/// tables, archived rows included, so provenance follows the person).
+async fn restamp(
+    State(state): State<SharedState>,
+    Json(req): Json<RestampRequest>,
+) -> Result<Response, ApiError> {
+    let from = req.from.trim().to_string();
+    if from.is_empty() {
+        return Err(ApiError::bad_request("from must not be empty"));
+    }
+    let to = req
+        .account_id
+        .map(|a| a.trim().to_string())
+        .filter(|a| !a.is_empty());
+    let name = req.account_name.filter(|n| !n.trim().is_empty());
+    let mut moved = 0usize;
+    for store in stores_for_read(&state, None) {
+        moved += store
+            .restamp_account(&from, to.as_deref(), name.as_deref())
+            .await?;
+    }
+    Ok(ok(json!({"from": from, "account_id": to, "moved": moved})))
+}
+
+/// `POST /api/memory/accounts` — every person the store holds rows for
+/// besides the owner: `{account_id, account_name, rows}`. What a
+/// per-account maintenance pass iterates.
+async fn accounts(State(state): State<SharedState>) -> Result<Response, ApiError> {
+    let mut seen: std::collections::BTreeMap<String, (Option<String>, usize)> =
+        std::collections::BTreeMap::new();
+    for store in stores_for_read(&state, None) {
+        for (id, name, n) in store.distinct_accounts().await? {
+            let e = seen.entry(id).or_insert((None, 0));
+            if e.0.is_none() {
+                e.0 = name;
+            }
+            e.1 += n;
+        }
+    }
+    let list: Vec<Value> = seen
+        .into_iter()
+        .map(|(id, (name, rows))| json!({"account_id": id, "account_name": name, "rows": rows}))
+        .collect();
+    Ok(ok(json!(list)))
 }
 
 async fn forget(

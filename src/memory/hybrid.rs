@@ -170,8 +170,7 @@ pub fn fuse(
     scored.truncate(limit);
 
     // Reclaim the owned Memory values in ranked order.
-    let mut by_idx: Vec<Option<Memory>> =
-        candidates.into_iter().map(|c| Some(c.memory)).collect();
+    let mut by_idx: Vec<Option<Memory>> = candidates.into_iter().map(|c| Some(c.memory)).collect();
     scored
         .into_iter()
         .filter_map(|(i, cosine, hybrid)| by_idx[i].take().map(|m| (m, cosine, hybrid)))
@@ -203,10 +202,17 @@ mod tests {
         let cands = vec![
             cand("agents can ask the user a question", 0.58),
             cand("the responses api reasoning effort", 0.56),
-            cand("user has a male dog named Yinyue, separate from the cat", 0.55),
+            cand(
+                "user has a male dog named Yinyue, separate from the cat",
+                0.55,
+            ),
         ];
         let out = fuse(cands, "dog", 10, Some(0.6));
-        assert_eq!(out.len(), 1, "only the boosted keyword hit clears the floor");
+        assert_eq!(
+            out.len(),
+            1,
+            "only the boosted keyword hit clears the floor"
+        );
         assert!(out[0].0.content.contains("dog"), "the dog row ranks first");
         assert!(out[0].2 > 0.6, "its hybrid score is lifted over the floor");
     }
@@ -222,7 +228,12 @@ mod tests {
 
     #[test]
     fn floor_still_drops_low_cosine_non_matches() {
-        let out = fuse(vec![cand("totally unrelated row", 0.40)], "dog", 10, Some(0.6));
+        let out = fuse(
+            vec![cand("totally unrelated row", 0.40)],
+            "dog",
+            10,
+            Some(0.6),
+        );
         assert!(out.is_empty(), "no keyword match and below floor → dropped");
     }
 
@@ -247,7 +258,10 @@ mod tests {
             cands.push(cand("some other memory with a name", 0.50));
         }
         let out = fuse(cands, "yinyue name", 10, None);
-        assert!(out[0].0.content.contains("yinyue"), "rare-word row ranks first");
+        assert!(
+            out[0].0.content.contains("yinyue"),
+            "rare-word row ranks first"
+        );
         assert!(out[0].2 > 0.7, "rare-word match earns most of the boost");
         assert!(
             out[1].2 < 0.6,
@@ -261,6 +275,10 @@ mod tests {
         let cands = vec![cand("alpha", 0.9), cand("beta", 0.7), cand("gamma", 0.3)];
         let out = fuse(cands, "!!!", 10, Some(0.5));
         let got: Vec<&str> = out.iter().map(|(m, _, _)| m.content.as_str()).collect();
-        assert_eq!(got, vec!["alpha", "beta"], "cosine order, gamma floored out");
+        assert_eq!(
+            got,
+            vec!["alpha", "beta"],
+            "cosine order, gamma floored out"
+        );
     }
 }

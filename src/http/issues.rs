@@ -103,7 +103,12 @@ async fn save(data_dir: &Path, state: &IssuesState) -> Result<(), std::io::Error
 
 /// Open-item count for the stats/days rollups.
 pub(crate) async fn open_count(data_dir: &Path) -> usize {
-    load(data_dir).await.issues.iter().filter(|i| i.status == "open").count()
+    load(data_dir)
+        .await
+        .issues
+        .iter()
+        .filter(|i| i.status == "open")
+        .count()
 }
 
 /// Every row id referenced by any issue, whatever its status. The marker
@@ -245,7 +250,10 @@ async fn issue_resolve(
     }
     let mut all = load(&state.data_dir).await;
     let Some(item) = all.issues.iter_mut().find(|i| i.id == req.id) else {
-        return Err(ApiError::bad_request(format!("no issue with id {:?}", req.id)));
+        return Err(ApiError::bad_request(format!(
+            "no issue with id {:?}",
+            req.id
+        )));
     };
     if item.status != "open" {
         let already = item.clone();
@@ -304,8 +312,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut state = IssuesState::default();
         state.issues.push(record("chain", &["a"], "open"));
-        state.issues.push(record("stale-status", &["b"], "resolved"));
-        state.issues.push(record("contradiction", &["c"], "dismissed"));
+        state
+            .issues
+            .push(record("stale-status", &["b"], "resolved"));
+        state
+            .issues
+            .push(record("contradiction", &["c"], "dismissed"));
         save(dir.path(), &state).await.unwrap();
         assert_eq!(open_count(dir.path()).await, 1);
     }

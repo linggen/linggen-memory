@@ -51,7 +51,7 @@ $LINGGEN_DATA_DIR/
 
 Multi-user isolation is path-level, not in-row: Linggen sets `LINGGEN_DATA_DIR` per user context before invoking `ling-mem`. The binary is single-user per invocation and has no `user_id` concept.
 
-## Fact schema (13 fields)
+## Fact schema (19 fields)
 
 LanceDB table name: `semantic` (curated long-term memory; holds both `tier=core` and `tier=semantic` rows).
 
@@ -71,10 +71,17 @@ LanceDB table name: `semantic` (curated long-term memory; holds both `tier=core`
 | `updated_at` | Timestamp(Microsecond, UTC) | yes | Last-edit time. Doubles as the decay/TTL clock AND the *activity timestamp* `updated_at ?? created_at` that drives list `--sort` and the UI age badge (falls back to `created_at`) |
 | `occurred_at` | Timestamp(Microsecond, UTC) | yes | When the thing described happened. Falls back to `created_at` in queries |
 | `source_session` | Utf8 | yes | Session id the fact was extracted from. Escape hatch when the fact is later ambiguous |
+| `host` | Utf8 | yes | Which tool runtime wrote the row (`linggen`, `claude-code`, `codex`, `linggen-mobile`) |
+| `expired_at` | Timestamp(Microsecond, UTC) | yes | Archive pair with `superseded_by` (2026-08-17): a merge or digest expires its losers instead of deleting them. NULL = live |
+| `superseded_by` | Utf8 | yes | Id of the row that replaced this one |
+| `account_id` | Utf8 | yes | Whose memory (2026-09-08). NULL = the store owner's. Set only on rows from another person's paired phone: their account id, or `device:<id>` while signed out. Every query is scoped to one person (`account` / `all_accounts` args; absent = owner) |
+| `account_name` | Utf8 | yes | Display label for `account_id`; never a key |
+
+Later columns are added to an existing table on open (`ensure_late_schema_additions`), all nullable, so the store version stays 1.
 
 **Embedding dimension: 1024** (Arrow `FixedSizeList<Float32, 1024>`), determined by the default embedding model (below).
 
-**Not in v0.1** — add with migration when needed: `last_referenced`, `access_count`, `confidence`, `pinned`, explicit `user_id`. (`supersedes` was considered and dropped — conflict resolution is the live `replace_ids` atomic add+delete primitive instead.)
+**Not in v0.1** — add with migration when needed: `last_referenced`, `access_count`, `confidence`, `pinned`. (`user_id` arrived as `account_id`, 2026-09-08.) (`supersedes` was considered and dropped — conflict resolution is the live `replace_ids` atomic add+delete primitive instead.)
 
 ## Canonical `type` values
 
@@ -116,6 +123,8 @@ If the configured model output dimension doesn't match the table's `FixedSizeLis
 | `update <id>` | Modify fields | `--content`, `--add-context`, `--remove-context`, `--add-tag`, `--remove-tag`, `--type`, `--outcome` |
 | `delete <id>` | Hard delete | `--yes` to skip confirmation |
 | `forget` | Bulk delete by filter | `--context`, `--type`, `--older-than`; requires `--yes` |
+| *(HTTP only)* `restamp` | Move every row stamped `from` to an account (or to the owner when `account_id` is absent) | the once-only re-stamp when a signed-out phone signs in; the engine calls it, a phone may not |
+| *(HTTP only)* `accounts` | Every non-owner account with rows, with name and count | what a per-account maintenance pass iterates |
 
 (`evict` was removed in v0.7.1 — past-TTL episodic eviction is
 `forget --older-than <dur> --episodic --yes`.)

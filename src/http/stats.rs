@@ -42,7 +42,11 @@ async fn stats(State(state): State<SharedState>) -> Result<Response, ApiError> {
     // The archive: rows a replace_ids merge / digest expired out of live
     // memory. Counted separately — never inside the tier counts — and
     // surfaced so archived state stays visible state.
-    let expired = state.store.count_expired().await.map_err(ApiError::internal)?;
+    let expired = state
+        .store
+        .count_expired()
+        .await
+        .map_err(ApiError::internal)?;
 
     // Disk footprint. Both tables live inside the single LanceDB
     // database dir (`memory.lancedb/<table>.lance/`). Lance is

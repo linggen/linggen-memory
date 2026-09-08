@@ -29,14 +29,66 @@ use lancedb::{
 use std::path::Path;
 use std::sync::Arc;
 
+/// Whose rows a query sees. One person at a time, always: the store holds
+/// the owner's memory and, once a phone with another account has paired,
+/// that person's too — and a recall that mixed them would hand one person
+/// the other's life.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub enum AccountScope {
+    /// The store owner's rows — `account_id IS NULL`. The default, so
+    /// every caller that never heard of accounts keeps seeing exactly
+    /// what it saw before the field existed.
+    #[default]
+    Owner,
+    /// One other person's rows.
+    Id(String),
+    /// Everyone's. For maintenance that walks the whole store — the
+    /// per-account dream picks its person from `distinct_accounts`.
+    Any,
+}
+
+impl AccountScope {
+    /// The scope a request names: `all_accounts` beats `account`, and an
+    /// absent `account` is the owner.
+    pub fn from_args(account: Option<String>, all_accounts: bool) -> Self {
+        if all_accounts {
+            return Self::Any;
+        }
+        match account
+            .map(|a| a.trim().to_string())
+            .filter(|a| !a.is_empty())
+        {
+            Some(id) => Self::Id(id),
+            None => Self::Owner,
+        }
+    }
+
+    /// Does a row fall inside this scope? The post-fetch twin of the SQL
+    /// clause, for the by-id verbs (`get` / `update` / `delete`) that
+    /// fetch first and must not touch another person's row.
+    pub fn admits(&self, fact: &Memory) -> bool {
+        match self {
+            Self::Owner => fact.account_id.is_none(),
+            Self::Id(id) => fact.account_id.as_deref() == Some(id.as_str()),
+            Self::Any => true,
+        }
+    }
+}
+
 /// Filter criteria shared by [`MemoryStore::search`] and [`MemoryStore::list`].
 ///
 /// All filter fields combine with AND. Within `contexts`, every entry must
-/// appear in the fact's `contexts` array (AND semantics). Within `types`,
-/// any one entry matches (OR). An empty filter matches every row.
+/// appear in the fact's `contexts` array (AND semantics); within
+/// `contexts_any`, one is enough (OR). Within `types`, any one entry matches
+/// (OR). An empty filter matches every row of the owner's.
 #[derive(Debug, Clone, Default)]
 pub struct Filters {
     pub contexts: Vec<String>,
+    /// At least one of these must appear in the fact's `contexts`. The
+    /// phone's pull uses it: "the rows tagged with any app I run".
+    pub contexts_any: Vec<String>,
+    /// Whose rows. Defaults to the owner's; see [`AccountScope`].
+    pub account: AccountScope,
     pub types: Vec<MemoryType>,
     pub origin: Option<Origin>,
     pub outcome: Option<Outcome>,
@@ -73,7 +125,11 @@ impl Filters {
     /// gate would defeat: an empty filter still renders
     /// `expired_at IS NULL`).
     pub fn is_empty(&self) -> bool {
+        // `account` deliberately doesn't count: it narrows to a person, and
+        // "forget everyone this person is" must be a by-id decision, not a
+        // filter that reads like a scope.
         self.contexts.is_empty()
+            && self.contexts_any.is_empty()
             && self.types.is_empty()
             && self.origin.is_none()
             && self.outcome.is_none()
@@ -98,6 +154,22 @@ impl Filters {
 
         for ctx in &self.contexts {
             clauses.push(format!("array_has(contexts, '{}')", escape_sql(ctx)));
+        }
+
+        if !self.contexts_any.is_empty() {
+            let or = self
+                .contexts_any
+                .iter()
+                .map(|c| format!("array_has(contexts, '{}')", escape_sql(c)))
+                .collect::<Vec<_>>()
+                .join(" OR ");
+            clauses.push(format!("({or})"));
+        }
+
+        match &self.account {
+            AccountScope::Owner => clauses.push("account_id IS NULL".to_string()),
+            AccountScope::Id(id) => clauses.push(format!("account_id = '{}'", escape_sql(id))),
+            AccountScope::Any => {}
         }
 
         if !self.types.is_empty() {
@@ -161,9 +233,7 @@ impl Filters {
         // `…/linggen-mobile`, which is a different project sharing a prefix.
         if let Some(p) = &self.cwd_scope {
             let p = escape_sql(p.trim_end_matches('/'));
-            clauses.push(format!(
-                "(cwd IS NULL OR cwd = '{p}' OR cwd LIKE '{p}/%')"
-            ));
+            clauses.push(format!("(cwd IS NULL OR cwd = '{p}' OR cwd LIKE '{p}/%')"));
         }
 
         if clauses.is_empty() {
@@ -215,6 +285,8 @@ pub struct MemoryPatch {
     pub source_session: Option<Option<String>>,
     pub host: Option<Option<String>>,
     pub vector: Option<Option<Vec<f32>>>,
+    pub account_id: Option<Option<String>>,
+    pub account_name: Option<Option<String>>,
 }
 
 impl MemoryPatch {
@@ -257,6 +329,12 @@ impl MemoryPatch {
         if let Some(v) = &self.vector {
             f.vector = v.clone();
         }
+        if let Some(v) = &self.account_id {
+            f.account_id = v.clone();
+        }
+        if let Some(v) = &self.account_name {
+            f.account_name = v.clone();
+        }
     }
 }
 
@@ -276,7 +354,8 @@ async fn ensure_late_schema_additions(table: &lancedb::Table) -> Result<()> {
         .await
         .context("reading existing memory table schema")?;
     // Every column added after the initial schema, in add order:
-    // `host` (2026-05-20), the archive pair (2026-08-17).
+    // `host` (2026-05-20), the archive pair (2026-08-17), the account pair
+    // (2026-09-08).
     let late: &[(&str, DataType)] = &[
         ("host", DataType::Utf8),
         (
@@ -284,6 +363,8 @@ async fn ensure_late_schema_additions(table: &lancedb::Table) -> Result<()> {
             DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into())),
         ),
         ("superseded_by", DataType::Utf8),
+        ("account_id", DataType::Utf8),
+        ("account_name", DataType::Utf8),
     ];
     let missing: Vec<Field> = late
         .iter()
@@ -665,6 +746,61 @@ impl MemoryStore {
         self.find_exact_content(content, ty).await
     }
 
+    /// Move every row stamped `from` (live or archived) to `to` — `None`
+    /// hands them to the owner. The once-only re-stamp when a phone that
+    /// wrote under its device id signs in. Returns how many rows moved.
+    pub async fn restamp_account(
+        &self,
+        from: &str,
+        to: Option<&str>,
+        name: Option<&str>,
+    ) -> Result<usize> {
+        let filters = Filters {
+            account: AccountScope::Id(from.to_string()),
+            include_expired: true,
+            ..Filters::default()
+        };
+        let mut q = self.table.query();
+        if let Some(sql) = filters.to_sql() {
+            q = q.only_if(sql);
+        }
+        let rows = self.collect_query(q).await?;
+        let _guard = self.write_lock.lock().await;
+        let mut moved = 0usize;
+        for mut row in rows {
+            row.account_id = to.map(str::to_string);
+            row.account_name = if to.is_some() {
+                name.map(str::to_string)
+            } else {
+                None
+            };
+            self.upsert(&row).await?;
+            moved += 1;
+        }
+        Ok(moved)
+    }
+
+    /// Every non-owner account with rows here, with a name if any row
+    /// carries one and how many rows (live only).
+    pub async fn distinct_accounts(&self) -> Result<Vec<(String, Option<String>, usize)>> {
+        let q = self
+            .table
+            .query()
+            .only_if("account_id IS NOT NULL AND expired_at IS NULL");
+        let rows = self.collect_query(q).await?;
+        let mut seen: std::collections::BTreeMap<String, (Option<String>, usize)> =
+            std::collections::BTreeMap::new();
+        for r in rows {
+            let Some(id) = r.account_id else { continue };
+            let e = seen.entry(id).or_insert((None, 0));
+            if e.0.is_none() {
+                e.0 = r.account_name;
+            }
+            e.1 += 1;
+        }
+        Ok(seen.into_iter().map(|(id, (n, c))| (id, n, c)).collect())
+    }
+
     /// Public wrapper for replacing a row by id — used by the cross-tier
     /// dedup path to merge contexts/tags into the existing higher-tier
     /// row when a lower-tier write hit the same (content, type).
@@ -689,11 +825,7 @@ impl MemoryStore {
     /// [`Self::insert_with_dedup`] for why cosine is never a sameness
     /// decision. `content` is a normal column (not a SQL keyword); `type`
     /// equality mirrors [`Filters::to_sql`].
-    async fn find_exact_content(
-        &self,
-        content: &str,
-        ty: MemoryType,
-    ) -> Result<Option<Memory>> {
+    async fn find_exact_content(&self, content: &str, ty: MemoryType) -> Result<Option<Memory>> {
         let filter = format!(
             "content = '{}' AND type = '{}'",
             escape_sql(content),
@@ -900,7 +1032,9 @@ impl MemoryStore {
         min_score: Option<f32>,
     ) -> Result<Vec<(Memory, f32, f32)>> {
         let candidates = self.scored_candidates(query_vec, filters).await?;
-        Ok(super::hybrid::fuse(candidates, query_text, limit, min_score))
+        Ok(super::hybrid::fuse(
+            candidates, query_text, limit, min_score,
+        ))
     }
 
     /// Non-semantic browse. Returns up to `limit` facts matching `filters`,
@@ -1053,9 +1187,7 @@ impl MemoryStore {
             // Origin filter active → list rows that match, delete each by id.
             // Use a generous limit to cover the whole store; pagination here
             // would just complicate the count math.
-            let mut victims = self
-                .list(filters, SortOrder::Newest, usize::MAX, 0)
-                .await?;
+            let mut victims = self.list(filters, SortOrder::Newest, usize::MAX, 0).await?;
             apply_origin_filter(&mut victims, filters.origin);
             let mut removed = 0;
             for v in victims {
@@ -1400,18 +1532,72 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn default_filter_renders_only_the_archive_gate() {
+    async fn default_filter_renders_only_the_two_gates() {
         // The default filter is structurally empty (forget refuses it) but
-        // still renders the live-rows-only gate.
+        // still renders the two always-on gates: the owner's rows, live only.
         assert!(Filters::default().is_empty());
-        assert_eq!(Filters::default().to_sql().as_deref(), Some("expired_at IS NULL"));
-        // Opting into the archive removes the gate — nothing left to render.
-        let all = Filters { include_expired: true, ..Filters::default() };
+        assert_eq!(
+            Filters::default().to_sql().as_deref(),
+            Some("account_id IS NULL AND expired_at IS NULL")
+        );
+        // Opting into the archive and every account removes both gates —
+        // nothing left to render.
+        let all = Filters {
+            include_expired: true,
+            account: AccountScope::Any,
+            ..Filters::default()
+        };
         assert!(all.to_sql().is_none());
         // The unpack query targets one survivor's archived members.
-        let unpack = Filters { superseded_by: Some("abc123".into()), ..Filters::default() };
+        let unpack = Filters {
+            superseded_by: Some("abc123".into()),
+            account: AccountScope::Any,
+            ..Filters::default()
+        };
         assert!(!unpack.is_empty());
         assert_eq!(unpack.to_sql().as_deref(), Some("superseded_by = 'abc123'"));
+    }
+
+    #[tokio::test]
+    async fn account_scope_renders_and_admits() {
+        let mine = Filters {
+            account: AccountScope::Id("u1".into()),
+            ..Filters::default()
+        };
+        assert_eq!(
+            mine.to_sql().as_deref(),
+            Some("account_id = 'u1' AND expired_at IS NULL")
+        );
+        // Scope alone is not a filter: forget must not take a person by scope.
+        assert!(mine.is_empty());
+        let any = Filters {
+            contexts_any: vec!["dj".into(), "cfo".into()],
+            ..Filters::default()
+        };
+        assert!(!any.is_empty());
+        assert!(any
+            .to_sql()
+            .unwrap()
+            .contains("(array_has(contexts, 'dj') OR array_has(contexts, 'cfo'))"));
+
+        let mut owner_row = Memory::new("x", MemoryType::Fact, Origin::User);
+        let mut theirs = owner_row.clone();
+        theirs.account_id = Some("u1".into());
+        assert!(AccountScope::Owner.admits(&owner_row));
+        assert!(!AccountScope::Owner.admits(&theirs));
+        assert!(AccountScope::Id("u1".into()).admits(&theirs));
+        assert!(!AccountScope::Id("u1".into()).admits(&owner_row));
+        assert!(AccountScope::Any.admits(&theirs));
+        owner_row.account_id = Some("device:abc".into());
+        assert!(!AccountScope::Owner.admits(&owner_row));
+        assert_eq!(
+            AccountScope::from_args(Some("  ".into()), false),
+            AccountScope::Owner
+        );
+        assert_eq!(
+            AccountScope::from_args(Some("u1".into()), true),
+            AccountScope::Any
+        );
     }
 
     #[tokio::test]
@@ -1428,6 +1614,8 @@ mod tests {
             cwd_scope: None,
             include_expired: false,
             superseded_by: None,
+            contexts_any: Vec::new(),
+            account: AccountScope::Owner,
         };
         let sql = f.to_sql().unwrap();
         assert!(sql.contains("array_has(contexts, 'code/linggen')"));
@@ -1799,7 +1987,10 @@ mod tests {
         // original activity clock untouched.
         let archived = store.get(&loser_id).await.unwrap().unwrap();
         assert!(archived.expired_at.is_some());
-        assert_eq!(archived.superseded_by.as_deref(), Some(survivor_id.as_str()));
+        assert_eq!(
+            archived.superseded_by.as_deref(),
+            Some(survivor_id.as_str())
+        );
         assert!(archived.updated_at.is_none());
 
         // The unpack query finds exactly the survivor's members.
@@ -1821,7 +2012,10 @@ mod tests {
         // include_expired widens a plain list back to both rows.
         let all = store
             .list(
-                &Filters { include_expired: true, ..Filters::default() },
+                &Filters {
+                    include_expired: true,
+                    ..Filters::default()
+                },
                 SortOrder::Newest,
                 100,
                 0,
@@ -2049,7 +2243,10 @@ mod tests {
 
         assert_eq!(previous_id, existing_id);
         assert_eq!(merged.id, existing_id);
-        assert_eq!(similarity, 1.0, "exact-content match reports similarity 1.0");
+        assert_eq!(
+            similarity, 1.0,
+            "exact-content match reports similarity 1.0"
+        );
         assert_eq!(merged.content, "original phrasing");
         assert_eq!(
             merged.contexts,

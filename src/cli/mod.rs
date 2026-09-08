@@ -159,7 +159,6 @@ pub enum Command {
     // Session-scanning utilities (`collect` + `extract`) used to live here.
     // They moved to `skills/memory/scripts/` as bash helpers — the daemon is
     // a pure data service; reading session files isn't its concern.
-
     /// Spawn the daemon. Forks to background by default and waits for
     /// the port to bind; pass `--foreground` to block in the current
     /// process (what `launchd` / `systemd` / docker want).
@@ -750,6 +749,9 @@ impl FilterArgs {
             cwd_scope: self.cwd_scope,
             include_expired: self.include_expired,
             superseded_by: self.superseded_by,
+            // The CLI runs on the owner's machine; owner scope is the default
+            // and the store's rows from other people are the daemon's business.
+            ..Filters::default()
         })
     }
 }
@@ -804,7 +806,11 @@ pub async fn run(cli: Cli) -> Result<()> {
         Command::Serve { port, host } => {
             return crate::daemon::serve::run(&data_dir, &skill_dir, port, host).await
         }
-        Command::Start { port, host, foreground } => {
+        Command::Start {
+            port,
+            host,
+            foreground,
+        } => {
             if foreground {
                 return crate::daemon::serve::run(&data_dir, &skill_dir, port, host).await;
             }
@@ -829,10 +835,9 @@ pub async fn run(cli: Cli) -> Result<()> {
             // available-update info without `status` itself hitting the
             // network. Probes are populated by `start` / `restart` /
             // `upgrade --check` and live for 24h.
-            if let (Some(info), Some(map)) = (
-                crate::update::read_cached(&data_dir),
-                value.as_object_mut(),
-            ) {
+            if let (Some(info), Some(map)) =
+                (crate::update::read_cached(&data_dir), value.as_object_mut())
+            {
                 let mut update = serde_json::to_value(&info)?;
                 if let (Some(fetched_at), Some(update_obj)) = (
                     crate::update::cache_fetched_at(&data_dir),
@@ -915,25 +920,17 @@ pub async fn run(cli: Cli) -> Result<()> {
                 Command::Search(args) => client::search(&base_url, args, format).await,
                 Command::List(args) => client::list(&base_url, args, format).await,
                 Command::Edit(args) => client::update(&base_url, args, format).await,
-                Command::Delete { id, yes } => {
-                    client::delete(&base_url, &id, yes, format).await
-                }
+                Command::Delete { id, yes } => client::delete(&base_url, &id, yes, format).await,
                 Command::Forget(args) => client::forget(&base_url, args, format).await,
                 Command::Days(args) => client::days(&base_url, args, format).await,
-                Command::RememberDay(args) => {
-                    client::remember_day(&base_url, args, format).await
-                }
+                Command::RememberDay(args) => client::remember_day(&base_url, args, format).await,
                 Command::Sweep { dry_run } => client::sweep(&base_url, dry_run, format).await,
-                Command::HarvestDay { date } => {
-                    client::harvest_day(&base_url, &date, format).await
-                }
+                Command::HarvestDay { date } => client::harvest_day(&base_url, &date, format).await,
                 Command::Stats => client::stats(&base_url, format).await,
                 Command::Chains(args) => client::chains(&base_url, args, format).await,
                 Command::Issues(args) => client::issues(&base_url, args, format).await,
                 Command::IssueAdd(args) => client::issue_add(&base_url, args, format).await,
-                Command::IssueResolve(args) => {
-                    client::issue_resolve(&base_url, args, format).await
-                }
+                Command::IssueResolve(args) => client::issue_resolve(&base_url, args, format).await,
                 Command::Serve { .. }
                 | Command::Start { .. }
                 | Command::Stop
@@ -1046,7 +1043,11 @@ async fn cmd_add(
         // Episodic-store writes force `tier=Episodic` regardless — the row's
         // table is the source of truth and `tier` must agree.
         let (mut facts, tier_absent) = read_stdin_facts()?;
-        let default_tier: Tier = if episodic { Tier::Episodic } else { args.tier.into() };
+        let default_tier: Tier = if episodic {
+            Tier::Episodic
+        } else {
+            args.tier.into()
+        };
         for (i, f) in facts.iter_mut().enumerate() {
             if tier_absent[i] || episodic {
                 f.tier = default_tier;
@@ -1068,7 +1069,11 @@ async fn cmd_add(
     // Episodic-store writes pin `tier=Episodic` regardless of `--tier`
     // (the row's table is the source of truth — mirrors the HTTP add
     // path so the dashboard can derive its badge from `tier` alone).
-    fact.tier = if episodic { Tier::Episodic } else { args.tier.into() };
+    fact.tier = if episodic {
+        Tier::Episodic
+    } else {
+        args.tier.into()
+    };
     fact.outcome = args.outcome.map(Into::into);
     fact.cwd = args.cwd;
     fact.occurred_at = args.occurred_at;
@@ -1104,10 +1109,7 @@ fn emit_added(facts: &[crate::memory::Memory], format: OutputFormat) -> Result<(
     Ok(())
 }
 
-fn emit_outcome(
-    outcome: &crate::memory::InsertOutcome,
-    format: OutputFormat,
-) -> Result<()> {
+fn emit_outcome(outcome: &crate::memory::InsertOutcome, format: OutputFormat) -> Result<()> {
     use crate::memory::InsertOutcome;
     match (format, outcome) {
         (OutputFormat::Json, InsertOutcome::Added(f)) => writeln_ndjson(f),
@@ -1116,11 +1118,14 @@ fn emit_outcome(
             println!("added {} — {}", f.id, truncate(&f.content, 80));
             Ok(())
         }
-        (OutputFormat::Text, InsertOutcome::Merged {
-            fact,
-            similarity,
-            previous_id,
-        }) => {
+        (
+            OutputFormat::Text,
+            InsertOutcome::Merged {
+                fact,
+                similarity,
+                previous_id,
+            },
+        ) => {
             println!(
                 "merged into {} (similarity {:.2}, previous_id {}) — {}",
                 fact.id,
@@ -1193,8 +1198,7 @@ fn emit_scored_facts(
                     obj.insert("score".into(), serde_json::json!(cosine));
                     obj.insert("hybrid_score".into(), serde_json::json!(hybrid));
                 }
-                let line = serde_json::to_string(&v)
-                    .context("encoding scored fact JSON")?;
+                let line = serde_json::to_string(&v).context("encoding scored fact JSON")?;
                 println!("{line}");
             }
         }
@@ -1373,10 +1377,7 @@ fn read_stdin_facts() -> Result<(Vec<crate::memory::Memory>, Vec<bool>)> {
 /// facts plus a parallel `tier_absent` mask (rows that omitted the `tier`
 /// key, so callers can default only those). `src` names the source for
 /// error context ("stdin" or a file path).
-fn read_facts<R: BufRead>(
-    reader: R,
-    src: &str,
-) -> Result<(Vec<crate::memory::Memory>, Vec<bool>)> {
+fn read_facts<R: BufRead>(reader: R, src: &str) -> Result<(Vec<crate::memory::Memory>, Vec<bool>)> {
     let mut out = Vec::new();
     let mut tier_absent = Vec::new();
     for (i, line) in reader.lines().enumerate() {
@@ -1421,7 +1422,11 @@ async fn cmd_export(store: &MemoryStore, file: &str, _format: OutputFormat) -> R
     out.flush().context("flushing export output")?;
 
     // Summary to stderr so stdout stays clean NDJSON when file == "-".
-    let dest = if file == "-" { String::new() } else { format!(" to {file}") };
+    let dest = if file == "-" {
+        String::new()
+    } else {
+        format!(" to {file}")
+    };
     eprintln!("exported {} facts{dest}", facts.len());
     Ok(())
 }
@@ -1442,7 +1447,11 @@ async fn cmd_import(
     // Rows that omitted `tier` inherit the target table's default; an
     // episodic-store import pins `tier=Episodic` (the table is the source of
     // truth). Mirrors the `add --stdin` path.
-    let default_tier: Tier = if episodic { Tier::Episodic } else { Tier::Semantic };
+    let default_tier: Tier = if episodic {
+        Tier::Episodic
+    } else {
+        Tier::Semantic
+    };
     for (i, f) in facts.iter_mut().enumerate() {
         if tier_absent[i] || episodic {
             f.tier = default_tier;

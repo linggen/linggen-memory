@@ -10,9 +10,9 @@
 
 use crate::daemon::pidfile::{self, PidInfo};
 use crate::embed::Embedder;
-use crate::memory::{MemoryStore, Recall};
 use crate::http;
 use crate::http::state::AppState;
+use crate::memory::{MemoryStore, Recall};
 use anyhow::{Context, Result};
 use chrono::Utc;
 use std::net::{IpAddr, SocketAddr};
@@ -70,9 +70,7 @@ pub async fn run(data_dir: &Path, skill_dir: &Path, port: u16, host: IpAddr) -> 
         .await
         .with_context(|| format!("binding {addr}"))?;
 
-    let bound = listener
-        .local_addr()
-        .context("reading bound local addr")?;
+    let bound = listener.local_addr().context("reading bound local addr")?;
     let bound_port = bound.port();
 
     let info = PidInfo {

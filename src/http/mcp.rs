@@ -129,7 +129,7 @@ async fn handler(State(state): State<SharedState>, Json(req): Json<Value>) -> Re
 
     let envelope = match result {
         Ok(value) => json!({ "jsonrpc": "2.0", "id": id, "result": value }),
-        Err(err)  => json!({ "jsonrpc": "2.0", "id": id, "error": err }),
+        Err(err) => json!({ "jsonrpc": "2.0", "id": id, "error": err }),
     };
     Json(envelope).into_response()
 }
@@ -382,19 +382,19 @@ async fn handle_tools_call(state: &SharedState, params: Value) -> Result<Value, 
 /// Map MCP tool name → daemon endpoint suffix.
 fn tool_name_to_verb(name: &str) -> Option<&'static str> {
     match name {
-        "memory_search"       => Some("search"),
-        "memory_list"         => Some("list"),
-        "memory_get"          => Some("get"),
-        "memory_add"          => Some("add"),
-        "memory_update"       => Some("update"),
-        "memory_delete"       => Some("delete"),
-        "memory_days"         => Some("days"),
+        "memory_search" => Some("search"),
+        "memory_list" => Some("list"),
+        "memory_get" => Some("get"),
+        "memory_add" => Some("add"),
+        "memory_update" => Some("update"),
+        "memory_delete" => Some("delete"),
+        "memory_days" => Some("days"),
         "memory_remember_day" => Some("remember_day"),
-        "memory_harvest_day"  => Some("harvest_day"),
-        "memory_sweep"        => Some("sweep"),
-        "memory_chains"       => Some("chains"),
-        "memory_issues"       => Some("issues"),
-        "memory_issue_add"    => Some("issue_add"),
+        "memory_harvest_day" => Some("harvest_day"),
+        "memory_sweep" => Some("sweep"),
+        "memory_chains" => Some("chains"),
+        "memory_issues" => Some("issues"),
+        "memory_issue_add" => Some("issue_add"),
         "memory_issue_resolve" => Some("issue_resolve"),
         _ => None,
     }
@@ -404,14 +404,16 @@ fn tool_name_to_verb(name: &str) -> Option<&'static str> {
 /// These compensate for shapes models commonly produce that the daemon
 /// can't or shouldn't interpret as-is.
 fn apply_dispatch_fixes(verb: &str, args: &mut Value) {
-    let Some(obj) = args.as_object_mut() else { return };
+    let Some(obj) = args.as_object_mut() else {
+        return;
+    };
 
     // 1. Drop soft-empty fields. `until: ""` would crash the RFC-3339
     //    parser; empty arrays narrow unintentionally; nulls are noise.
     obj.retain(|_, v| match v {
         Value::String(s) => !s.is_empty(),
-        Value::Array(a)  => !a.is_empty(),
-        Value::Null      => false,
+        Value::Array(a) => !a.is_empty(),
+        Value::Null => false,
         _ => true,
     });
 
@@ -434,7 +436,10 @@ fn apply_dispatch_fixes(verb: &str, args: &mut Value) {
     //    Not gated on `verb == "list"`: `past_ttl` is only meaningful on a
     //    sweep, so stripping it wherever it appears costs nothing and covers
     //    a model that reaches for the sweep shape on the wrong verb.
-    let is_ttl_sweep = obj.get("past_ttl").and_then(|v| v.as_bool()).unwrap_or(false);
+    let is_ttl_sweep = obj
+        .get("past_ttl")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     if is_ttl_sweep {
         for k in ["type", "from", "outcome"] {
             let _ = obj.remove(k);
@@ -453,7 +458,9 @@ fn apply_response_fixes(verb: &str, value: &mut Value) {
     if verb != "delete" {
         return;
     }
-    let Some(obj) = value.as_object_mut() else { return };
+    let Some(obj) = value.as_object_mut() else {
+        return;
+    };
     // Deleting an already-absent row is success, not an anomaly — the row is
     // gone either way (commonly this daemon's own cross-tier dedup removed
     // the episodic copy during a promote add). A bare `removed:false` reads
@@ -615,13 +622,28 @@ mod tests {
         // inverse rather than a hand-written list, so adding a route without
         // a schema fails here.
         for verb in [
-            "search", "list", "get", "add", "update", "delete", "days", "remember_day",
-            "harvest_day", "sweep", "chains", "issues", "issue_add", "issue_resolve",
+            "search",
+            "list",
+            "get",
+            "add",
+            "update",
+            "delete",
+            "days",
+            "remember_day",
+            "harvest_day",
+            "sweep",
+            "chains",
+            "issues",
+            "issue_add",
+            "issue_resolve",
         ] {
             let advertised_for_verb = advertised
                 .iter()
                 .any(|name| tool_name_to_verb(name) == Some(verb));
-            assert!(advertised_for_verb, "verb `{verb}` is routable but not advertised");
+            assert!(
+                advertised_for_verb,
+                "verb `{verb}` is routable but not advertised"
+            );
         }
     }
 

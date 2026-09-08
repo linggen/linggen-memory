@@ -215,7 +215,9 @@ async fn days(
         .list(&Filters::default(), SortOrder::Oldest, usize::MAX, 0)
         .await?
     {
-        *row_days.entry(local_day(row.effective_timestamp())).or_default() += 1;
+        *row_days
+            .entry(local_day(row.effective_timestamp()))
+            .or_default() += 1;
     }
 
     // Bucket live episodic rows per local day.
@@ -239,11 +241,7 @@ async fn days(
     }
 
     // Union of days with live rows and days with stored records.
-    let mut dates: Vec<String> = live
-        .keys()
-        .chain(days_state.days.keys())
-        .cloned()
-        .collect();
+    let mut dates: Vec<String> = live.keys().chain(days_state.days.keys()).cloned().collect();
     dates.sort();
     dates.dedup();
 
@@ -479,21 +477,33 @@ mod tests {
 
     #[test]
     fn today_and_future_days_are_never_undreamed() {
-        let live = DayLive { rows: 5, unjudged: 5, past_ttl: 0 };
+        let live = DayLive {
+            rows: 5,
+            unjudged: 5,
+            past_ttl: 0,
+        };
         assert!(!undreamed("2026-07-03", "2026-07-03", &live));
         assert!(!undreamed("2026-07-09", "2026-07-03", &live));
     }
 
     #[test]
     fn past_day_with_unjudged_rows_is_undreamed() {
-        let live = DayLive { rows: 3, unjudged: 3, past_ttl: 0 };
+        let live = DayLive {
+            rows: 3,
+            unjudged: 3,
+            past_ttl: 0,
+        };
         assert!(undreamed("2026-07-01", "2026-07-03", &live));
         assert_eq!(day_flags(&live, None), (false, false));
     }
 
     #[test]
     fn late_rows_clear_the_dreamed_flag() {
-        let live = DayLive { rows: 4, unjudged: 1, past_ttl: 0 };
+        let live = DayLive {
+            rows: 4,
+            unjudged: 1,
+            past_ttl: 0,
+        };
         let r = rec(true);
         assert_eq!(day_flags(&live, Some(&r)), (false, false));
         assert!(undreamed("2026-07-01", "2026-07-03", &live));
@@ -502,7 +512,11 @@ mod tests {
     #[test]
     fn dreamed_survives_the_forget_sweep() {
         let r = rec(true);
-        let with_rows = DayLive { rows: 4, unjudged: 0, past_ttl: 2 };
+        let with_rows = DayLive {
+            rows: 4,
+            unjudged: 0,
+            past_ttl: 2,
+        };
         assert_eq!(day_flags(&with_rows, Some(&r)), (false, true));
         // Sweep drained the rows — the day stays dreamed.
         let drained = DayLive::default();

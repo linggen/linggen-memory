@@ -114,7 +114,11 @@ pub async fn lan_gate(
     if is_paired_token(&state.data_dir, &token) {
         return next.run(req).await;
     }
-    tracing::warn!("refused {} from {} — no paired device token", req.uri().path(), peer.ip());
+    tracing::warn!(
+        "refused {} from {} — no paired device token",
+        req.uri().path(),
+        peer.ip()
+    );
     ApiError::unauthorized(format!(
         "this store is reachable from your machine but not open to it: pair with \
          Linggen and send the device token as `{DEVICE_HEADER}`"

@@ -130,7 +130,13 @@ async fn chains(
         "cited" => Ok(ok(cited_chains(&rows, limit, offset, req.derived_only))),
         "marker" => {
             let issued = super::issues::issued_row_ids(&state.data_dir).await;
-            Ok(ok(marker_candidates(&rows, limit, offset, req.derived_only, &issued)))
+            Ok(ok(marker_candidates(
+                &rows,
+                limit,
+                offset,
+                req.derived_only,
+                &issued,
+            )))
         }
         "subject" => {
             let ruled = super::issues::subject_ruled_ids(&state.data_dir).await;
@@ -200,9 +206,7 @@ fn cited_chains(rows: &[Memory], limit: usize, offset: usize, derived_only: bool
             let chain_edges: Vec<Value> = edges
                 .iter()
                 .filter(|(citer, cited)| members.contains(citer) && members.contains(cited))
-                .map(|&(citer, cited)| {
-                    json!({ "citer": rows[citer].id, "cited": rows[cited].id })
-                })
+                .map(|&(citer, cited)| json!({ "citer": rows[citer].id, "cited": rows[cited].id }))
                 .collect();
             json!({
                 "derived_only": members.iter().all(|&i| is_derived_note(&rows[i])),
@@ -434,7 +438,10 @@ fn subject_clusters(
         if assigned[seed] {
             continue;
         }
-        let seed_vec = rows[seed].vector.as_deref().expect("pool rows have vectors");
+        let seed_vec = rows[seed]
+            .vector
+            .as_deref()
+            .expect("pool rows have vectors");
         let mut members: Vec<(f32, usize)> = pool
             .iter()
             .filter(|&&i| i != seed && !assigned[i])
@@ -548,8 +555,16 @@ mod tests {
     #[test]
     fn cited_chain_found_and_derived_flagged() {
         let rows = vec![
-            row("aaaaaaaaaa", "design locked, impl not started", Origin::Derived),
-            row("bbbbbbbbbb", "build shipped (supersedes aaaaaaaaaa)", Origin::Derived),
+            row(
+                "aaaaaaaaaa",
+                "design locked, impl not started",
+                Origin::Derived,
+            ),
+            row(
+                "bbbbbbbbbb",
+                "build shipped (supersedes aaaaaaaaaa)",
+                Origin::Derived,
+            ),
             row("cccccccccc", "unrelated fact", Origin::User),
         ];
         let out = cited_chains(&rows, 10, 0, false);
@@ -586,10 +601,30 @@ mod tests {
     #[test]
     fn subject_clusters_group_by_cosine_with_min_rows() {
         let rows = vec![
-            vrow("aaaaaaaaaa", "sanji planner one", Origin::Derived, vec![1.0, 0.0]),
-            vrow("bbbbbbbbbb", "sanji planner two", Origin::Derived, vec![0.98, 0.199]),
-            vrow("cccccccccc", "sanji planner three", Origin::Derived, vec![0.95, 0.312]),
-            vrow("dddddddddd", "unrelated topic", Origin::Derived, vec![0.0, 1.0]),
+            vrow(
+                "aaaaaaaaaa",
+                "sanji planner one",
+                Origin::Derived,
+                vec![1.0, 0.0],
+            ),
+            vrow(
+                "bbbbbbbbbb",
+                "sanji planner two",
+                Origin::Derived,
+                vec![0.98, 0.199],
+            ),
+            vrow(
+                "cccccccccc",
+                "sanji planner three",
+                Origin::Derived,
+                vec![0.95, 0.312],
+            ),
+            vrow(
+                "dddddddddd",
+                "unrelated topic",
+                Origin::Derived,
+                vec![0.0, 1.0],
+            ),
         ];
         let out = subject_clusters(&rows, 10, 0, true, &HashSet::new(), later());
         assert_eq!(out["total"], 1);
@@ -603,7 +638,12 @@ mod tests {
     fn subject_pair_below_min_rows_dissolves() {
         let rows = vec![
             vrow("aaaaaaaaaa", "topic a", Origin::Derived, vec![1.0, 0.0]),
-            vrow("bbbbbbbbbb", "topic a again", Origin::Derived, vec![0.99, 0.141]),
+            vrow(
+                "bbbbbbbbbb",
+                "topic a again",
+                Origin::Derived,
+                vec![0.99, 0.141],
+            ),
             vrow("dddddddddd", "unrelated", Origin::Derived, vec![0.0, 1.0]),
         ];
         let out = subject_clusters(&rows, 10, 0, true, &HashSet::new(), later());
@@ -615,7 +655,12 @@ mod tests {
         let rows = vec![
             vrow("aaaaaaaaaa", "pref one", Origin::User, vec![1.0, 0.0]),
             vrow("bbbbbbbbbb", "pref two", Origin::Derived, vec![0.98, 0.199]),
-            vrow("cccccccccc", "pref three", Origin::Derived, vec![0.95, 0.312]),
+            vrow(
+                "cccccccccc",
+                "pref three",
+                Origin::Derived,
+                vec![0.95, 0.312],
+            ),
         ];
         // With the user row excluded, only 2 remain — below min → no cluster.
         let out = subject_clusters(&rows, 10, 0, true, &HashSet::new(), later());
@@ -631,9 +676,24 @@ mod tests {
         // Fixture rows are created "now" → newest member is inside the
         // quiet window when judged from the real now.
         let rows = vec![
-            vrow("aaaaaaaaaa", "hot topic one", Origin::Derived, vec![1.0, 0.0]),
-            vrow("bbbbbbbbbb", "hot topic two", Origin::Derived, vec![0.98, 0.199]),
-            vrow("cccccccccc", "hot topic three", Origin::Derived, vec![0.95, 0.312]),
+            vrow(
+                "aaaaaaaaaa",
+                "hot topic one",
+                Origin::Derived,
+                vec![1.0, 0.0],
+            ),
+            vrow(
+                "bbbbbbbbbb",
+                "hot topic two",
+                Origin::Derived,
+                vec![0.98, 0.199],
+            ),
+            vrow(
+                "cccccccccc",
+                "hot topic three",
+                Origin::Derived,
+                vec![0.95, 0.312],
+            ),
         ];
         let out = subject_clusters(&rows, 10, 0, true, &HashSet::new(), chrono::Utc::now());
         assert_eq!(out["total"], 0);
@@ -647,14 +707,30 @@ mod tests {
     #[test]
     fn ruled_cluster_cannot_reform_around_a_neighbor() {
         let rows = vec![
-            vrow("aaaaaaaaaa", "ruled topic one", Origin::Derived, vec![1.0, 0.0]),
-            vrow("bbbbbbbbbb", "ruled topic two", Origin::Derived, vec![0.98, 0.199]),
-            vrow("cccccccccc", "ruled topic three", Origin::Derived, vec![0.95, 0.312]),
+            vrow(
+                "aaaaaaaaaa",
+                "ruled topic one",
+                Origin::Derived,
+                vec![1.0, 0.0],
+            ),
+            vrow(
+                "bbbbbbbbbb",
+                "ruled topic two",
+                Origin::Derived,
+                vec![0.98, 0.199],
+            ),
+            vrow(
+                "cccccccccc",
+                "ruled topic three",
+                Origin::Derived,
+                vec![0.95, 0.312],
+            ),
         ];
         // A keep-separate ruling records ALL member ids — excluding only
         // the seed would let the same cluster re-form around a neighbor.
-        let ruled: HashSet<String> =
-            ["aaaaaaaaaa", "bbbbbbbbbb", "cccccccccc"].map(String::from).into();
+        let ruled: HashSet<String> = ["aaaaaaaaaa", "bbbbbbbbbb", "cccccccccc"]
+            .map(String::from)
+            .into();
         let out = subject_clusters(&rows, 10, 0, true, &ruled, later());
         assert_eq!(out["total"], 0);
         assert_eq!(out["ruled_skipped"], 3);
@@ -663,9 +739,17 @@ mod tests {
     #[test]
     fn marker_rows_flagged_without_cited_members() {
         let rows = vec![
-            row("aaaaaaaaaa", "condense build OPEN: chains verb pending", Origin::Derived),
+            row(
+                "aaaaaaaaaa",
+                "condense build OPEN: chains verb pending",
+                Origin::Derived,
+            ),
             row("bbbbbbbbbb", "merged, see aaaaaaaaaa", Origin::Derived),
-            row("cccccccccc", "feature X design locked, impl not started", Origin::Derived),
+            row(
+                "cccccccccc",
+                "feature X design locked, impl not started",
+                Origin::Derived,
+            ),
         ];
         let out = marker_candidates(&rows, 10, 0, false, &HashSet::new());
         // aaaaaaaaaa is in a cited chain → excluded; cccccccccc matches.
@@ -678,8 +762,16 @@ mod tests {
     #[test]
     fn marker_rows_named_by_issues_are_skipped_and_counted() {
         let rows = vec![
-            row("aaaaaaaaaa", "migration deferred until the schema lands", Origin::Derived),
-            row("bbbbbbbbbb", "feature X design locked, impl not started", Origin::Derived),
+            row(
+                "aaaaaaaaaa",
+                "migration deferred until the schema lands",
+                Origin::Derived,
+            ),
+            row(
+                "bbbbbbbbbb",
+                "feature X design locked, impl not started",
+                Origin::Derived,
+            ),
         ];
         let issued: HashSet<String> = ["aaaaaaaaaa".to_string()].into();
         let out = marker_candidates(&rows, 10, 0, false, &issued);

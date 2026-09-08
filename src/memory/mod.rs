@@ -17,11 +17,13 @@ pub mod store;
 pub mod types;
 
 pub use hybrid::Candidate;
+pub use recall::Recall;
 pub use schema::{
-    build_schema, memories_to_record_batch, record_batch_to_memories, SEMANTIC_TABLE_NAME, VECTOR_DIM,
+    build_schema, memories_to_record_batch, record_batch_to_memories, SEMANTIC_TABLE_NAME,
+    VECTOR_DIM,
 };
 pub use store::{
-    MemoryPatch, MemoryStore, Filters, InsertOutcome, SortOrder, DEDUP_SIMILARITY_THRESHOLD,
+    AccountScope, Filters, InsertOutcome, MemoryPatch, MemoryStore, SortOrder,
+    DEDUP_SIMILARITY_THRESHOLD,
 };
-pub use recall::Recall;
 pub use types::{Memory, MemoryType, Origin, Outcome, ParseEnumError, Tier};

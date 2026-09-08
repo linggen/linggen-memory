@@ -83,6 +83,10 @@ pub fn build_schema() -> Arc<Schema> {
             true,
         ),
         Field::new("superseded_by", DataType::Utf8, true),
+        // Account pair (2026-09-08): whose memory a row is. NULL = the
+        // store owner's; set only on rows from another person's phone.
+        Field::new("account_id", DataType::Utf8, true),
+        Field::new("account_name", DataType::Utf8, true),
     ]))
 }
 
@@ -133,6 +137,8 @@ pub fn memories_to_record_batch(facts: &[Memory]) -> Result<RecordBatch> {
     )
     .with_timezone(TZ_UTC);
     let superseded_bys = StringArray::from_iter(facts.iter().map(|f| f.superseded_by.clone()));
+    let account_ids = StringArray::from_iter(facts.iter().map(|f| f.account_id.clone()));
+    let account_names = StringArray::from_iter(facts.iter().map(|f| f.account_name.clone()));
 
     RecordBatch::try_new(
         schema,
@@ -154,6 +160,8 @@ pub fn memories_to_record_batch(facts: &[Memory]) -> Result<RecordBatch> {
             Arc::new(hosts),
             Arc::new(expired_at),
             Arc::new(superseded_bys),
+            Arc::new(account_ids),
+            Arc::new(account_names),
         ],
     )
     .context("building facts RecordBatch")
@@ -185,6 +193,9 @@ pub fn record_batch_to_memories(batch: &RecordBatch) -> Result<Vec<Memory>> {
     // until `ensure_late_schema_additions` runs, so decode is lenient.
     let expired_at = col_timestamp_opt_missing_ok(batch, "expired_at");
     let superseded_bys = col_utf8_opt_missing_ok(batch, "superseded_by");
+    // Account pair — added 2026-09-08; same leniency.
+    let account_ids = col_utf8_opt_missing_ok(batch, "account_id");
+    let account_names = col_utf8_opt_missing_ok(batch, "account_name");
 
     let mut out = Vec::with_capacity(n);
     for i in 0..n {
@@ -228,6 +239,8 @@ pub fn record_batch_to_memories(batch: &RecordBatch) -> Result<Vec<Memory>> {
             host: hosts.get(i).cloned().flatten(),
             expired_at: expired_at.get(i).copied().flatten(),
             superseded_by: superseded_bys.get(i).cloned().flatten(),
+            account_id: account_ids.get(i).cloned().flatten(),
+            account_name: account_names.get(i).cloned().flatten(),
         });
     }
     Ok(out)
@@ -472,9 +485,9 @@ mod tests {
     }
 
     #[test]
-    fn schema_has_seventeen_fields() {
+    fn schema_has_nineteen_fields() {
         let schema = build_schema();
-        assert_eq!(schema.fields().len(), 17);
+        assert_eq!(schema.fields().len(), 19);
     }
 
     #[test]
@@ -501,6 +514,8 @@ mod tests {
                 "host",
                 "expired_at",
                 "superseded_by",
+                "account_id",
+                "account_name",
             ]
         );
     }

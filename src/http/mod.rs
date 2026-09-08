@@ -62,7 +62,10 @@ pub fn build_router(state: SharedState, telemetry: Telemetry) -> Router {
         // app — goes straight through, and `/api/health` stays open for probes.
         // See `gate.rs`; the daemon also refuses to bind wide in the first
         // place unless this machine has paired devices.
-        .layer(middleware::from_fn_with_state(state.clone(), gate::lan_gate))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            gate::lan_gate,
+        ))
         // Outside even the gate: a refused request is still traffic, and
         // background maintenance must not rewrite tables while anything at
         // all is knocking.
@@ -98,7 +101,12 @@ async fn command_telemetry_layer(
         .uri()
         .path()
         .strip_prefix("/api/memory/")
-        .map(|v| v.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-').take(24).collect())
+        .map(|v| {
+            v.chars()
+                .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
+                .take(24)
+                .collect()
+        })
         .filter(|v: &String| !v.is_empty());
 
     let response = next.run(request).await;
