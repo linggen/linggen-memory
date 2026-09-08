@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "linggen": {
+      "type": "http",
+      "url": "http://127.0.0.1:9527/mcp"
+    },
+    "ling-mem": {
+      "type": "http",
+      "url": "http://127.0.0.1:9528/mcp"
+    }
+  }
+}

@@ -9,14 +9,15 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/config.sh" $ARGUMENTS
 ```
 
 The script does the work — read, probe, write, report. Do not re-implement any
-of it, and do not edit `client.json` or `settings.json` yourself: a config write
-is mechanical, and a model improvising a JSON edit is how a settings file gets
-mangled.
+of it, and do not edit `client.json`, `settings.json` or Codex's `config.toml`
+yourself: a config write is mechanical, and a model improvising a JSON or TOML
+edit is how a settings file gets mangled.
 
 Then, in one or two lines:
 
-- If addresses changed, say **restart Claude Code** — MCP server URLs are
-  resolved at startup, so this session still talks to the old ones.
+- If addresses changed, say **restart this host** (Claude Code or Codex) — MCP
+  server URLs are resolved at startup, so this session still talks to the old
+  ones.
 - If a probe says `refused — needs a paired device token`, the daemon is
   reachable but this machine isn't paired with it. Pair through Linggen on the
   machine that holds the store (its screen shows a code), then re-run with

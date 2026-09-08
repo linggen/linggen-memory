@@ -16,7 +16,9 @@
 # Precedence is env > file > default. Env first because `.mcp.json` can only
 # ever be given an environment variable — Claude Code expands it at startup,
 # before any hook runs — so an env override has to mean the same thing here as
-# it does there.
+# it does there. Codex expands nothing in a URL: its declaration is the literal
+# loopback `.codex-plugin/mcp.json`, and `config.sh` overrides it from
+# config.toml when this host points elsewhere.
 
 # ── Where ───────────────────────────────────────────────────────────────────
 

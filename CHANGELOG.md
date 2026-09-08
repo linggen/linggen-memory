@@ -14,6 +14,15 @@
   is an error, never a deletion); `serve` overwrites a stale file after
   binding instead of removing it before; and a daemon that is up but
   unreachable from the calling shell is reported as exactly that.
+- **Codex never had the MCP servers.** The Codex plugin pointed at the
+  shared `.mcp.json`, whose `${LING_MEM_HOST:-127.0.0.1}` URLs Codex leaves
+  unexpanded — so every Codex session fell through to the sandboxed CLI (the
+  path above). The Codex manifest now declares its own literal-loopback
+  `.codex-plugin/mcp.json`, and `/linggen:config` mirrors an off-machine
+  address into config.toml `[mcp_servers.*]` tables, which override a plugin
+  server of the same name, and removes them again on `--local` (the CC
+  mirror now also drops a stale `LING_MEM_TOKEN` instead of keeping it).
+  Both plugin manifests are 1.7.9.
 
 ## [1.7.2] - 2026-08-31 — one doctrine, served from here
 

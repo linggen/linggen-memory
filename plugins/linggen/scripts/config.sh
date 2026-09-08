@@ -18,15 +18,19 @@
 #   config.sh --local                      # back to this machine
 #
 # Writes ~/.linggen/client.json, which the hooks read. Also mirrors the two
-# addresses into Claude Code's settings.json `env`, because `.mcp.json` can only
-# be given environment variables — CC expands it at startup, before any hook
-# runs — then says plainly whether that took.
+# addresses into each host's own MCP wiring, because a plugin's MCP declaration
+# cannot read a file: Claude Code's settings.json `env` (its `.mcp.json` takes
+# `${VAR}`, expanded at startup), and Codex's config.toml `[mcp_servers.*]`
+# tables (Codex expands nothing in a URL, so its plugin declaration is literal
+# loopback and an off-machine address must override it there). Then says
+# plainly whether that took.
 
 set -u
 
 DATA_DIR="${LINGGEN_DATA_DIR:-$HOME/.linggen}"
 CLIENT_FILE="$DATA_DIR/client.json"
 CC_SETTINGS="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"
+CODEX_CONFIG="${CODEX_HOME:-$HOME/.codex}/config.toml"
 
 DEFAULT_LING="http://127.0.0.1:9527"
 DEFAULT_LING_MEM="http://127.0.0.1:9528"
@@ -139,12 +143,50 @@ mirror_cc_env() {
     jq --arg hl "$host_l" --arg pl "$port_l" --arg hm "$host_m" --arg pm "$port_m" --arg tk "$new_token" '
         .env = ((.env // {})
             + {LINGGEN_HOST: $hl, LINGGEN_PORT: $pl, LING_MEM_HOST: $hm, LING_MEM_PORT: $pm})
-            + (if $tk == "" then {} else {LING_MEM_TOKEN: $tk} end)
+            | if $tk == "" then del(.env.LING_MEM_TOKEN) else .env.LING_MEM_TOKEN = $tk end
     ' "$CC_SETTINGS" > "$tmp" 2>/dev/null && mv "$tmp" "$CC_SETTINGS"
 }
 
 mirrored=1
 mirror_cc_env || mirrored=0
+
+# ── Mirror into Codex's config.toml ─────────────────────────────────────────
+#
+# Codex reads the plugin's own `.codex-plugin/mcp.json`, which is literal
+# loopback — Codex expands no `${VAR}` in a URL. A `[mcp_servers.<name>]` table
+# in config.toml overrides a plugin server of the same name, so that is where an
+# off-machine address goes. On loopback the tables are removed and the plugin's
+# declaration stands, so a default install leaves no trace here.
+
+mirror_codex_toml() { # exit 2 = no Codex on this machine
+    [ -d "$(dirname "$CODEX_CONFIG")" ] || return 2
+    [ -f "$CODEX_CONFIG" ] || : > "$CODEX_CONFIG"
+    local tmp="$CODEX_CONFIG.tmp.$$"
+    # Drop our two tables (sub-tables included) wherever a TOML-aware writer
+    # left them — a table runs from its header to the next header or EOF. No
+    # BEGIN/END markers: Codex rewrites this file itself and moves comments.
+    # One line of lookbehind so the blank line we put before our tables goes
+    # with them when they sat at EOF — a round trip leaves the file byte-equal.
+    awk '
+        function flush() { if (held) { print heldline; held = 0 } }
+        /^[[:space:]]*\[mcp_servers\.(ling-mem|linggen)(\.[^]]*)?\]/ { skip = 1; tail = 1; next }
+        /^[[:space:]]*\[/ { skip = 0 }
+        skip { next }
+        { flush(); heldline = $0; held = 1; tail = 0 }
+        END { if (held && !(tail && heldline ~ /^[[:space:]]*$/)) print heldline }
+    ' "$CODEX_CONFIG" > "$tmp" || { rm -f "$tmp"; return 1; }
+    if [ "$new_ling" != "$DEFAULT_LING" ] || [ "$new_ling_mem" != "$DEFAULT_LING_MEM" ]; then
+        {
+            printf '\n[mcp_servers.linggen]\nurl = "%s/mcp"\n' "$new_ling"
+            printf '\n[mcp_servers.ling-mem]\nurl = "%s/mcp"\n' "$new_ling_mem"
+            [ -n "$new_token" ] && printf 'http_headers = { "x-linggen-device" = "%s" }\n' "$new_token"
+        } >> "$tmp"
+    fi
+    mv "$tmp" "$CODEX_CONFIG"
+}
+
+codex_mirrored=1
+mirror_codex_toml || codex_mirrored=$?
 
 # ── Report ──────────────────────────────────────────────────────────────────
 
@@ -154,11 +196,19 @@ printf 'ling-mem  %s  ' "$new_ling_mem"; probe "$new_ling_mem" "$new_token" || t
 printf '\n'
 
 if [ "$mirrored" = 1 ]; then
-    printf 'Mirrored into %s (env) for the MCP servers.\n' "$CC_SETTINGS"
-    printf 'RESTART Claude Code — MCP URLs are resolved at startup, so this session still uses the old ones.\n'
+    printf 'Claude Code: mirrored into %s (env). Restart it — MCP URLs are resolved at startup.\n' "$CC_SETTINGS"
 else
-    printf 'Could not write %s — the hooks will follow client.json, but the MCP\n' "$CC_SETTINGS"
+    printf 'Claude Code: could not write %s — the hooks will follow client.json, but the MCP\n' "$CC_SETTINGS"
     printf 'servers will not. Export these in your shell profile instead:\n'
     printf '  export LINGGEN_HOST=%s LINGGEN_PORT=%s\n' "${new_ling#*://}" ""
     printf '  export LING_MEM_HOST=%s\n' "${new_ling_mem#*://}"
 fi
+case "$codex_mirrored" in
+    1) if [ "$new_ling" != "$DEFAULT_LING" ] || [ "$new_ling_mem" != "$DEFAULT_LING_MEM" ]; then
+           printf 'Codex: mirrored into %s ([mcp_servers.*]). Restart it.\n' "$CODEX_CONFIG"
+       else
+           printf 'Codex: loopback — the plugin declaration stands; nothing written to %s.\n' "$CODEX_CONFIG"
+       fi ;;
+    2) ;;
+    *) printf 'Codex: could not write %s — add [mcp_servers.ling-mem] url = "%s/mcp" yourself.\n' "$CODEX_CONFIG" "$new_ling_mem" ;;
+esac
