@@ -201,7 +201,7 @@ widget, no confirmation, no verbose reply — just save and continue.
 2. **Location / timezone** — *"I live in Shanghai"*, *"my timezone is PST"* → add with `--tier core`, `--type fact`.
 3. **Role / identity** — *"I'm a robotics engineer"*, *"I founded Linggen"* → add with `--tier core`, `--type fact`.
 4. **Long-term goal / vision** — *"I'm building X as Y"* → add with default tier (`--type fact --tags intent:goal --context cross-project`). **Do NOT** use `--tier core` — goals belong in the long-term tier.
-5. **Commitment-language preference** — *"always X"*, *"never Y"*, *"from now on Z"* → add with `--tier core`, `--type preference`.
+5. **Commitment-language preference** — *"always X"*, *"never Y"*, *"from now on Z"* → add with `--type preference --from user` at the default tier (long-term), `--context cross-project` when it holds everywhere. **Not** core (Liang, 2026-09-09): core is who they are, not how they want the work done — the always-on block stays tiny, and recall surfaces a rule when its subject comes up.
 
 Detect these patterns semantically, not lexically — works in any
 language. *"我的猫叫 …"*, *"以后别再 …"* trigger the same routing.

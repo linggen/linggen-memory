@@ -68,7 +68,7 @@ HIGH-SIGNAL — promote straight to core/semantic (search-first), don't leave th
 - Location / timezone → tier=core, type=fact
 - Role / identity ("I'm a robotics engineer") → tier=core, type=fact
 - Long-term goal ("I'm building X") → default tier, type=fact, tag intent:goal
-- Commitment ("always X", "never Y", "from now on Z") → tier=core, type=preference
+- Commitment ("always X", "never Y", "from now on Z") → default tier (semantic), type=preference, from=user; never core — core is who they are, not how they want the work done, and recall surfaces a rule when its subject comes up
 - Cross-project tech gotcha that will recur → default tier, type=learned
 
 Explicit imperatives — the user already chose; skip the ask but still search first:
