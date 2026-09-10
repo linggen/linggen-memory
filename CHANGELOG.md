@@ -2,6 +2,31 @@
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-09-10 — whose memory a row is
+
+### Added
+
+- **Every row knows whose memory it is.** Two nullable columns,
+  `account_id` + `account_name` (schema stays v1; added on open for
+  existing tables). NULL means the store owner's, which every row written
+  so far is. A query sees one person at a time: `Filters::account`
+  defaults to the owner, an account id narrows to that person,
+  `all_accounts` is for maintenance only. `get` / `update` / `delete`
+  admit only rows inside the caller's scope and answer not-found
+  otherwise. `contexts_any` (OR over contexts) serves the phone's pull of
+  app-tagged rows. New HTTP verbs: `restamp` (move `device:<id>` rows to
+  an account, or back to the owner) and `accounts` (who has rows here).
+  Two phones with two accounts can pair to one Mac and the store keeps
+  them apart. Spec: `linggen/doc/phone-memory-spec.md`.
+
+### Changed
+
+- **Commitment rules are long-term preferences, never core.** The MCP
+  instructions and both plugin skills sent "always X / never Y" to core,
+  against the tier's own definition. Core is who they are, not how they
+  want the work done; recall surfaces a rule when its subject comes up.
+  Plugin manifests: CC/Codex 1.7.10, OpenClaw 0.1.5.
+
 ### Fixed
 
 - **A sandboxed shell can no longer delete a live daemon's pidfile.**
@@ -22,7 +47,6 @@
   address into config.toml `[mcp_servers.*]` tables, which override a plugin
   server of the same name, and removes them again on `--local` (the CC
   mirror now also drops a stale `LING_MEM_TOKEN` instead of keeping it).
-  Both plugin manifests are 1.7.9.
 
 ## [1.7.2] - 2026-08-31 — one doctrine, served from here
 
