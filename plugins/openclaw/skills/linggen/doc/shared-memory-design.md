@@ -1,6 +1,6 @@
 ---
 type: design
-reader: Coding agent and Liang
+reader: Coding agent
 guide: |
   Design for the `shared-memory` skill. Says what to build and the open
   decisions that gate it. Aligns to — never duplicates — the canonical

@@ -836,7 +836,7 @@ async fn guard_user_voice(
 /// silently keep all the losers. Hoisting it into a shared helper closes
 /// that gap.
 /// Retire the losers of a merge. Semantic-table losers are EXPIRED, not
-/// deleted (2026-08-17, Liang's call): stamped `expired_at` +
+/// deleted (2026-08-17, Hanli's call): stamped `expired_at` +
 /// `superseded_by = successor`, they leave every default read but stay on
 /// disk — a merge or digest is reversible via the unpack query
 /// (`superseded_by` filter). Episodic losers stay hard-deleted: staging
