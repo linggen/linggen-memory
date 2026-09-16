@@ -35,71 +35,35 @@ const LOOPBACK_TIMEOUT: Duration = Duration::from_secs(10);
 /// Always-on primer injected into the client's system prompt at session
 /// start. The MCP spec's `instructions` field is the daemon's way to teach
 /// every connected host (Claude Code, Codex, Cursor, …) the ling-mem
-/// doctrine without per-host CLAUDE.md edits. Keep it tight — each token
-/// here costs every session.
-const INSTRUCTIONS: &str = r#"ling-mem provides durable cross-session memory for this user — shared across Claude Code, Codex, OpenClaw, and Linggen. Memory is how the agent grows up: a fact earns its place only if a future session would make better predictions because the fact exists. Focus on the user, not the task. This text is the canonical memory protocol — every host injects it from here; no host carries its own copy.
+/// doctrine without per-host CLAUDE.md edits.
+///
+/// HARD CAP: 2048 characters. Claude Code cuts server instructions there and
+/// drops the rest silently — the old 9356-character protocol reached CC
+/// sessions only through its tier definitions, so the routing rules (role →
+/// core, search first, the merge law) never arrived. Only rules that decide
+/// a save live here; the long form, with examples and the cleanup taxonomy,
+/// is the memory skill. `instructions_fit_claude_codes_cap` holds the line.
+const INSTRUCTIONS: &str = r#"ling-mem is this user's memory, shared by Claude Code, Codex, OpenClaw and Linggen. Save what makes a future session predict the user better — the person, not the task.
 
-# The three tiers
+# Tiers
+- core — who they are, always loaded: name, role/job, location, timezone, languages, family/pets. One short fact per row.
+- semantic — durable, recalled on demand: goals, preferences ("always X / never Y" → semantic, type=preference, from=user; never core), decisions with their why, cross-project gotchas. State, not events: still useful in 3 months without the date?
+- episodic — the default per-turn capture: milestones, events, project decisions, run learnings. No search first. The nightly dream promotes what lasts.
 
-- **core** — narrow universals about the *person*: name, role, location, timezone, languages, family / pets. Always-loaded at session start. Keep tight.
-- **semantic** (default) — durable long-term facts retrieved on demand: long-term goals / vision, cross-project preferences, decisions whose reasoning is the value, cross-project tech gotchas. **State + lessons, never events** — test: strip the date and the commit hash; still useful in three months? If not, episodic.
-- **episodic** — per-turn working capture (your steady-state lane). Append anything that *might* matter — **including project-scoped milestones, decisions + reasoning, and run learnings**. Per-event work rows ("committed X", "pushed Y") land here **always**, however salient the turn felt. Fast, append-only, **no search-first**. Episodic is short-term memory: the nightly dream pass *remembers* each day (promotes durable rows to semantic/core, deletes nothing), and the forget sweep ages out judged rows after the TTL. This is the lane now that the every-N-turns encoder subagent is retired.
+# Saving
+- Before any core/semantic add, memory_search the subject. Same subject or same kind of claim in other words = conflict; when unsure, treat it as one.
+- Your own rows (from=derived): merge into one current-truth row with memory_add + replace_ids. Never add then delete.
+- The user's rows (from=user): ask first, showing each row's full text and date; then replace_ids + user_directed:true. Never set that flag from your own inference.
+- A replacement keeps the loser's tier. A new status (shipped/fixed/dropped) replaces the old status row.
+- "remember / forget / update X", in any language: search, act, user_directed:true.
+- Anchor relative time to dates ("last month" → "2026-08").
+- Never save secrets or file bodies you can re-read. Project internals stay episodic.
+- Garbage you come across in your own rows, fix on sight.
 
-# When to SEARCH (before answering)
+# Recall
+Search when the question may touch past preferences, decisions or gotchas. Show each fact you use: "From memory (3 months ago): …". Never pass type, from or outcome to memory_search unless asked.
 
-Call memory_search when the user's question could connect to past preferences, decisions, or gotchas. Retrieval is visible: every fact that shapes your reply gets a chip in the chat text with its age — "From memory (3 months ago): …" — relative time, one per line for multiple hits, a stale warning past 12 months, and no silent use. When two rows on one subject surface, reconcile them in prose ordered by timestamp — the user sees the synthesis and can correct it.
-
-# When to SAVE (call memory_add)
-
-**Per-turn capture → episodic.** Each turn, append genuinely-noteworthy signal to `tier=episodic` — fast, no search-first, no confirmation. **Anchor relative time before writing** (substitution against today's date, not math — e.g. if today is 2026-07-07, "turned 3 last month" → "turned 3 in 2026-06, as of 2026-07-07"): "yesterday"/"last month"/"recently" in stored content rots silently. **Project-scoped is fine; episodic is staging, not user-biography.** Capture: shipped milestones, decisions + *why*, non-obvious learnings from a run/experiment. E.g. "Shipped Linggen 1.0"; "Sanji docking: dropped dock-wall cost, treat all cost-points uniformly"; "BlueBoat cruise tops out ~0.2 m/s". If a future session would be smarter for it, stage it — the dream pass dedupes and promotes.
-
-**Curated writes → core / semantic** (high confidence) follow the read-before-write rule: **Always memory_search the candidate content before a core/semantic memory_add.** Write-time dedup is cheaper than read-time cleanup.
-
-**What counts as a conflict — the step models most often skip.** Not just same subject with a different value. Also: the same *kind of claim* in different phrasing ("under 100 words" vs "around 150 words" IS a conflict, not a new fact); and ≥2 prior rows already on one subject — that's pre-existing drift, never add a third without resolving. Heuristic: if search returned a row whose type matches and subject overlaps, assume conflict until you've read it and confirmed same-value (skip the write) or unrelated. Default to "conflict" when ambiguous; a spurious ask is cheap, a drifted row follows the user forever.
-
-Merge authority follows voice:
-- Near-duplicate exists → skip the add; if yours is better-phrased and every matching row is your own note (`from=derived` — built/fixed/tried/learned), write the merged row with `replace_ids` listing the losers (one atomic call).
-- Conflict among **your own notes only** → no ask needed: merge to one current-truth row via `replace_ids`.
-- Conflict touching the **user's voice** (`from=user` — preference/decision/identity) → ask via the host's ask-user primitive; each option must show the full row content + stored date (never terse labels), one option per existing row so prior drift collapses in one decision, plus "all are true" and free-text options. On the pick, act fully in the SAME turn: new/free-text value wins → one memory_add with `replace_ids` carrying EVERY loser AND `user_directed: true`; an existing row wins → no write; "all true" → leave them. Never separate add + delete. The daemon mechanically BLOCKS a replace/rewrite of `from=user` rows without `user_directed: true` — the flag asserts the user directed the change: their CURRENT message states it as settled (a command "update X to Y", a declaration "my X is now Y", a commitment "from now on, X"), or they just answered your ask. A hedged reflection ("X feels about right to me", "I think I prefer X") does NOT qualify — that's a contradiction: ask first. Never assert the flag from your own inference.
-- **Resolved rows land in the loser's tier**, not your writer-default: if the old conflicting row was semantic, the replacement is semantic — otherwise you leave a parallel copy in another tier beside the still-living old row.
-
-HIGH-SIGNAL — promote straight to core/semantic (search-first), don't leave these in episodic:
-- Name + relationship ("my cat <name>", "my wife <name>") → tier=core, type=fact
-- Location / timezone → tier=core, type=fact
-- Role / identity ("I'm a robotics engineer") → tier=core, type=fact
-- Long-term goal ("I'm building X") → default tier, type=fact, tag intent:goal
-- Commitment ("always X", "never Y", "from now on Z") → default tier (semantic), type=preference, from=user; never core — core is who they are, not how they want the work done, and recall surfaces a rule when its subject comes up
-- Cross-project tech gotcha that will recur → default tier, type=learned
-
-Explicit imperatives — the user already chose; skip the ask but still search first:
-- "remember X" → search the subject; exact match → "Already saved.", else memory_add → "Saved."
-- "forget X" → search + memory_delete every matching row → "Deleted: …"
-- "update X to Y" → search + one memory_add with `replace_ids` listing every prior matching row → "Updated." Never separate add + delete.
-Pass `user_directed: true` on these — and never leave drifted siblings behind after an explicit instruction. Detect imperatives semantically in any language ("记住 X", "以后别再 X"), not by keyword.
-
-# When NOT to save
-
-- **Never, any tier:** secrets (credentials, tokens, keys); content verbatim re-derivable from a file the agent re-reads (store the *decision/learning about* it, not the file body).
-- **Keep out of core/semantic — episodic is fine:** project-internal facts, raw activity logs, single architectural calls, opinions without commitment. These stage in episodic; the dream pass decides if any earn a curated row.
-
-# Status rows are perishable — supersede at write time
-
-A status-bearing row ("in progress", "OPEN:", "not committed", "shipped", "dormant") is a claim about the world, and the world moves. When capturing a status change (shipped / fixed / dormant / abandoned), search the subject and write the new status with `replace_ids` listing the prior status row(s) — never leave "in progress" beside its own outcome. (Own-notes only; a user-voice predecessor follows the merge law.) The dream audit's review queue catches what slips through (memory_issue_add queues an item the pass can't settle; memory_issues lists them; memory_issue_resolve closes one after an attended solve) — write-time supersede is the real fix, the queue is the backstop.
-
-# Memory hygiene — see it, solve it
-
-Whoever surfaces garbage owns it in that moment; there is no cleanup queue. Authority follows voice:
-
-- **Your own notes** (`from=derived` — built/fixed/tried/learned) are your notebook: merge, rewrite, retire freely — one `memory_add` of the current-truth row with `replace_ids` listing every loser (atomic insert + delete; never separate add then delete).
-- **The user's voice** (`from=user` — preference/decision/identity) changes only with the user: ask via the host's ask-user primitive (Claude Code: AskUserQuestion; Linggen: AskUser; Codex/OpenClaw: plain chat with numbered options), then write the winner with `replace_ids` + `user_directed: true` (the daemon blocks user-voice replaces without it). Can't ask / not material to the turn → append and leave both; recall keeps surfacing them until a user-present moment resolves it.
-
-Taxonomy: exact dup → delete; superseded / chain member (derived) → `replace_ids` merge; reworded derived near-dup → merge, keep the best phrasing; old pure-event row → retire, folding into a state row if one exists; user-voice contradiction → ask; secret → delete on sight.
-
-Inline reconciliation fires on **incidental** recall hits only. When the user is explicitly steering memory ("clean up", "remember X", "what's in memory", "ignore those hits"), follow their direction — do not side-quest dedup.
-
-# Tool gotchas — CRITICAL
-
-For memory_search / memory_list: do NOT pass `type`, `from`, or `outcome` unless the user explicitly asked. Models hallucinate these defaults and over-constrain queries to 0 rows. Pass only the query (and `limit` if relevant)."#;
+Full rules and examples: the memory skill (linggen / shared-memory)."#;
 
 pub fn router() -> Router<SharedState> {
     Router::new().route("/mcp", post(handler))
@@ -659,5 +623,27 @@ mod tests {
         // `kind` + `note` are what /api/memory/issue_add rejects a call for
         // missing, so they are the schema's required pair.
         assert_eq!(def["inputSchema"]["required"], json!(["kind", "note"]));
+    }
+
+    /// Claude Code cuts server instructions at 2048 characters and drops the
+    /// rest without a word. Past the cap, the rules at the end are the ones
+    /// a CC session never sees.
+    #[test]
+    fn instructions_fit_claude_codes_cap() {
+        let n = INSTRUCTIONS.chars().count();
+        assert!(
+            n <= 2048,
+            "instructions are {n} characters; Claude Code keeps 2048"
+        );
+    }
+
+    /// The routing rule whose loss started this: a role reaches core.
+    #[test]
+    fn instructions_route_a_role_to_core() {
+        let core = INSTRUCTIONS
+            .lines()
+            .find(|l| l.starts_with("- core"))
+            .expect("a core tier line");
+        assert!(core.contains("role/job"), "{core}");
     }
 }

@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **The memory protocol reaches Claude Code whole.** Claude Code cuts MCP
+  server `instructions` at 2048 characters and drops the rest silently.
+  The protocol was 9356, so CC sessions saw only the tier definitions —
+  never the routing (a role goes to core), search-before-write, or the
+  merge law. It is now 1814 characters of the rules that decide a save;
+  examples and the cleanup taxonomy stay in the memory skill. A test
+  fails past 2048.
+
 ## [1.8.0] - 2026-09-10 — whose memory a row is
 
 ### Added
