@@ -1,6 +1,16 @@
 # Changelog
 
-## [Unreleased]
+## [1.8.1] - 2026-09-17 — the protocol fits, the dream reads less
+
+### Added
+
+- **`list` can return only a day's unjudged rows.** `memory_list` /
+  `ling-mem list --day <date> --unjudged` returns the rows created at or
+  after that day's `remembered_at` (every row when the day was never
+  remembered; refused without a day). One late row used to make the
+  dream re-read the whole judged day: 129KB for two rows in one run. The
+  dream flow now lists with it. Plugin manifests: CC/Codex 1.7.12,
+  OpenClaw 0.1.7.
 
 ### Fixed
 
