@@ -387,6 +387,7 @@ impl FilterDTO {
             outcome: self.outcome,
             since: self.since,
             until: self.until,
+            created_since: None,
             tier: self.tier,
             source_session: self.source_session,
             cwd_scope: self.cwd_scope,
@@ -471,6 +472,11 @@ pub struct ListRequest {
     /// limited as one result set.
     #[serde(default)]
     pub episodic: Option<bool>,
+    /// With `day`: only the rows no remember pass has judged — created at
+    /// or after the day's `remembered_at`, or all of them when the day was
+    /// never remembered. One late row must not re-read a judged day.
+    #[serde(default)]
+    pub unjudged: bool,
 }
 
 fn default_list_limit() -> usize {
@@ -1043,7 +1049,9 @@ async fn list(
     if req.filters.past_ttl && req.episodic.is_none() {
         req.episodic = Some(true);
     }
-    let filters = req.filters.into_filters()?;
+    let created_since = unjudged_since(&state, &req).await?;
+    let mut filters = req.filters.into_filters()?;
+    filters.created_since = created_since;
     let sort = req.sort.into();
     let mut combined = Vec::new();
     // For each in-scope store, pull `limit + offset` rows so the post-
@@ -1061,6 +1069,22 @@ async fn list(
         .take(req.limit)
         .collect();
     Ok(ok(facts_public(&paged)))
+}
+
+/// `unjudged` resolved to its cutoff: the listed day's `remembered_at`.
+/// The flag names a day's worklist, so it needs `day`.
+async fn unjudged_since(
+    state: &SharedState,
+    req: &ListRequest,
+) -> Result<Option<chrono::DateTime<chrono::Utc>>, ApiError> {
+    if !req.unjudged {
+        return Ok(None);
+    }
+    let Some(day) = req.filters.day.as_deref() else {
+        return Err(ApiError::bad_request("unjudged needs a day"));
+    };
+    let days = super::days::load(&state.data_dir).await;
+    Ok(days.days.get(day.trim()).and_then(|r| r.remembered_at))
 }
 
 fn sort_combined(rows: &mut [crate::memory::Memory], sort: crate::memory::SortOrder) {

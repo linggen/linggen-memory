@@ -370,6 +370,11 @@ pub struct ListArgs {
     /// through results larger than one batch.
     #[arg(long, default_value_t = 0)]
     pub offset: usize,
+
+    /// With `--day`: only the rows no remember pass has judged — a
+    /// re-opened day's new rows, not the whole day.
+    #[arg(long, requires = "day")]
+    pub unjudged: bool,
 }
 
 /// Parse a human duration ("30d", "12h") into a `DateTime<Utc>` cutoff —
@@ -1245,6 +1250,11 @@ fn embed_missing(facts: &mut [crate::memory::Memory]) -> Result<()> {
 }
 
 async fn cmd_list(store: &MemoryStore, args: ListArgs, format: OutputFormat) -> Result<()> {
+    if args.unjudged {
+        return Err(anyhow!(
+            "--unjudged needs the running daemon: it keeps the day records"
+        ));
+    }
     let filters = args.filters.into_filters()?;
     let results = store
         .list(&filters, args.sort.into(), args.limit, args.offset)

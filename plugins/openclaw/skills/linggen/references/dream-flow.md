@@ -103,11 +103,11 @@ Backfill staging, always user-triggered, idempotent:
 ## Remember one day
 
 1. **Re-pend check.** From the `days` rollup, note the day's
-   `remembered_at`. If set, judge **only** rows created after it —
-   earlier rows were already judged.
-2. **Worklist.** List the day's episodic rows:
-   `{"verb":"list","tier":"episodic","day":"<date>","limit":25,"sort":"oldest"}`
-   (CLI: `ling-mem list --tier episodic --day <date> --sort oldest`).
+   `remembered_at`. If set, only rows created after it need judging —
+   earlier rows were already judged, and the worklist leaves them out.
+2. **Worklist.** List the day's unjudged episodic rows:
+   `{"verb":"list","tier":"episodic","day":"<date>","unjudged":true,"limit":25,"sort":"oldest"}`
+   (CLI: `ling-mem list --tier episodic --day <date> --unjudged --sort oldest`).
    Page with `offset` until every row is seen. Never pass
    `type`/`from`/`outcome` — they narrow the list to zero.
 3. **Cluster.** Group near-duplicate rows on the same subject (per-turn

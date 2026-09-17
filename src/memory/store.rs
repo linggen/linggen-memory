@@ -95,6 +95,10 @@ pub struct Filters {
     pub tier: Option<Tier>,
     pub since: Option<DateTime<Utc>>,
     pub until: Option<DateTime<Utc>>,
+    /// Only rows written at or after this instant — `created_at`, never the
+    /// back-dated `occurred_at`. A judged day's new work is exactly its rows
+    /// created since the day's `remembered_at`.
+    pub created_since: Option<DateTime<Utc>>,
     /// Narrow to a single `source_session` id. Used by dashboard
     /// deep-links (`?session=<sid>`) to show only rows the agent wrote
     /// during one engine session.
@@ -136,6 +140,7 @@ impl Filters {
             && self.tier.is_none()
             && self.since.is_none()
             && self.until.is_none()
+            && self.created_since.is_none()
             && self.source_session.is_none()
             && self.cwd_scope.is_none()
             && self.superseded_by.is_none()
@@ -212,6 +217,13 @@ impl Filters {
             clauses.push(format!(
                 "COALESCE(occurred_at, created_at) < TIMESTAMP '{}'",
                 until.format("%Y-%m-%d %H:%M:%S%.6f")
+            ));
+        }
+
+        if let Some(created) = self.created_since {
+            clauses.push(format!(
+                "created_at >= TIMESTAMP '{}'",
+                created.format("%Y-%m-%d %H:%M:%S%.6f")
             ));
         }
 
@@ -1610,6 +1622,7 @@ mod tests {
             tier: Some(Tier::Core),
             since: None,
             until: None,
+            created_since: None,
             source_session: None,
             cwd_scope: None,
             include_expired: false,
@@ -1861,6 +1874,37 @@ mod tests {
             .unwrap();
         assert_eq!(since_yesterday.len(), 1);
         assert_eq!(since_yesterday[0].content, "recent");
+    }
+
+    #[tokio::test]
+    async fn created_since_ignores_the_back_dated_occurred_at() {
+        // A late row about an old day — the shape that reopens a judged day.
+        let (store, _dir) = fresh_store().await;
+        let now = Utc::now();
+        let stamp = now - Duration::hours(1);
+
+        let mut judged = make_fact("judged", MemoryType::Fact);
+        judged.created_at = now - Duration::days(2);
+        judged.occurred_at = Some(now - Duration::days(2));
+        let mut late = make_fact("late", MemoryType::Fact);
+        late.occurred_at = Some(now - Duration::days(2));
+
+        store.insert(&[judged, late]).await.unwrap();
+
+        let unjudged = store
+            .list(
+                &Filters {
+                    created_since: Some(stamp),
+                    ..Default::default()
+                },
+                SortOrder::Oldest,
+                10,
+                0,
+            )
+            .await
+            .unwrap();
+        assert_eq!(unjudged.len(), 1);
+        assert_eq!(unjudged[0].content, "late");
     }
 
     #[tokio::test]

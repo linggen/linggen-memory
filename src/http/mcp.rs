@@ -160,6 +160,7 @@ fn tool_defs() -> Vec<Value> {
                     "tier":     {"type": "string", "enum": ["core", "semantic", "episodic"]},
                     "past_ttl": {"type": "boolean", "description": "Return only rows past the configured episodic TTL. Implies tier=episodic."},
                     "day":      {"type": "string", "description": "One local calendar day, YYYY-MM-DD — the remember stage lists a single day's worklist with this."},
+                    "unjudged": {"type": "boolean", "description": "With day: only the rows no remember pass has judged yet — a re-opened day's new rows, not the whole day."},
                     "sort":     {"type": "string", "enum": ["newest", "oldest"]},
                     "limit":    {"type": "integer"},
                     "offset":   {"type": "integer"}

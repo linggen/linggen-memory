@@ -284,6 +284,9 @@ pub(crate) async fn list(base: &str, args: ListArgs, format: OutputFormat) -> Re
     };
     body["limit"] = json!(args.limit);
     body["offset"] = json!(args.offset);
+    if args.unjudged {
+        body["unjudged"] = json!(true);
+    }
     push_cwd_scope(&mut body, &args.filters);
     let data = post(base, "/api/memory/list", &body).await?;
     emit_fact_array(&data, format)
