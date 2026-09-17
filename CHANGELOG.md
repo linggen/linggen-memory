@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.8.2] - 2026-09-17 — a slow save is not a failed one
+
+### Fixed
+
+- **A slow write no longer reads as a refused one.** MCP tool calls reach
+  the daemon's own HTTP API, which they waited on for only 10s. A write
+  can pay for a LanceDB auto-cleanup inside its commit (9s once), so an
+  add timed out and then landed anyway; the dream took it as a rejected
+  promotion and stopped for the night (2026-09-15). The wait is now 25s,
+  under the 30s the engine and the CLI allow, and a timeout says the
+  write may have landed: search before retrying.
+- **The dream keeps going past a failed save, and a re-opened day is not
+  a stall.** The dream flow searches for a failed add, retries it once and
+  still stamps the day. It stops as stalled only on a day it already
+  stamped in the same pass — a day dreamed on an earlier night that late
+  rows re-opened is remembered (2026-09-16 lost its dream to that misread).
+  Plugin manifests: CC/Codex 1.7.13, OpenClaw 0.1.8.
+
 ## [1.8.1] - 2026-09-17 — the protocol fits, the dream reads less
 
 ### Added
