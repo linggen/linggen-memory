@@ -43,7 +43,11 @@ never write them.
 - **Only a tool_error is a failure.** `"action":"merged"` on add, a
   promoted row vanishing from episodic (the daemon's cross-tier dedup
   removed the twin during the add), `removed:false`, an empty list —
-  all normal. Never retry, never re-verify.
+  all normal. Never retry those, never re-verify.
+- **A failed write doesn't end the day.** An error on `add` may still
+  have saved the row — a timeout says so. Search its gist once: there →
+  carry on; absent → retry the add once, then carry on either way.
+  Finish the day and stamp it.
 - **Status lines, not prose:** `DAY <date> rows=<n>` → `PROMOTE <id>
   "<gist>"` per promotion (`MERGE <new-id> replaces=<k> "<gist>"` per
   derived merge) → `DAY <date> done judged=<n> promoted=<k>` →
@@ -61,9 +65,10 @@ never write them.
    `ling-mem days --undreamed`). Empty → run **Forget** below, then
    **Audit** below, reply that memory is up to date, done.
 2. Take the **oldest** undreamed day → run **Remember one day** below.
-3. Repeat from 1. If the same day comes back with an undropped
-   `unjudged` count, **stop and report** ("stalled") instead of
-   looping.
+3. Repeat from 1. If a day you already stamped in this pass comes
+   back, **stop and report** ("stalled") instead of looping. A day
+   dreamed on an earlier night that late rows re-opened is not a
+   stall — remember it.
 4. When no days remain: run **Forget**, then **Audit**, then report
    totals.
 

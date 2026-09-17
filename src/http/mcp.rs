@@ -30,7 +30,11 @@ use std::time::Duration;
 
 const MCP_PROTOCOL_VERSION: &str = "2024-11-05";
 const SERVER_NAME: &str = "ling-mem";
-const LOOPBACK_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long a tool call waits on the daemon's own HTTP API. A write can pay
+/// for a LanceDB auto-cleanup inside its commit (9s once, 2026-09-15), so
+/// 10s cut off adds that then landed anyway. Kept under the 30s the engine
+/// and the CLI wait, so the caller hears this daemon's own timeout message.
+const LOOPBACK_TIMEOUT: Duration = Duration::from_secs(25);
 
 /// Always-on primer injected into the client's system prompt at session
 /// start. The MCP spec's `instructions` field is the daemon's way to teach
@@ -457,6 +461,18 @@ fn mcp_text_content(data: &Value) -> Value {
 /// HTTP loopback to this daemon's own `/api/memory/<verb>` handler.
 /// Reuses the same dispatch path the CLI client uses so MCP and CLI
 /// share behaviour. Unwraps the `{ok, data}` envelope.
+/// A timeout says what it means for a write: the store may have finished the
+/// work after we stopped waiting, so look before doing it again.
+fn loopback_error(verb: &str, err: reqwest::Error) -> ApiError {
+    if !err.is_timeout() {
+        return ApiError::internal(anyhow::Error::from(err));
+    }
+    ApiError::internal(anyhow::anyhow!(
+        "{verb} timed out after {}s — a write may still have landed; search before retrying",
+        LOOPBACK_TIMEOUT.as_secs()
+    ))
+}
+
 async fn loopback(state: &SharedState, verb: &str, body: Value) -> Result<Value, ApiError> {
     let url = format!("http://127.0.0.1:{}/api/memory/{}", state.port, verb);
     let client = reqwest::Client::builder()
@@ -468,7 +484,7 @@ async fn loopback(state: &SharedState, verb: &str, body: Value) -> Result<Value,
         .json(&body)
         .send()
         .await
-        .map_err(|e| ApiError::internal(anyhow::Error::from(e)))?;
+        .map_err(|e| loopback_error(verb, e))?;
     let value: Value = resp
         .json()
         .await
@@ -488,6 +504,30 @@ async fn loopback(state: &SharedState, verb: &str, body: Value) -> Result<Value,
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A store that takes the request and never answers: the timeout must
+    /// tell the caller its write may have landed.
+    #[tokio::test]
+    async fn a_timed_out_call_says_the_write_may_have_landed() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/api/memory/add", listener.local_addr().unwrap());
+        let _held = tokio::spawn(async move {
+            let (_socket, _) = listener.accept().await.unwrap();
+            tokio::time::sleep(Duration::from_secs(5)).await;
+        });
+        let err = reqwest::Client::builder()
+            .timeout(Duration::from_millis(100))
+            .build()
+            .unwrap()
+            .post(&url)
+            .json(&json!({}))
+            .send()
+            .await
+            .unwrap_err();
+        let message = loopback_error("add", err).message;
+        assert!(message.starts_with("add timed out after 25s"), "{message}");
+        assert!(message.contains("may still have landed"), "{message}");
+    }
 
     /// `until: ""` used to reach the RFC-3339 parser and crash it; empty
     /// arrays silently narrowed a query to nothing.
