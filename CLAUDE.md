@@ -20,7 +20,9 @@ The main Linggen repo owns the integration side (see `../linggen/doc/memory-spec
 **In scope for this repo:**
 - LanceDB store + embedding pipeline
 - CLI subcommands on `ling-mem`
-- (out-of-scope: HTTP daemon + webpage — lives in the memory skill wrapper)
+- The daemon (`src/daemon/`: `start | stop | restart | status`, the `serve` foreground process, pidfile, background maintenance) on port 9528
+- Its HTTP surface (`src/http/`): the `Memory.*` methods at `/api/memory/<verb>` in the `{ok, data}` envelope, `/api/health`, days/issues/chains/stats/config, the auth gate, and `POST /mcp` (`mcp.rs` — the MCP Streamable-HTTP endpoint Claude Code, Codex and other hosts register)
+- The Data Browser UI (`static/`, served by `http/ui.rs`, embedded in release builds)
 - Platform release binaries (cross-compile via GitHub Actions)
 - All docs under `doc/` about the binary itself
 
@@ -41,5 +43,5 @@ The main Linggen repo owns the integration side (see `../linggen/doc/memory-spec
 ## Related
 
 - Main Linggen repo: `../linggen/` (or `~/workspace/linggen/linggen/`)
-- Thin skill wrapper (lives in the main repo): `../skills/memory/` — downloads ling-mem binary via `install.sh`
+- Thin skill wrapper: `../skills/shared-memory/` (the `linggen/skills` repo) — the skill's page, hooks and install path for the ling-mem binary
 - Plan: `~/.claude/plans/memory-system-rebuild.md`
