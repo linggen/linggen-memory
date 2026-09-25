@@ -23,7 +23,7 @@ pub use schema::{
     VECTOR_DIM,
 };
 pub use store::{
-    AccountScope, Filters, InsertOutcome, MemoryPatch, MemoryStore, SortOrder,
+    cwd_lineage, AccountScope, Filters, InsertOutcome, MemoryPatch, MemoryStore, SortOrder,
     DEDUP_SIMILARITY_THRESHOLD,
 };
 pub use types::{Memory, MemoryType, Origin, Outcome, ParseEnumError, Tier};

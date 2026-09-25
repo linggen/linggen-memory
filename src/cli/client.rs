@@ -668,6 +668,29 @@ pub(crate) async fn harvest_day(base: &str, date: &str, format: OutputFormat) ->
     }
 }
 
+pub(crate) async fn session_start(
+    base: &str,
+    cwd: Option<String>,
+    budget: Option<usize>,
+    format: OutputFormat,
+) -> Result<()> {
+    let mut body = json!({});
+    if let Some(c) = cwd {
+        body["cwd"] = json!(c);
+    }
+    if let Some(b) = budget {
+        body["budget_chars"] = json!(b);
+    }
+    let data = post(base, "/api/memory/session_start", &body).await?;
+    match format {
+        OutputFormat::Json => writeln_ndjson(&data),
+        OutputFormat::Text => {
+            println!("{}", data["block"].as_str().unwrap_or(""));
+            Ok(())
+        }
+    }
+}
+
 pub(crate) async fn stats(base: &str, format: OutputFormat) -> Result<()> {
     let data = post(base, "/api/memory/stats", &json!({})).await?;
     match format {

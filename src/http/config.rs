@@ -36,6 +36,15 @@ pub struct Config {
     /// the daemon owns and clients defer to.
     #[serde(default = "default_recall_min_score")]
     pub recall_min_score: f32,
+
+    /// Character budget for the standing rules `session_start` loads. Rules
+    /// past it are counted and named in the block, never dropped silently.
+    #[serde(default = "default_session_rules_chars")]
+    pub session_rules_chars: usize,
+}
+
+fn default_session_rules_chars() -> usize {
+    6000
 }
 
 fn default_episodic_ttl_days() -> u32 {
@@ -51,6 +60,7 @@ impl Default for Config {
         Self {
             episodic_ttl_days: default_episodic_ttl_days(),
             recall_min_score: default_recall_min_score(),
+            session_rules_chars: default_session_rules_chars(),
         }
     }
 }

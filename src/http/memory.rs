@@ -171,6 +171,12 @@ pub struct AddRequest {
     #[serde(default, deserialize_with = "deserialize_optional_lenient")]
     pub outcome: Option<Outcome>,
     pub cwd: Option<String>,
+    /// The row is about the person, not the project: store it with no
+    /// `cwd`, whatever a host stamped. Wins over `cwd` — the stamp hooks
+    /// fill `cwd` mechanically, and this is the model saying the stamp is
+    /// wrong for this row.
+    #[serde(default)]
+    pub global: bool,
     #[serde(default, deserialize_with = "deserialize_optional_datetime")]
     pub occurred_at: Option<DateTime<Utc>>,
     pub source_session: Option<String>,
@@ -291,6 +297,13 @@ pub struct FilterDTO {
     /// internally we convert to `Filters.types: Vec<MemoryType>`.
     #[serde(default, deserialize_with = "deserialize_optional_lenient")]
     pub r#type: Option<MemoryType>,
+    /// Narrow to any of these types (OR), alongside the singular `type`.
+    #[serde(default)]
+    pub types: Vec<MemoryType>,
+    /// Drop rows of these types. Per-turn recall passes `["preference"]`:
+    /// session start already loaded the standing rules.
+    #[serde(default)]
+    pub exclude_types: Vec<MemoryType>,
     /// Narrow to one tier (`core` or `semantic`). Within the semantic
     /// table both tiers coexist; this filter lets callers ask for "just
     /// the always-on identity set" (`tier=core`) or "everything else"
@@ -378,11 +391,19 @@ impl FilterDTO {
 
     fn into_filters(mut self) -> Result<Filters, ApiError> {
         self.resolve_day()?;
+        let mut types = self.types;
+        if let Some(t) = self.r#type {
+            if !types.contains(&t) {
+                types.push(t);
+            }
+        }
         Ok(Filters {
             contexts: self.contexts,
             contexts_any: self.contexts_any,
             account: self.scope.scope(),
-            types: self.r#type.into_iter().collect(),
+            types,
+            exclude_types: self.exclude_types,
+            cwd_lineage: None,
             origin: self.from,
             outcome: self.outcome,
             since: self.since,
@@ -525,6 +546,10 @@ pub struct UpdateRequest {
     pub cwd: Option<String>,
     #[serde(default)]
     pub clear_cwd: bool,
+    /// Make the row global: clear its `cwd`, so it applies in every
+    /// project. Same effect as `clear_cwd`; the name the model is given.
+    #[serde(default)]
+    pub global: bool,
     pub host: Option<String>,
     #[serde(default)]
     pub clear_host: bool,
@@ -636,7 +661,7 @@ async fn add(
     fact.contexts = req.contexts;
     fact.tags = req.tags;
     fact.outcome = req.outcome;
-    fact.cwd = req.cwd;
+    fact.cwd = written_cwd(req.cwd, req.global);
     fact.occurred_at = req.occurred_at;
     fact.source_session = req.source_session;
     fact.host = req.host;
@@ -725,6 +750,28 @@ async fn add(
     Ok(ok(body))
 }
 
+/// The `cwd` a new row is stored with. `global` wins over any stamp: the
+/// hooks fill `cwd` mechanically, `global` is the model saying the row is
+/// about the person, not the project.
+fn written_cwd(cwd: Option<String>, global: bool) -> Option<String> {
+    if global {
+        None
+    } else {
+        cwd.filter(|c| !c.trim().is_empty())
+    }
+}
+
+/// An update's `cwd` change. `global` clears it and wins over a new value;
+/// otherwise set wins over clear, and nothing given leaves it alone.
+fn cwd_patch(cwd: Option<String>, clear: bool, global: bool) -> Option<Option<String>> {
+    match (cwd, clear) {
+        _ if global => Some(None),
+        (Some(v), _) => Some(Some(v)),
+        (None, true) => Some(None),
+        (None, false) => None,
+    }
+}
+
 /// Bulk insert N rows in one call: build every row, batch-embed all
 /// contents (one gate acquisition), then commit each table's rows with a
 /// single `MemoryStore::insert` (one LanceDB version per table, not per
@@ -748,7 +795,7 @@ async fn add_batch(
         fact.contexts = r.contexts;
         fact.tags = r.tags;
         fact.outcome = r.outcome;
-        fact.cwd = r.cwd;
+        fact.cwd = written_cwd(r.cwd, r.global);
         fact.occurred_at = r.occurred_at;
         fact.source_session = r.source_session;
         fact.host = r.host;
@@ -1155,11 +1202,7 @@ async fn update(
         (None, true) => Some(None),
         (None, false) => None,
     };
-    let cwd_patch = match (req.cwd, req.clear_cwd) {
-        (Some(v), _) => Some(Some(v)),
-        (None, true) => Some(None),
-        (None, false) => None,
-    };
+    let cwd_patch = cwd_patch(req.cwd, req.clear_cwd, req.global);
     let host_patch = match (req.host, req.clear_host) {
         (Some(v), _) => Some(Some(v)),
         (None, true) => Some(None),
@@ -1323,4 +1366,67 @@ async fn forget(
     let store = pick_store(&state, req.episodic);
     let removed = store.forget(&filters).await?;
     Ok(ok(json!({"removed": removed})))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn global_wins_over_a_stamped_cwd() {
+        assert_eq!(written_cwd(Some("/u/w/p".into()), true), None);
+        assert_eq!(
+            written_cwd(Some("/u/w/p".into()), false).as_deref(),
+            Some("/u/w/p")
+        );
+        // An explicit empty cwd is no project, not a project named "".
+        assert_eq!(written_cwd(Some("".into()), false), None);
+    }
+
+    #[test]
+    fn global_on_update_clears_the_cwd() {
+        assert_eq!(cwd_patch(None, false, true), Some(None));
+        assert_eq!(cwd_patch(Some("/x".into()), false, true), Some(None));
+        assert_eq!(
+            cwd_patch(Some("/x".into()), true, false),
+            Some(Some("/x".into()))
+        );
+        assert_eq!(cwd_patch(None, true, false), Some(None));
+        assert_eq!(cwd_patch(None, false, false), None);
+    }
+
+    #[test]
+    fn list_takes_types_and_exclude_types() {
+        let req: ListRequest = serde_json::from_value(json!({
+            "types": ["preference", "decision"],
+            "type": "fact",
+            "exclude_types": ["built"],
+            "cwd_scope": "/u/w/p"
+        }))
+        .unwrap();
+        let f = req.filters.into_filters().unwrap();
+        assert_eq!(
+            f.types,
+            [
+                MemoryType::Preference,
+                MemoryType::Decision,
+                MemoryType::Fact
+            ]
+        );
+        assert_eq!(f.exclude_types, [MemoryType::Built]);
+        assert_eq!(f.cwd_scope.as_deref(), Some("/u/w/p"));
+    }
+
+    #[test]
+    fn search_takes_exclude_types() {
+        let req: SearchRequest = serde_json::from_value(json!({
+            "query": "q",
+            "exclude_types": ["preference"]
+        }))
+        .unwrap();
+        let f = req.filters.into_filters().unwrap();
+        assert_eq!(f.exclude_types, [MemoryType::Preference]);
+        let sql = f.to_sql_for_test();
+        assert!(sql.contains("type NOT IN ('preference')"), "{sql}");
+    }
 }

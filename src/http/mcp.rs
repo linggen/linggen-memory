@@ -61,6 +61,7 @@ const INSTRUCTIONS: &str = r#"ling-mem is this user's memory, shared by Claude C
 - A replacement keeps the loser's tier. A new status (shipped/fixed/dropped) replaces the old status row.
 - "remember / forget / update X", in any language: search, act, user_directed:true.
 - Anchor relative time to dates ("last month" → "2026-08").
+- A preference about the person is global (memory_add global:true); one about this project keeps the host's cwd stamp.
 - Never save secrets or file bodies you can re-read. Project internals stay episodic.
 - Garbage you come across in your own rows, fix on sight.
 
@@ -142,6 +143,7 @@ fn tool_defs() -> Vec<Value> {
                     "contexts": {"type": "array", "items": {"type": "string"}, "description": "Filter to these scope tags (AND). Omit to search globally."},
                     "tier":     {"type": "string", "enum": ["core", "semantic", "episodic"], "description": "Restrict to one tier. Omit to span all."},
                     "cwd_scope": {"type": "string", "description": "HOST-FILLED — leave it out; the host stamps the session cwd to scope results to this project plus project-free rows."},
+                    "exclude_types": {"type": "array", "items": {"type": "string", "enum": ["fact", "preference", "decision", "tried", "fixed", "learned", "built"]}, "description": "HOST-FILLED — leave it out; per-turn recall skips preference rows because session start already loaded them."},
                     "limit":    {"type": "integer", "description": "Max rows. Default 10."}
                 },
                 "required": ["query"]
@@ -162,12 +164,24 @@ fn tool_defs() -> Vec<Value> {
                 "properties": {
                     "contexts": {"type": "array", "items": {"type": "string"}},
                     "tier":     {"type": "string", "enum": ["core", "semantic", "episodic"]},
+                    "types":    {"type": "array", "items": {"type": "string", "enum": ["fact", "preference", "decision", "tried", "fixed", "learned", "built"]}, "description": "Only rows of these types."},
+                    "cwd_scope": {"type": "string", "description": "Only rows written under this path, plus project-free rows."},
                     "past_ttl": {"type": "boolean", "description": "Return only rows past the configured episodic TTL. Implies tier=episodic."},
                     "day":      {"type": "string", "description": "One local calendar day, YYYY-MM-DD — the remember stage lists a single day's worklist with this."},
                     "unjudged": {"type": "boolean", "description": "With day: only the rows no remember pass has judged yet — a re-opened day's new rows, not the whole day."},
                     "sort":     {"type": "string", "enum": ["newest", "oldest"]},
                     "limit":    {"type": "integer"},
                     "offset":   {"type": "integer"}
+                }
+            }
+        }),
+        json!({
+            "name": "memory_session_start",
+            "description": "What a session loads at start: core rows (who the user is) + standing rules (type=preference; global, or written at this project or a parent of it), within a char budget. Returns {core, rules, block, chars, over_budget}; `block` is markdown ready to inject. Hosts call this; a model rarely needs to.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "cwd": {"type": "string", "description": "HOST-FILLED — the session's working directory. Absent or not a project ($HOME, ~/.linggen, a temp dir) = global rules only."}
                 }
             }
         }),
@@ -193,6 +207,7 @@ fn tool_defs() -> Vec<Value> {
                     "host":     {"type": "string", "description": "HOST-FILLED — leave it out; the host stamps the committing runtime."},
                     "source_session": {"type": "string", "description": "HOST-FILLED — leave it out; pass only when a promote pass carries the original row's session forward."},
                     "cwd":      {"type": "string", "description": "HOST-FILLED — leave it out; the host stamps the session's own cwd, which scopes recall."},
+                    "global":   {"type": "boolean", "description": "true = the row is about the person, not this project: stored with no cwd, loaded in every project. A preference about this project keeps the stamp (leave it out)."},
                     "replace_ids": {"type": "array", "items": {"type": "string"}, "description": "Row ids this row replaces — inserted and deleted atomically. For merges and resolved conflicts; never separate add + delete calls."},
                     "user_directed": {"type": "boolean", "description": "Assert the user directed this change (a settled command/declaration, or they just answered your ask). Required when replace_ids targets from=user rows — the daemon BLOCKS such writes otherwise. Hedged reflections don't qualify; see the server instructions."}
                 },
@@ -220,6 +235,7 @@ fn tool_defs() -> Vec<Value> {
                     "tier":     {"type": "string", "enum": ["core", "semantic", "episodic"], "description": "Moving tier relocates the row across tables, id preserved."},
                     "contexts": {"type": "array", "items": {"type": "string"}},
                     "tags":     {"type": "array", "items": {"type": "string"}},
+                    "global":   {"type": "boolean", "description": "true = clear the row's project (cwd) so it applies in every project."},
                     "user_directed": {"type": "boolean", "description": "Required when rewriting content on a from=user row — see memory_add.user_directed."}
                 },
                 "required": ["id"]
@@ -353,6 +369,7 @@ fn tool_name_to_verb(name: &str) -> Option<&'static str> {
     match name {
         "memory_search" => Some("search"),
         "memory_list" => Some("list"),
+        "memory_session_start" => Some("session_start"),
         "memory_get" => Some("get"),
         "memory_add" => Some("add"),
         "memory_update" => Some("update"),
@@ -629,6 +646,7 @@ mod tests {
         for verb in [
             "search",
             "list",
+            "session_start",
             "get",
             "add",
             "update",

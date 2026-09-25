@@ -1,5 +1,28 @@
 # Changelog
 
+## [1.9.0] - 2026-09-25 — standing rules load at session start
+
+### Added
+
+- **`session_start` loads who the user is and how they want the work
+  done.** `POST /api/memory/session_start` / MCP `memory_session_start` /
+  `ling-mem session-start --cwd <dir>` returns the core rows plus the
+  standing rules (`type=preference`) that apply at the session's cwd:
+  global ones, and ones written at that path or a parent of it. A rule
+  from one project never loads in another. Rules share a character budget
+  (`session_rules_chars`, default 6000); the ones past it are counted and
+  named in the block, never dropped silently. Every host (Claude Code,
+  Codex, OpenClaw, the Linggen engine) injects the same rendered block.
+- **Recall skips what session start loaded.** `memory_search` takes
+  `exclude_types`; the per-turn recall hooks pass `["preference"]`.
+- **`memory_list` takes `types` and `cwd_scope`.**
+- **A row can be global.** `memory_add {global: true}` stores it with no
+  project, whatever cwd the host stamped; `memory_update {global: true}`
+  clears a row's project. A preference about the person is global; one
+  about the project keeps the stamp. The Claude Code hook also stamps
+  `host: "claude-code"` on writes that leave it out.
+  Plugin manifests: CC/Codex 1.7.14, OpenClaw 0.1.9.
+
 ## [1.8.2] - 2026-09-17 — a slow save is not a failed one
 
 ### Fixed

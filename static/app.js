@@ -2300,7 +2300,7 @@ async function buildSettingsCard() {
       await fetch('/api/config', {
         method: 'PUT',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ episodic_ttl_days: ttl, recall_min_score: recall }),
+        body: JSON.stringify({ ...cfg, episodic_ttl_days: ttl, recall_min_score: recall }),
       });
       status.textContent = 'Saved.';
       status.hidden = false;

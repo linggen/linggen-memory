@@ -74,6 +74,20 @@ pub enum Command {
     /// Non-semantic browse — metadata filters only.
     List(ListArgs),
 
+    /// What a session loads at start: core rows + the standing rules
+    /// (preferences) that apply at `--cwd` — global, or written at that
+    /// path or above it — within the char budget. Text prints the block a
+    /// host injects; `--format json` prints the whole payload. Requires
+    /// the daemon.
+    SessionStart {
+        /// The session's working directory. Omit for global rules only.
+        #[arg(long)]
+        cwd: Option<String>,
+        /// Character budget for the rules (default: the daemon's config).
+        #[arg(long)]
+        budget: Option<usize>,
+    },
+
     /// Modify fields of an existing fact. Aliased as `update` for back-
     /// compat with pre-rename scripts; new callers should prefer `edit`,
     /// which doesn't collide with the more conventional binary-update sense
@@ -924,6 +938,9 @@ pub async fn run(cli: Cli) -> Result<()> {
                 Command::Get { id } => client::get(&base_url, &id, format).await,
                 Command::Search(args) => client::search(&base_url, args, format).await,
                 Command::List(args) => client::list(&base_url, args, format).await,
+                Command::SessionStart { cwd, budget } => {
+                    client::session_start(&base_url, cwd, budget, format).await
+                }
                 Command::Edit(args) => client::update(&base_url, args, format).await,
                 Command::Delete { id, yes } => client::delete(&base_url, &id, yes, format).await,
                 Command::Forget(args) => client::forget(&base_url, args, format).await,
@@ -974,6 +991,7 @@ pub async fn run(cli: Cli) -> Result<()> {
         // there is deliberately no direct-store fallback — two writers to
         // the sidecar would race.
         Command::Days(_)
+        | Command::SessionStart { .. }
         | Command::RememberDay(_)
         | Command::HarvestDay { .. }
         | Command::Sweep { .. }

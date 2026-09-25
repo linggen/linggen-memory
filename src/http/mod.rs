@@ -21,6 +21,7 @@ mod health;
 pub(crate) mod issues;
 mod mcp;
 mod memory;
+pub(crate) mod session;
 pub mod state;
 mod stats;
 mod ui;
@@ -49,6 +50,7 @@ pub fn build_router(state: SharedState, telemetry: Telemetry) -> Router {
                 .merge(chains::router())
                 .merge(issues::router())
                 .merge(stats::router())
+                .merge(session::router())
                 .layer(middleware::from_fn_with_state(
                     telemetry,
                     command_telemetry_layer,
