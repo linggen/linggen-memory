@@ -1,12 +1,14 @@
 # linggen-memory
 
-**Not just remember and recall. Everything a brain does.**
+**One memory of you, shared by every agent you use** — Claude Code, Codex, OpenClaw, and Linggen's own Ling and Yinyue.
 
-The most important thing in a memory system is not storing a fact, and it is not finding it again. A good one does what a brain does — holds some things for a day and others for years, brings back what matters, lets go of what does not, collapses duplicates, merges what belongs together, checks its own work, and settles contradictions when it finds them. That is what `ling-mem` does.
+Tell Claude Code something on Monday; Codex knows it on Tuesday. One local daemon, one store on your machine. No SaaS, no API key, no signup.
 
-One local daemon. No SaaS, no API key, no signup. The same store in Claude Code, Codex, OpenClaw, and Linggen.
+**Not just remember and recall — everything a brain does.** A good memory holds some things for a day and others for years, brings back what matters, lets go of what does not, collapses duplicates, merges what belongs together, checks its own work, and settles contradictions when it finds them. That is what `ling-mem` does.
 
-> **Status: v1.7.2 — stable.** Store schema and the CLI/HTTP/MCP contract are frozen. Prebuilt binaries for macOS Apple Silicon and Linux x86_64. The pre-refactor code-indexing tool is preserved at the `v0-legacy` git tag.
+**It works on its own.** Install it into the agents you already use and stop there if you like. It is also the memory of [Linggen](https://linggen.dev) — so if you ever meet Yinyue, the companion there, she already knows you on day one.
+
+> **Status: stable — latest release 1.8.2.** Store schema and the CLI/HTTP/MCP contract are frozen. Prebuilt binaries for macOS Apple Silicon and Linux x86_64. The pre-refactor code-indexing tool is preserved at the `v0-legacy` git tag.
 
 ---
 
