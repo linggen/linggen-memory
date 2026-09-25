@@ -48,7 +48,6 @@ dirs = "5"
 
 # Session scanning / extraction
 regex = "1"
-serde_yml = "0.0"
 once_cell = "1"
 
 # Embeddings — Qwen3-Embedding-0.6B via candle (1024-dim, multilingual, matches
