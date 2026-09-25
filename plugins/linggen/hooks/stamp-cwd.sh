@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # PreToolUse hook installed by the linggen plugin. Stamps the working
-# directory onto every memory write, and scopes every memory search to it.
+# directory (and `host: "claude-code"`) onto every memory write, and scopes
+# every memory search to the working directory. A write with `global: true`
+# is about the person, not the project, and gets no cwd.
 #
 # WHY A HOOK AND NOT THE MODEL. `cwd` is a fact about the session, not a
 # judgment about the content: the host knows it exactly, the model would be
@@ -38,18 +40,6 @@ input="$(cat)"
 
 tool="$(printf '%s' "$input" | jq -r '.tool_name // empty' 2>/dev/null || true)"
 cwd="$(printf '%s' "$input"  | jq -r '.cwd // empty'       2>/dev/null || true)"
-[ -n "$cwd" ] || exit 0
-
-# A cwd that is not a project must never become one. Stamping `$HOME` (a
-# session started nowhere in particular), the engine's own `~/.linggen`, or a
-# temp dir onto a write HIDES the row from every project search — a scope that
-# is not a project is worse than no scope. Same rule the read side applies in
-# recall.sh, and the same dirs the original backfill refused to stamp.
-tmp="${TMPDIR:-/tmp}"
-case "$cwd" in
-  "$HOME"|"$HOME/.linggen"|"$HOME/.linggen/"*) exit 0 ;;
-  "${tmp%/}"|"${tmp%/}/"*|/tmp|/tmp/*|/private/tmp|/private/tmp/*) exit 0 ;;
-esac
 
 # Which field this tool wants. A write records where it came from; a read asks
 # what is in scope. Same value, opposite direction — see the matching pair in
@@ -63,27 +53,59 @@ case "$tool" in
   *) exit 0 ;;
 esac
 
+# A cwd that is not a project must never become one. Stamping `$HOME` (a
+# session started nowhere in particular), the engine's own `~/.linggen`, or a
+# temp dir onto a write HIDES the row from every project search — a scope that
+# is not a project is worse than no scope. Same rule the read side applies in
+# recall.sh, and the same dirs the original backfill refused to stamp.
+tmp="${TMPDIR:-/tmp}"
+case "$cwd" in
+  "$HOME"|"$HOME/.linggen"|"$HOME/.linggen/"*) cwd="" ;;
+  "${tmp%/}"|"${tmp%/}/"*|/tmp|/tmp/*|/private/tmp|/private/tmp/*) cwd="" ;;
+esac
+
+stamp="{}"
+
 # Never overwrite a value the caller set deliberately. The one legitimate case
 # is a promote pass carrying the ORIGINAL row's origin forward — the dream
-# knows where a memory came from and this hook does not.
+# knows where a memory came from and this hook does not. `global: true` is the
+# model saying the row is about the person, not this project: no cwd at all.
 existing="$(printf '%s' "$input" | jq -r --arg f "$field" '.tool_input[$f] // empty' 2>/dev/null || true)"
-[ -n "$existing" ] && exit 0
-
-# A write that names ANOTHER session's row is not this session's authorship.
-# The dream's promote and the scan's backfill carry the original row's
-# source_session — and its cwd, when it had one, rides in the same call. When
-# the original had none, this session's cwd stamped over the gap would rescope
-# someone else's memory to wherever the dream happened to run. The model's own
-# fresh adds pass THIS session's id (recall.sh instructs it every turn), so
-# the guard only trips on carried-forward rows.
-if [ "$field" = "cwd" ]; then
-  src="$(printf '%s' "$input" | jq -r '.tool_input.source_session // empty' 2>/dev/null || true)"
-  sid="$(printf '%s' "$input" | jq -r '.session_id // empty' 2>/dev/null || true)"
-  if [ -n "$src" ] && [ "$src" != "$sid" ]; then exit 0; fi
+global="$(printf '%s' "$input" | jq -r '.tool_input.global // false' 2>/dev/null || true)"
+if [ -n "$cwd" ] && [ -z "$existing" ] && { [ "$field" != "cwd" ] || [ "$global" != "true" ]; }; then
+  # A write that names ANOTHER session's row is not this session's authorship.
+  # The dream's promote and the scan's backfill carry the original row's
+  # source_session — and its cwd, when it had one, rides in the same call.
+  # When the original had none, this session's cwd stamped over the gap would
+  # rescope someone else's memory to wherever the dream happened to run. The
+  # model's own fresh adds pass THIS session's id (recall.sh instructs it every
+  # turn), so the guard only trips on carried-forward rows.
+  foreign=0
+  if [ "$field" = "cwd" ]; then
+    src="$(printf '%s' "$input" | jq -r '.tool_input.source_session // empty' 2>/dev/null || true)"
+    sid="$(printf '%s' "$input" | jq -r '.session_id // empty' 2>/dev/null || true)"
+    if [ -n "$src" ] && [ "$src" != "$sid" ]; then foreign=1; fi
+  fi
+  if [ "$foreign" = 0 ]; then
+    stamp="$(jq -nc --arg f "$field" --arg v "$cwd" '{($f): $v}')"
+  fi
 fi
 
+# The writing host — a fact about this runtime, never the model's to fill.
+# Only when the caller left it out: a promote pass carries the original row's
+# host forward. Codex has no PreToolUse seam (see the header), so its writes
+# stay unstamped until it does.
+if [ "$field" = "cwd" ]; then
+  host="$(printf '%s' "$input" | jq -r '.tool_input.host // empty' 2>/dev/null || true)"
+  if [ -z "$host" ]; then
+    stamp="$(printf '%s' "$stamp" | jq -c '. + {host: "claude-code"}')"
+  fi
+fi
+
+[ "$stamp" = "{}" ] && exit 0
+
 updated="$(printf '%s' "$input" \
-  | jq -c --arg f "$field" --arg v "$cwd" '.tool_input + {($f): $v}' 2>/dev/null || true)"
+  | jq -c --argjson s "$stamp" '.tool_input + $s' 2>/dev/null || true)"
 [ -n "$updated" ] || exit 0
 
 jq -nc --argjson i "$updated" '{

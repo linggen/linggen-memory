@@ -39,7 +39,7 @@ test("stampCwd picks the field by direction and ignores other tools", () => {
   const base = { cwd: "/repo", sessionId: "s1" };
   assert.deepEqual(
     stampCwd({ ...base, toolName: "mcp__plugin_linggen_ling-mem__memory_add", params: { content: "x" } }),
-    { content: "x", cwd: "/repo" },
+    { content: "x", cwd: "/repo", host: "openclaw" },
   );
   assert.deepEqual(
     stampCwd({ ...base, toolName: "ling-mem__memory_search", params: { query: "q" } }),
@@ -52,22 +52,30 @@ test("stampCwd never overwrites, and never rescopes another session's row", () =
   const base = { cwd: "/repo", sessionId: "s1" };
   // A promote pass carries the ORIGINAL row's origin; the dream knows where a
   // memory came from and this hook does not.
-  assert.equal(stampCwd({ ...base, toolName: "memory_add", params: { cwd: "/elsewhere" } }), null);
+  assert.equal(stampCwd({ ...base, toolName: "memory_add", params: { cwd: "/elsewhere", host: "linggen" } }), null);
   assert.equal(
-    stampCwd({ ...base, toolName: "memory_add", params: { content: "x", source_session: "other" } }),
+    stampCwd({ ...base, toolName: "memory_add", params: { content: "x", source_session: "other", host: "codex" } }),
     null,
   );
   // This session's own write still gets stamped.
   assert.deepEqual(
     stampCwd({ ...base, toolName: "memory_add", params: { content: "x", source_session: "s1" } }),
-    { content: "x", source_session: "s1", cwd: "/repo" },
+    { content: "x", source_session: "s1", cwd: "/repo", host: "openclaw" },
   );
 });
 
 test("stampCwd refuses a non-project cwd rather than hiding the row", () => {
-  assert.equal(
+  assert.deepEqual(
     stampCwd({ toolName: "memory_add", params: { content: "x" }, cwd: homedir(), sessionId: "s1" }),
-    null,
+    { content: "x", host: "openclaw" },
+  );
+  assert.equal(stampCwd({ toolName: "memory_search", params: { query: "q" }, cwd: homedir(), sessionId: "s1" }), null);
+});
+
+test("stampCwd leaves a global row without a cwd", () => {
+  assert.deepEqual(
+    stampCwd({ toolName: "memory_add", params: { content: "x", global: true }, cwd: "/repo", sessionId: "s1" }),
+    { content: "x", global: true, host: "openclaw" },
   );
 });
 

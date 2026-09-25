@@ -20,9 +20,9 @@
 #    blocks on the ~100MB download) and discloses that in the context line.
 #    Both binaries are required components of this plugin. Opt out of the
 #    engine auto-install with LINGGEN_NO_ENGINE_INSTALL=1.
-# 4. Emit core memory as `hookSpecificOutput.additionalContext` so the
-#    host injects always-on identity facts (name, role, location, family,
-#    standing-instruction preferences) into the agent's system prompt.
+# 4. Emit core memory + the standing rules for this cwd (one
+#    `memory_session_start` call) as `hookSpecificOutput.additionalContext`
+#    so the host injects them into the agent's system prompt.
 #    Read over MCP, so it works the same whether the store is on this
 #    machine or another one.
 #    CC honors the field natively; Codex ignores unknown JSON and just
@@ -32,6 +32,11 @@
 # Bails silently on any failure — never blocks the session.
 
 set -u
+
+# The hook's stdin (JSON with the session's `cwd`), read first: install-bin
+# and the daemon start below inherit stdin and must not swallow it.
+hook_input=""
+[ -t 0 ] || hook_input="$(cat 2>/dev/null || true)"
 
 # Address + `mcp_call`, shared with recall.sh. Located from this script's own
 # path so it works regardless of which env vars a host sets.
@@ -157,47 +162,61 @@ if ! curl -fsS --max-time 2 "${LINGGEN_URL}/api/health" >/dev/null 2>&1 \
   fi
 fi
 
-# ── Inject core memory into the session's system prompt ─────────────────────
+# ── Inject core memory + standing rules into the session's system prompt ────
 #
-# Over MCP, like recall — so a host whose store is on another machine gets the
-# same core identity as one whose store is local, with no binary of its own.
-# Empty store (fresh install) emits nothing: the host gets a normal
-# SessionStart with no additionalContext.
+# One call: `memory_session_start {cwd}` returns the core rows (who the user
+# is) and the standing rules that apply here (type=preference, global or
+# written at this project or a parent of it), already rendered as `block`.
+# The daemon renders it so every host injects the same text. Over MCP, like
+# recall — a host whose store is on another machine gets the same block with
+# no binary of its own. Empty store (fresh install) emits nothing.
 
 command -v jq >/dev/null 2>&1 || exit 0
 
+# The session's cwd, from the hook's stdin. A cwd that is not a project
+# ($HOME, ~/.linggen, a temp dir) is sent anyway: the daemon applies the same
+# rule and loads global rules only.
+session_cwd="$(printf '%s' "$hook_input" | jq -r '.cwd // empty' 2>/dev/null || true)"
+[ -z "$session_cwd" ] && session_cwd="${PWD:-}"
+start_args="$(jq -nc --arg c "$session_cwd" 'if ($c | length) > 0 then {cwd: $c} else {} end')"
+
 # A slightly longer budget than a per-turn recall: this runs once, at session
 # start, and a cold daemon has just been asked to open LanceDB.
-core_rows="$(mcp_call memory_list '{"tier":"core","limit":100}' "${LING_MEM_CORE_TIMEOUT:-5}")"
-
-if [ -z "$core_rows" ]; then
-  if [ -n "$install_hint" ]; then
-    jq -nc --arg ctx "$install_hint" '{hookSpecificOutput:{hookEventName:"SessionStart",additionalContext:$ctx}}'
-  fi
-  exit 0
-fi
+to="${LING_MEM_CORE_TIMEOUT:-5}"
+start_out="$(mcp_call memory_session_start "$start_args" "$to")"
 
 # Defensive guard: a malformed payload would make the pipeline below fail
 # silently, and the session would start with no core context and no log of
 # why. Validate the parse first; on failure log to stderr (CC shows hook
-# stderr in the transcript) and bail without emitting hookSpecificOutput.
-if ! printf '%s' "$core_rows" | jq -e '.' >/dev/null 2>&1; then
-  printf 'linggen autostart: memory_list returned non-JSON; skipping core injection\n' >&2
-  exit 0
+# stderr in the transcript) and inject nothing.
+core_block=""
+if [ -n "$start_out" ]; then
+  if printf '%s' "$start_out" | jq -e 'type == "object"' >/dev/null 2>&1; then
+    core_block="$(printf '%s' "$start_out" | jq -r '.block // empty' 2>/dev/null || true)"
+  else
+    printf 'linggen autostart: memory_session_start returned non-JSON; skipping memory injection\n' >&2
+  fi
+else
+  # A daemon older than session_start (ling-mem < 1.9) answers with an
+  # error: fall back to the core rows alone, as before.
+  core_rows="$(mcp_call memory_list '{"tier":"core","limit":100}' "$to")"
+  if [ -n "$core_rows" ] && printf '%s' "$core_rows" | jq -e '.' >/dev/null 2>&1; then
+    core_block="$(printf '%s' "$core_rows" | jq -r '
+      (if type == "array" then . else [] end)
+      | map(select(.content))
+      | if length == 0 then empty
+        else
+          "## Core memory — who the user is\n\n"
+          + (map("- \(.content) (id=\(.id))") | join("\n"))
+        end
+    ' 2>/dev/null || true)"
+  fi
 fi
 
-core_block="$(printf '%s' "$core_rows" | jq -r '
-  (if type == "array" then . else [] end)
-  | map(select(.content))
-  | if length == 0 then empty
-    else
-      "## Core memory — always-on user identity\n\n"
-      + (map("- \(.content) (id=\(.id))") | join("\n"))
-    end
-' 2>/dev/null || true)"
-
 if [ -n "$install_hint" ]; then
-  core_block="${core_block}${core_block:+\n\n}${install_hint}"
+  core_block="${core_block}${core_block:+
+
+}${install_hint}"
 fi
 [ -z "$core_block" ] && exit 0
 

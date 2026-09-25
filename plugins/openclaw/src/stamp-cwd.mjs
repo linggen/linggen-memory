@@ -28,13 +28,6 @@ export function stampCwd({ toolName, params, cwd, sessionId, settings } = {}) {
   if ((settings ?? readSettings()).stampDisabled) return null;
   if (!toolName || !params || typeof params !== "object") return null;
 
-  // A cwd that is not a project must never become one. Stamping `$HOME`, the
-  // engine's own `~/.linggen`, or a temp dir onto a write HIDES the row from
-  // every project search — a scope that is not a project is worse than no
-  // scope. Same rule the read side applies in recall.
-  const scope = scopeOf(cwd);
-  if (!scope) return null;
-
   // Which field this tool wants. A write records where it came from; a read
   // asks what is in scope. Same value, opposite direction. Suffix match,
   // because the tool arrives namespaced by server and that prefix is the
@@ -44,20 +37,34 @@ export function stampCwd({ toolName, params, cwd, sessionId, settings } = {}) {
   else if (toolName.endsWith("memory_search")) field = "cwd_scope";
   else return null;
 
+  const stamp = {};
+
+  // A cwd that is not a project must never become one. Stamping `$HOME`, the
+  // engine's own `~/.linggen`, or a temp dir onto a write HIDES the row from
+  // every project search — a scope that is not a project is worse than no
+  // scope. Same rule the read side applies in recall.
+  const scope = scopeOf(cwd);
+
   // Never overwrite a value the caller set deliberately. The one legitimate
   // case is a promote pass carrying the ORIGINAL row's origin forward — the
-  // dream knows where a memory came from and this hook does not.
-  if (params[field]) return null;
-
-  // A write that names ANOTHER session's row is not this session's authorship.
-  // The dream's promote and the scan's backfill carry the original row's
-  // source_session — and its cwd, when it had one, rides in the same call. When
-  // the original had none, this session's cwd stamped over the gap would
-  // rescope someone else's memory to wherever the dream happened to run.
-  if (field === "cwd") {
+  // dream knows where a memory came from and this hook does not. `global: true`
+  // is the model saying the row is about the person, not this project.
+  const global = field === "cwd" && params.global === true;
+  if (scope && !params[field] && !global) {
+    // A write that names ANOTHER session's row is not this session's
+    // authorship. The dream's promote and the scan's backfill carry the
+    // original row's source_session — and its cwd, when it had one, rides in
+    // the same call. When the original had none, this session's cwd stamped
+    // over the gap would rescope someone else's memory to wherever the dream
+    // happened to run.
     const source = params.source_session;
-    if (source && sessionId && source !== sessionId) return null;
+    const foreign = field === "cwd" && source && sessionId && source !== sessionId;
+    if (!foreign) stamp[field] = scope;
   }
 
-  return { ...params, [field]: scope };
+  // The writing host — a fact about this runtime, never the model's to fill.
+  if (field === "cwd" && !params.host) stamp.host = "openclaw";
+
+  if (!Object.keys(stamp).length) return null;
+  return { ...params, ...stamp };
 }

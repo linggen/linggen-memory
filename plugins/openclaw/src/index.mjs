@@ -126,7 +126,7 @@ const plugin = definePluginEntry({
           if (!coreSent.has(sessionKey)) {
             remember(coreSent, sessionKey);
             const notice = await memoryNotice(client, pluginRoot);
-            const system = notice || (await buildCoreContext(client, settings.coreTimeoutMs));
+            const system = notice || (await buildCoreContext(client, settings.coreTimeoutMs, ctx?.workspaceDir ?? ""));
             if (system) result.prependSystemContext = system;
           }
 
