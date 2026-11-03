@@ -1,9 +1,15 @@
 # Changelog
 
-## [1.13.0] - 2026-10-21 — see who is connected
+## [1.13.0] - 2026-11-03 — see who is connected
 
 1.10.0–1.12.0 were never published; their entries below ship in 1.13.0.
-Plugin manifests: CC/Codex 1.7.20, OpenClaw 0.1.12.
+Plugin manifests: CC/Codex 1.7.21, OpenClaw 0.1.12.
+
+Since the 10-21 draft: the Linux floor is glibc 2.39 (Ubuntu 24.04);
+`ling-mem upgrade` waits up to 60 s for the new daemon to start (macOS's
+first-run scan) and the hooks never run git; migration backups expire after
+14 days; recall scope now weighs a row's score instead of filtering it; and
+`recall_min_score` defaults to 0.7.
 
 ### Added
 
