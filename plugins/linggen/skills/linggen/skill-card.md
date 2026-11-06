@@ -13,6 +13,26 @@ Apache 2.0 <br>
 ## Use Case: <br>
 Developers and agent users use Linggen to give assistants persistent local memory across sessions and hosts, with commands for adding, searching, consolidating, forgetting, and auditing memories. Users can also use its local MCP server for controlled browser and X session reads when the Linggen engine and browser extension are available. <br>
 
+## Delegating work to Linggen
+
+Use the Linggen engine's MCP agent tools for delegated coding work:
+
+1. Create a git worktree of the repo; pass its path as `write_dir` to `agent_run`.
+   Linggen has admin there and read-only access elsewhere; it never prompts.
+2. Pass your current `permission_mode`: `plan`, `default`, `acceptEdits`,
+   `auto`, or `bypassPermissions`. It maps your grants, never admin on all paths.
+3. Send a self-contained brief: files, cause, tests to run, and "reply short".
+   Only the final reply returns here; working steps stay in Linggen's web UI.
+4. If still running, don't poll: watch `ws://127.0.0.1:9527/api/agent/wait?session_id=…`.
+   Claude Code: use the Monitor tool's ws source. It sends one JSON frame
+   `{session_id, reply, denied}` then closes; call `agent_status` afterward.
+5. Read `denied` for refused actions and why; widen `write_dir`, change the
+   mode, or do the step yourself. Follow up with `agent_run(session_id=…)`;
+   it keeps context. Omit `write_dir` and `permission_mode` on follow-ups.
+6. Review the diff before merging. Finish with `agent_session_close(session_id,
+   remove_worktree=true)`; it removes the worktree only if clean and its HEAD
+   is on a remote. `agent_models` lists models; `model` selects one for a new session.
+
 ### Deployment Geography for Use: <br>
 Global <br>
 
