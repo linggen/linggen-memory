@@ -2,8 +2,8 @@
 //!
 //! `start` spawns the foreground `serve` subcommand as a detached child and
 //! waits until the pidfile appears (or the child dies, whichever is first).
-//! `stop` reads the pidfile and sends SIGTERM, waiting for the pidfile to
-//! disappear. `status` is a pure inspection — pidfile + liveness + health
+//! `stop` reads the pidfile and sends SIGTERM, waiting for the process to
+//! exit; one still alive after [`STOP_TIMEOUT`] gets SIGKILL. `status` is a pure inspection — pidfile + liveness + health
 //! probe against the daemon's HTTP port.
 
 use crate::daemon::pidfile::{self, PidInfo};
@@ -18,6 +18,9 @@ const START_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const START_TIMEOUT: Duration = Duration::from_secs(10);
 const STOP_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const STOP_TIMEOUT: Duration = Duration::from_secs(10);
+/// After SIGKILL: the kernel ends the process at once; this only covers the
+/// moment until `kill(pid, 0)` stops seeing it.
+const KILL_WAIT: Duration = Duration::from_secs(3);
 const HEALTH_TIMEOUT: Duration = Duration::from_millis(500);
 
 /// Result of a lifecycle command — rendered as JSON to stdout.
@@ -150,7 +153,7 @@ pub async fn start(
         if Instant::now() >= deadline {
             // SIGTERM so the child runs its cleanup path (pidfile removal,
             // connection drain) — SIGKILL would leave a stale pidfile.
-            send_sigterm(child.id()).ok();
+            send_signal(child.id(), Signal::Term).ok();
             return Err(anyhow!(
                 "timed out waiting for daemon to bind ({}s)",
                 START_TIMEOUT.as_secs()
@@ -160,8 +163,22 @@ pub async fn start(
     }
 }
 
-/// SIGTERM the running daemon and wait for the pidfile to disappear.
+/// SIGTERM the running daemon and wait for it to exit; SIGKILL it if it is
+/// still alive after [`STOP_TIMEOUT`].
+///
+/// The escalation is what lets a new binary replace a daemon that hangs on
+/// its way out — ling-mem 1.9.1 and earlier could stay alive long after
+/// "daemon stopped" (see `daemon::serve::exit_now`). By then it has finished
+/// serving and dropped its pidfile, so nothing is lost by the kill.
 pub async fn stop(skill_dir: &Path) -> Result<LifecycleOutcome> {
+    stop_within(skill_dir, STOP_TIMEOUT, KILL_WAIT).await
+}
+
+async fn stop_within(
+    skill_dir: &Path,
+    term_timeout: Duration,
+    kill_wait: Duration,
+) -> Result<LifecycleOutcome> {
     let Some(info) = pidfile::read(skill_dir)? else {
         return Ok(LifecycleOutcome::NotRunning);
     };
@@ -170,24 +187,61 @@ pub async fn stop(skill_dir: &Path) -> Result<LifecycleOutcome> {
         return Ok(LifecycleOutcome::NotRunning);
     }
 
-    send_sigterm(info.pid)?;
+    send_signal(info.pid, Signal::Term)?;
+    if wait_for_exit(info.pid, term_timeout).await {
+        return Ok(stopped(skill_dir, &info));
+    }
 
-    let deadline = Instant::now() + STOP_TIMEOUT;
-    while Instant::now() < deadline {
-        if !pidfile::pid_is_alive(info.pid) {
-            pidfile::remove(skill_dir);
-            return Ok(LifecycleOutcome::Stopped {
-                previous_pid: info.pid,
-            });
+    tracing::warn!(
+        "daemon (pid {}) did not exit within {}s of SIGTERM; sending SIGKILL",
+        info.pid,
+        term_timeout.as_secs()
+    );
+    // Gone in between is the outcome we wanted, not an error.
+    if send_signal(info.pid, Signal::Kill).is_err() && pidfile::pid_is_alive(info.pid) {
+        return Err(anyhow!(
+            "daemon (pid {}) did not exit within {}s of SIGTERM, and SIGKILL was refused",
+            info.pid,
+            term_timeout.as_secs()
+        ));
+    }
+    if wait_for_exit(info.pid, kill_wait).await {
+        return Ok(stopped(skill_dir, &info));
+    }
+    Err(anyhow!(
+        "daemon (pid {}) is still alive {}s after SIGKILL",
+        info.pid,
+        kill_wait.as_secs()
+    ))
+}
+
+/// Poll until `pid` is gone or `within` has passed; true when it is gone.
+async fn wait_for_exit(pid: u32, within: Duration) -> bool {
+    let deadline = Instant::now() + within;
+    loop {
+        if !pidfile::pid_is_alive(pid) {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
         }
         tokio::time::sleep(STOP_POLL_INTERVAL).await;
     }
+}
 
-    Err(anyhow!(
-        "daemon (pid {}) did not exit within {}s of SIGTERM",
-        info.pid,
-        STOP_TIMEOUT.as_secs()
-    ))
+/// The daemon `info` names has exited. Its pidfile goes too — unless another
+/// daemon has written its own there meanwhile.
+fn stopped(skill_dir: &Path, info: &PidInfo) -> LifecycleOutcome {
+    let still_ours = pidfile::read(skill_dir)
+        .ok()
+        .flatten()
+        .map_or(false, |now| now.pid == info.pid);
+    if still_ours {
+        pidfile::remove(skill_dir);
+    }
+    LifecycleOutcome::Stopped {
+        previous_pid: info.pid,
+    }
 }
 
 /// `stop` then `start`. No-op stop when already down.
@@ -273,17 +327,26 @@ fn retire_if_stale(skill_dir: &Path, info: &PidInfo) -> Result<()> {
     ))
 }
 
+#[derive(Clone, Copy)]
+enum Signal {
+    Term,
+    Kill,
+}
+
 #[cfg(unix)]
-fn send_sigterm(pid: u32) -> Result<()> {
-    use nix::sys::signal::{self, Signal};
+fn send_signal(pid: u32, sig: Signal) -> Result<()> {
+    use nix::sys::signal;
     use nix::unistd::Pid;
     let pid = i32::try_from(pid).context("pid out of range")?;
-    signal::kill(Pid::from_raw(pid), Signal::SIGTERM)
-        .with_context(|| format!("SIGTERM to pid {pid}"))
+    let (sig, name) = match sig {
+        Signal::Term => (signal::Signal::SIGTERM, "SIGTERM"),
+        Signal::Kill => (signal::Signal::SIGKILL, "SIGKILL"),
+    };
+    signal::kill(Pid::from_raw(pid), sig).with_context(|| format!("{name} to pid {pid}"))
 }
 
 #[cfg(not(unix))]
-fn send_sigterm(_pid: u32) -> Result<()> {
+fn send_signal(_pid: u32, _sig: Signal) -> Result<()> {
     Err(anyhow!(
         "daemon stop is only implemented on Unix in this release"
     ))
@@ -347,5 +410,83 @@ mod tests {
             !pidfile::path(dir.path()).exists(),
             "stale file retired once the port is free"
         );
+    }
+
+    /// A child that ignores SIGTERM, reaped by a thread once it dies — an
+    /// unreaped child is a zombie, and `kill(pid, 0)` still finds a zombie.
+    fn term_ignoring_child() -> (u32, std::thread::JoinHandle<()>) {
+        let mut child = std::process::Command::new("sh")
+            .args(["-c", "trap '' TERM; echo ready; exec sleep 60"])
+            .stdout(Stdio::piped())
+            .spawn()
+            .expect("spawn sh");
+        let mut ready = String::new();
+        use std::io::BufRead;
+        std::io::BufReader::new(child.stdout.take().unwrap())
+            .read_line(&mut ready)
+            .unwrap();
+        assert_eq!(
+            ready.trim(),
+            "ready",
+            "trap must be set before the test signals"
+        );
+        let pid = child.id();
+        let reaper = std::thread::spawn(move || {
+            let _ = child.wait();
+        });
+        (pid, reaper)
+    }
+
+    fn free_port() -> u16 {
+        TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port()
+    }
+
+    #[tokio::test]
+    async fn stop_kills_a_daemon_that_ignores_sigterm() {
+        let dir = tempfile::tempdir().unwrap();
+        let (pid, reaper) = term_ignoring_child();
+        pidfile::write(dir.path(), &info(pid, free_port())).unwrap();
+
+        let started = Instant::now();
+        let outcome = stop_within(dir.path(), Duration::from_millis(500), KILL_WAIT)
+            .await
+            .expect("stop escalates instead of failing");
+
+        assert!(
+            matches!(outcome, LifecycleOutcome::Stopped { previous_pid } if previous_pid == pid),
+            "{outcome:?}"
+        );
+        assert!(!pidfile::pid_is_alive(pid), "SIGKILL ended it");
+        assert!(!pidfile::path(dir.path()).exists(), "pidfile removed");
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "{:?}",
+            started.elapsed()
+        );
+        reaper.join().unwrap();
+    }
+
+    #[tokio::test]
+    async fn stop_keeps_a_pidfile_another_daemon_wrote_meanwhile() {
+        let dir = tempfile::tempdir().unwrap();
+        let (pid, reaper) = term_ignoring_child();
+        pidfile::write(dir.path(), &info(pid, free_port())).unwrap();
+        let old = pidfile::read(dir.path()).unwrap().unwrap();
+        // A newer daemon took the file over before the old one was reaped.
+        pidfile::write(dir.path(), &info(std::process::id(), 1)).unwrap();
+
+        send_signal(pid, Signal::Kill).unwrap();
+        assert!(wait_for_exit(pid, KILL_WAIT).await);
+        stopped(dir.path(), &old);
+        assert_eq!(
+            pidfile::read(dir.path()).unwrap().unwrap().pid,
+            std::process::id(),
+            "the other daemon's pidfile survives"
+        );
+        reaper.join().unwrap();
     }
 }

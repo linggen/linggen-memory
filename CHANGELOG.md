@@ -19,6 +19,10 @@ first-run scan) and the hooks never run git; migration backups expire after
 
 ### Fixed
 
+- `ling-mem stop` (and `restart`, `upgrade`, install-bin.sh) sends SIGKILL
+  when the daemon is still alive 10 s after SIGTERM, so a new binary replaces
+  a 1.9.x daemon that hangs on its way out; the daemon itself drains for at
+  most 5 s, then exits at once.
 - First start on a fresh data dir creates its skill dir; a legacy host
   migrates `--local` first.
 - The console page broke on a duplicate `pollHealth`; CI now runs

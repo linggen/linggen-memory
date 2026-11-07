@@ -4548,6 +4548,7 @@ dependencies = [
  "fastembed",
  "futures",
  "lancedb",
+ "libc",
  "mime_guess",
  "nix 0.29.0",
  "once_cell",

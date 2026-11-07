@@ -275,8 +275,14 @@ restart_running_daemon() {
   host="$(bind_host_of "$pid")"
   say "restarting the ling-mem daemon on :$port (v${running:-?} → v$EXPECTED)"
   if [ "$state" != "running" ]; then
+    # An old daemon can hang on its way out after it stopped serving (1.9.1
+    # did, with a warm embedder): 10 s for SIGTERM, then SIGKILL.
     kill "$pid" 2>/dev/null || true
     for _ in 1 2 3 4 5 6 7 8 9 10; do kill -0 "$pid" 2>/dev/null || break; sleep 1; done
+    if kill -0 "$pid" 2>/dev/null; then
+      kill -KILL "$pid" 2>/dev/null || true
+      for _ in 1 2 3; do kill -0 "$pid" 2>/dev/null || break; sleep 1; done
+    fi
   fi
   "$BIN" restart --port "${port:-9528}" ${host:+--host "$host"} >/dev/null 2>&1 \
     || echo "install-bin: the ling-mem daemon did not restart on the new binary — run: ling-mem restart" >&2

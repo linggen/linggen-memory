@@ -2,7 +2,11 @@
 //! for shutdown signal, removes the pidfile, exits.
 //!
 //! `ling-mem serve` re-exec target — also what `start` spawns in the
-//! background. Blocks until SIGTERM / SIGINT.
+//! background. Blocks until SIGTERM / SIGINT, drains open requests for at
+//! most [`SHUTDOWN_GRACE`], removes the pidfile, then ends the process at
+//! once ([`exit_now`]) — `stop` gives it 10 s, and a teardown after serving
+//! (the tokio runtime joining its blocking pool, the warm Metal embedder's
+//! exit-time cleanup) once held a stopped daemon alive past that.
 //!
 //! Binds the LAN (`0.0.0.0`) by default, or loopback when the console's
 //! network setting says "this machine only"; an explicit `--host` overrides
@@ -17,10 +21,18 @@ use crate::http::state::AppState;
 use crate::memory::{MemoryStore, Recall};
 use anyhow::{Context, Result};
 use chrono::Utc;
+use std::future::IntoFuture;
 use std::net::{IpAddr, SocketAddr};
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::net::TcpListener;
+
+/// How long a stopping daemon waits for open requests to finish — well under
+/// `stop`'s 10 s, so a daemon behaving as designed is gone before `stop`
+/// escalates. Long-lived connections (an MCP host's SSE stream) never end on
+/// their own; past this they are dropped with the process.
+const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
 
 /// One change log for both tables (`memory::changes`) — what a replica pulls.
 /// A store that has never had one is seeded with every existing row, so a
@@ -157,13 +169,20 @@ pub async fn run(data_dir: &Path, skill_dir: &Path, port: u16, host: Option<IpAd
     // Connect info, because the gate's first question is where the caller is:
     // loopback is inside the fence, anything else must present a paired
     // device's token.
-    let result = axum::serve(
+    let (stopping_tx, stopping) = tokio::sync::watch::channel(false);
+    let signal = async move {
+        shutdown_signal().await;
+        let _ = stopping_tx.send(true);
+    };
+    let server = axum::serve(
         listener,
         router.into_make_service_with_connect_info::<SocketAddr>(),
     )
-    .with_graceful_shutdown(shutdown_signal())
-    .await
-    .context("http server");
+    .with_graceful_shutdown(signal)
+    .into_future();
+    let result = drain_bounded(server, stopping, SHUTDOWN_GRACE)
+        .await
+        .context("http server");
 
     // Only the file this process wrote. A daemon that lost the bind never
     // gets here; this guards the day one somehow does.
@@ -175,7 +194,71 @@ pub async fn run(data_dir: &Path, skill_dir: &Path, port: u16, host: Option<IpAd
         pidfile::remove(skill_dir);
     }
     tracing::info!("ling-mem daemon stopped");
-    result
+    exit_now(result)
+}
+
+/// Serve until the graceful shutdown completes — or until `grace` has passed
+/// since `stopping` turned true, whichever is first. Requests still open then
+/// are abandoned (the process exits right after).
+async fn drain_bounded<F>(
+    server: F,
+    mut stopping: tokio::sync::watch::Receiver<bool>,
+    grace: Duration,
+) -> std::io::Result<()>
+where
+    F: std::future::Future<Output = std::io::Result<()>>,
+{
+    tokio::pin!(server);
+    tokio::select! {
+        done = &mut server => return done,
+        // An error means the sender is gone, which only happens once the
+        // signal future has run: stopping either way.
+        _ = stopping.wait_for(|s| *s) => {}
+    }
+    match tokio::time::timeout(grace, server).await {
+        Ok(done) => done,
+        Err(_) => {
+            tracing::warn!(
+                "connections still open {}s after the stop signal; closing them",
+                grace.as_secs()
+            );
+            Ok(())
+        }
+    }
+}
+
+/// End the process now. Everything that must survive is already on disk:
+/// LanceDB commits each write before its request answers, the change log
+/// flushes per append, the pidfile is gone. What is left is teardown nobody
+/// needs — the tokio runtime waits on every running blocking task (a model
+/// load, a DNS lookup that a timed-out request left behind) and exit-time
+/// handlers release the Metal device — and that is what kept a stopped daemon
+/// alive past `stop`'s 10 s. `_exit` skips both. The error path keeps main's
+/// contract: one JSON line on stderr, status 1.
+fn exit_now(result: Result<()>) -> ! {
+    use std::io::Write;
+    let code = match result {
+        Ok(()) => 0,
+        Err(err) => {
+            let payload = serde_json::json!({
+                "error": err.to_string(),
+                "code": crate::cli::error_code(&err),
+            });
+            let mut stderr = std::io::stderr().lock();
+            let _ = serde_json::to_writer(&mut stderr, &payload);
+            let _ = stderr.write_all(b"\n");
+            1
+        }
+    };
+    let _ = std::io::stdout().flush();
+    let _ = std::io::stderr().flush();
+    #[cfg(unix)]
+    // SAFETY: `_exit` only ends the process; it touches no Rust state.
+    unsafe {
+        libc::_exit(code)
+    }
+    #[cfg(not(unix))]
+    std::process::exit(code)
 }
 
 /// Load the embedding model and run one forward pass (the first pass on
@@ -219,5 +302,35 @@ async fn shutdown_signal() {
     tokio::select! {
         _ = ctrl_c => { tracing::info!("received SIGINT") },
         _ = terminate => { tracing::info!("received SIGTERM") },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn drain_gives_up_on_a_connection_that_never_closes() {
+        let (tx, rx) = tokio::sync::watch::channel(false);
+        let never = std::future::pending::<std::io::Result<()>>();
+        tx.send(true).unwrap();
+        let started = std::time::Instant::now();
+        drain_bounded(never, rx, Duration::from_millis(200))
+            .await
+            .unwrap();
+        let took = started.elapsed();
+        assert!(
+            took >= Duration::from_millis(200) && took < Duration::from_secs(2),
+            "{took:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn drain_returns_as_soon_as_the_server_finishes() {
+        let (_tx, rx) = tokio::sync::watch::channel(false);
+        let done = async { Ok::<(), std::io::Error>(()) };
+        drain_bounded(done, rx, Duration::from_secs(60))
+            .await
+            .unwrap();
     }
 }
