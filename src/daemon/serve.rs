@@ -4,9 +4,10 @@
 //! `ling-mem serve` re-exec target — also what `start` spawns in the
 //! background. Blocks until SIGTERM / SIGINT, drains open requests for at
 //! most [`SHUTDOWN_GRACE`], removes the pidfile, then ends the process at
-//! once ([`exit_now`]) — `stop` gives it 10 s, and a teardown after serving
-//! (the tokio runtime joining its blocking pool, the warm Metal embedder's
-//! exit-time cleanup) once held a stopped daemon alive past that.
+//! once ([`exit_now`]). Its process can outlive that: in a macOS VM the
+//! kernel's teardown of a task that used Metal (the warm embedder) took over
+//! 10 s with no daemon thread left — `stop` reads a dropped pidfile plus a
+//! free port as done (`lifecycle::done_serving`).
 //!
 //! Binds the LAN (`0.0.0.0`) by default, or loopback when the console's
 //! network setting says "this machine only"; an explicit `--host` overrides
@@ -232,9 +233,9 @@ where
 /// flushes per append, the pidfile is gone. What is left is teardown nobody
 /// needs — the tokio runtime waits on every running blocking task (a model
 /// load, a DNS lookup that a timed-out request left behind) and exit-time
-/// handlers release the Metal device — and that is what kept a stopped daemon
-/// alive past `stop`'s 10 s. `_exit` skips both. The error path keeps main's
-/// contract: one JSON line on stderr, status 1.
+/// handlers release the Metal device. `_exit` skips both; the kernel's own
+/// teardown it cannot skip. The error path keeps main's contract: one JSON
+/// line on stderr, status 1.
 fn exit_now(result: Result<()>) -> ! {
     use std::io::Write;
     let code = match result {

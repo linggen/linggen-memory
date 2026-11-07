@@ -166,10 +166,10 @@ pub async fn start(
 /// SIGTERM the running daemon and wait for it to exit; SIGKILL it if it is
 /// still alive after [`STOP_TIMEOUT`].
 ///
-/// The escalation is what lets a new binary replace a daemon that hangs on
-/// its way out — ling-mem 1.9.1 and earlier could stay alive long after
-/// "daemon stopped" (see `daemon::serve::exit_now`). By then it has finished
-/// serving and dropped its pidfile, so nothing is lost by the kill.
+/// A daemon that has dropped its pidfile and port is done even while its
+/// process lingers ([`done_serving`]) — a 1.9.1 daemon in a macOS VM stayed
+/// alive over 10 s after "daemon stopped", in the kernel's exit teardown. The
+/// SIGKILL covers one that never finishes serving at all.
 pub async fn stop(skill_dir: &Path) -> Result<LifecycleOutcome> {
     stop_within(skill_dir, STOP_TIMEOUT, KILL_WAIT).await
 }
@@ -188,7 +188,11 @@ async fn stop_within(
     }
 
     send_signal(info.pid, Signal::Term)?;
-    if wait_for_exit(info.pid, term_timeout).await {
+    if wait_until(term_timeout, || {
+        !pidfile::pid_is_alive(info.pid) || done_serving(skill_dir, &info)
+    })
+    .await
+    {
         return Ok(stopped(skill_dir, &info));
     }
 
@@ -205,21 +209,38 @@ async fn stop_within(
             term_timeout.as_secs()
         ));
     }
-    if wait_for_exit(info.pid, kill_wait).await {
-        return Ok(stopped(skill_dir, &info));
+    if !wait_for_exit(info.pid, kill_wait).await {
+        // A killed process never runs its own code again; what is left is the
+        // kernel's side of the exit — in a VM, releasing the paravirtual GPU
+        // the warm embedder held took longer than this. Whatever it still
+        // holds, a start that cannot bind says so.
+        tracing::warn!(
+            "daemon (pid {}) is still exiting {}s after SIGKILL; treating it as stopped",
+            info.pid,
+            kill_wait.as_secs()
+        );
     }
-    Err(anyhow!(
-        "daemon (pid {}) is still alive {}s after SIGKILL",
-        info.pid,
-        kill_wait.as_secs()
-    ))
+    Ok(stopped(skill_dir, &info))
 }
 
-/// Poll until `pid` is gone or `within` has passed; true when it is gone.
-async fn wait_for_exit(pid: u32, within: Duration) -> bool {
+/// The daemon `info` names has finished serving: it removed its own pidfile
+/// (the last thing `serve` does) and its port is free. The process may still
+/// be exiting — on macOS in a VM, the kernel's teardown of a task that used
+/// Metal outlasted `stop`'s 10 s with no thread of the daemon left — but it
+/// answers nothing and writes nothing, so a new daemon may start.
+fn done_serving(skill_dir: &Path, info: &PidInfo) -> bool {
+    let file_still_names_it = pidfile::read(skill_dir)
+        .ok()
+        .flatten()
+        .is_some_and(|now| now.pid == info.pid);
+    !file_still_names_it && pidfile::port_is_free(info.port)
+}
+
+/// Poll `done` until it holds or `within` has passed; true when it held.
+async fn wait_until(within: Duration, mut done: impl FnMut() -> bool) -> bool {
     let deadline = Instant::now() + within;
     loop {
-        if !pidfile::pid_is_alive(pid) {
+        if done() {
             return true;
         }
         if Instant::now() >= deadline {
@@ -227,6 +248,11 @@ async fn wait_for_exit(pid: u32, within: Duration) -> bool {
         }
         tokio::time::sleep(STOP_POLL_INTERVAL).await;
     }
+}
+
+/// Poll until `pid` is gone or `within` has passed; true when it is gone.
+async fn wait_for_exit(pid: u32, within: Duration) -> bool {
+    wait_until(within, || !pidfile::pid_is_alive(pid)).await
 }
 
 /// The daemon `info` names has exited. Its pidfile goes too — unless another
@@ -487,6 +513,38 @@ mod tests {
             std::process::id(),
             "the other daemon's pidfile survives"
         );
+        reaper.join().unwrap();
+    }
+
+    #[tokio::test]
+    async fn stop_returns_once_the_daemon_dropped_its_pidfile_and_port() {
+        // The daemon finished serving (no pidfile, port free) but its process
+        // lingers — what a VM's kernel teardown of a Metal user looked like.
+        let dir = tempfile::tempdir().unwrap();
+        let (pid, reaper) = term_ignoring_child();
+        let port = free_port();
+        pidfile::write(dir.path(), &info(pid, port)).unwrap();
+        let dir_path = dir.path().to_path_buf();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            pidfile::remove(&dir_path);
+        });
+
+        let started = Instant::now();
+        let outcome = stop_within(dir.path(), Duration::from_secs(30), KILL_WAIT)
+            .await
+            .unwrap();
+        assert!(
+            matches!(outcome, LifecycleOutcome::Stopped { .. }),
+            "{outcome:?}"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "{:?}",
+            started.elapsed()
+        );
+
+        send_signal(pid, Signal::Kill).unwrap();
         reaper.join().unwrap();
     }
 }
