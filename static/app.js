@@ -348,7 +348,7 @@ async function renderCalIssues() {
   if (!box) return;
   let data;
   try {
-    data = await api('/api/memory/issues', { status: 'open' });
+    data = await api('/api/memory/issues', { status: 'open', limit: 1000 });
   } catch {
     box.hidden = true;
     return;
@@ -356,7 +356,7 @@ async function renderCalIssues() {
   const issues = data.issues || [];
   const head = `
     <div class="rq-head">
-      <div class="rq-title"><strong>Review queue</strong> · ${issues.length} open</div>
+      <div class="rq-title"><strong>Review queue</strong> · ${data.open_count ?? issues.length} open</div>
       <div class="rq-hint">solve with your agent: <code>/linggen:solve</code></div>
     </div>`;
   const rows = issues.length
