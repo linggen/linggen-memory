@@ -147,14 +147,16 @@ pub enum Command {
     /// caller (the condense mission / host agent). Requires the daemon.
     Chains(ChainsArgs),
 
-    /// Review queue — items the dream audit could not solve with
-    /// confidence (uncertain merges, stale status claims, user-voice
-    /// contradictions). Listing is read-only; solving happens in a host
-    /// agent (`/linggen:solve`). Requires the daemon.
+    /// Review queue — the leftovers the dream could not settle itself (a
+    /// user-voice row that would change, a pick between rows, evidence it
+    /// could not read); `--status all` also lists what it settled, with
+    /// its why. Listing is read-only; solving happens in a host agent
+    /// (`/linggen:solve`). Requires the daemon.
     Issues(IssuesArgs),
 
-    /// Queue one review item (the audit's holding pen). Idempotent per
-    /// (kind, row_ids) — re-queueing an unfixed suspect returns the
+    /// Queue one review item — only what needs the user; a ruling the
+    /// audit settled itself is queued and closed at once as its record.
+    /// Idempotent per (kind, row_ids) while open — re-queueing returns the
     /// existing item. Requires the daemon.
     IssueAdd(IssueAddArgs),
 
