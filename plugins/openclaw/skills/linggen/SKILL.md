@@ -575,16 +575,21 @@ Source: [github.com/linggen/linggen-memory](https://github.com/linggen/linggen-m
 Use the Linggen engine's MCP agent tools for delegated coding work:
 
 1. Create a git worktree of the repo; pass its path as `write_dir` to `agent_run`.
-   Linggen has admin there and read-only access elsewhere; it never prompts.
+   Linggen has admin there and read-only access elsewhere; beyond that it asks you.
 2. Pass your current `permission_mode`: `plan`, `default`, `acceptEdits`,
    `auto`, or `bypassPermissions`. It maps your grants, never admin on all paths.
 3. Send a self-contained brief: files, cause, tests to run, and "reply short".
    Only the final reply returns here; working steps stay in Linggen's web UI.
-4. If still running, don't poll: watch `ws://127.0.0.1:9527/api/agent/wait?session_id=…`.
-   Claude Code: use the Monitor tool's ws source. It sends one JSON frame
-   `{session_id, reply, denied}` then closes; call `agent_status` afterward.
-5. Read `denied` for refused actions and why; widen `write_dir`, change the
-   mode, or do the step yourself. Follow up with `agent_run(session_id=…)`;
+4. A long run continues in the background. Don't poll: start a background
+   watcher (e.g. Claude Code's Monitor, ws source) on the
+   `ws://127.0.0.1:9527/api/agent/wait?session_id=…` URL it returns. Frames:
+   `{"type":"permission_request","request":{id,tool,summary,level,path}}` —
+   answer each with `agent_permit` (`allow_once`, `allow_session` for that
+   path/folder in this session only, or `deny`; none in 10 min = deny); last
+   `{"type":"finished","status","reply","denied"}`, then it closes. Read the
+   reply with `agent_status` (its `pending` lists open requests).
+5. Read `denied` for refused actions and why; do the step yourself, or start
+   a new run with a wider `write_dir`. Follow up with `agent_run(session_id=…)`;
    it keeps context. Omit `write_dir` and `permission_mode` on follow-ups.
 6. Review the diff before merging. Finish with `agent_session_close(session_id,
    remove_worktree=true)`; it removes the worktree only if clean and its HEAD
