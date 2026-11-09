@@ -118,7 +118,7 @@ change when you switch agents.
 | Stamp  | `ling-mem remember-day <date> --judged N --promoted K` — mark a day judged after a remember pass |
 | Sweep  | `ling-mem sweep [--dry-run]` — the forget stage: evict judged episodic rows past TTL; never touches un-judged rows |
 | Chains | `ling-mem chains [--kind cited\|marker] [--derived-only] [--limit N] [--offset N]` — condense scan: stale same-subject chains in long-term memory (read-only; judgment is yours) |
-| Issues | `ling-mem issues [--status open\|all]` — the review queue: items a dream audit could not solve with confidence (facts only; you are the solver — see the Solve mode) |
+| Issues | `ling-mem issues [--status open\|all]` — the review queue: the leftovers a dream could not settle itself (facts only; you are the solver — see the Solve mode); `--status all` also shows what the dream settled, with its why |
 | Close issue | `ling-mem issue-resolve <id> [--outcome resolved\|dismissed] [--note "..."]` — close one review item after solving it |
 
 **Anchor relative time in every saved row** — substitute today's date in before writing (e.g. if today is 2026-07-07: "turned 3 last month" → "turned 3 in 2026-06, as of 2026-07-07"); relative words rot silently.
@@ -317,7 +317,7 @@ mode's references.
 |:---|:---|:---|
 | **Dream** | Message says `/linggen dream` (all undreamed days) or `/linggen dream <YYYY-MM-DD>` (one day). User-triggered — or wired to the host's own scheduler for a nightly pass. | `Read references/dream-flow.md` (the canonical remember/forget runbook) and `references/routing-rules.md`. |
 | **Scan** | Message says `/linggen scan <YYYY-MM-DD>` — stage that day's session logs (backfill), see the verb table. | `Read references/dream-flow.md` (its Scan section) and `references/extractor-prompt.md` (what to stage). |
-| **Solve** | Message says `/linggen solve` — drain the review queue (items a dream audit queued for the user). | The Solve runbook below; `references/routing-rules.md` for write decisions. |
+| **Solve** | Message says `/linggen solve` — drain the review queue (the rare leftovers a dream could not settle itself). | The Solve runbook below; `references/routing-rules.md` for write decisions. |
 | **Status** | Message says `/linggen status` — one glanceable block: versions + updates, store size, upkeep. | Nothing extra: the host command carries the full recipe (fetches + render); its data = `memory_dream_status` + `ling-mem status`/`stats` + engine/bridge probes. |
 | **Chat** | **Anything else** — bare `/linggen`, `/linggen list`, `/linggen search foo`, plain `"show all memory"`, free-form questions. | Body of this SKILL.md is the entry. `Read references/routing-rules.md` only when making save / dedup decisions. |
 
@@ -334,7 +334,7 @@ first.
 
 | Verb | Action |
 |:---|:---|
-| `dream` | **Remember all undreamed days, oldest first, then sweep.** Worklist via `ling-mem days --undreamed`; per day: list its episodic rows → cluster → promote durable signal to semantic → `ling-mem remember-day` stamp. Never deletes; the final `ling-mem sweep` ages out judged rows past TTL. See `references/dream-flow.md`. |
+| `dream` | **Remember all undreamed days, oldest first, then sweep.** Worklist via `ling-mem days --undreamed`; per day: list its episodic rows → cluster → promote durable signal to semantic → `ling-mem remember-day` stamp. Never deletes; the final `ling-mem sweep` ages out judged rows past TTL, then the audit settles stale long-term rows itself from evidence and queues only what needs the user. See `references/dream-flow.md`. |
 | `dream <YYYY-MM-DD>` | **Remember one day.** Same procedure, one day. |
 | `scan <YYYY-MM-DD>` | **Stage one day's session logs (backfill).** Run `scripts/scan.sh <date>`; `list --day <date>` the day's existing rows and skip any scanned session whose id is already among their `source_session`s (that's what makes re-scanning safe); encode the remaining keepers into episodic with the day's `occurred_at`; stamp with `ling-mem harvest-day <date>` (scan stamp only — the day stays undreamed and dream judges it later). Nothing new: still stamp, report `CLEAN`. |
 | `add "<content>" [--type ...] [--tier ...] [--scope <dir>] [--summary "..."]` | Insert a new memory row. Omitted tier = episodic. |
@@ -347,12 +347,14 @@ first.
 
 ### Solve runbook — `/linggen solve`
 
-The review queue holds what a dream audit could NOT solve with
-confidence: uncertain merges (`chain`), status claims likely overtaken
-by the world (`stale-status`), conflicts needing the user's pick
-(`contradiction`), digest clusters of doubtful subject coherence
-(`subject`). Scope and index fixes are not queued — the dream applies
-them itself. The daemon only bookkeeps; **you are the solver**,
+A dream settles review items itself from evidence and queues only
+what needs the user — so the open queue is the rare leftover: a
+user-voice row that would change, rows the user must pick between
+(`contradiction`), or a `chain` / `stale-status` / `subject` item whose
+evidence the dream could not read (the Linggen nightly mission is
+memory-only — no code or git). Items the dream settled are already
+closed, with its why. Scope and index fixes are not queued — the dream
+applies them itself. The daemon only bookkeeps; **you are the solver**,
 with this session's model, tools, and user.
 
 1. **Back up, then list.** `ling-mem export` first (one snapshot per
@@ -445,8 +447,8 @@ abandoned), search the subject first and write the new status
 replacing the prior status row(s) on that subject (`replace_ids` over
 MCP; `add --replace <id>` via CLI) — never leave "in progress" beside its
 own outcome. Own-notes only; a user-voice predecessor follows the
-merge law. The dream audit's review queue is the backstop for what
-slips through — write-time supersede is the real fix.
+merge law. The dream audit settles what slips through (queueing only
+what needs the user) — write-time supersede is the real fix.
 
 | You see | Action |
 |:---|:---|

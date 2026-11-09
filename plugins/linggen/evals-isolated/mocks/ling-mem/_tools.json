@@ -370,7 +370,7 @@
       "name": "memory_sweep"
     },
     {
-      "description": "Review queue — items the dream audit could not solve with confidence (uncertain merges, stale status claims, user-voice contradictions, doubtful digest clusters). Returns the facts only; YOU are the solver: solve each item yourself first — gather evidence (full rows, git history, code, docs) until it settles the question — and write the fix via memory_add + replace_ids, then close the item with memory_issue_resolve. Ask the user only when evidence cannot settle it or a user-voice row is involved: ONE item at a time, phrased as a simple fact question in plain words with your recommendation — no row ids, commit hashes, or cluster jargon.",
+      "description": "Review queue — the leftovers the dream could not settle itself: a user-voice row that would change, rows the user must pick between, or evidence the dream could not read (status=resolved/dismissed lists what the dream settled, with its why). Returns the facts only; YOU are the solver: solve each item yourself first — gather evidence (full rows, git history, code, docs) until it settles the question — and write the fix via memory_add + replace_ids, then close the item with memory_issue_resolve. Ask the user only when evidence cannot settle it or a user-voice row is involved: ONE item at a time, phrased as a simple fact question in plain words with your recommendation — no row ids, commit hashes, or cluster jargon.",
       "inputSchema": {
         "properties": {
           "limit": {
@@ -393,7 +393,7 @@
       "name": "memory_issues"
     },
     {
-      "description": "Queue one review-queue item the audit could not solve with confidence. Idempotent per (kind, row_ids) — the nightly audit re-detects the same suspects until they are fixed, and re-queuing returns the existing item rather than growing the list. Prefer solving it now: queue only what genuinely needs the user, or evidence this pass cannot gather.",
+      "description": "Queue one review item. Settle it yourself first from evidence (full rows, a newer row on the subject, git/code/docs when you have them); queue an open item only when a from=user row would change, the user must pick between rows, or the evidence is out of reach here. A ruling you settled yourself is recorded by queuing it and closing it at once with memory_issue_resolve — the closed item is the record and stops the scans re-serving those rows. Idempotent per (kind, row_ids) while open: re-queuing returns the existing item. The note is one plain-word question with your recommendation — it may reach the user as is.",
       "inputSchema": {
         "properties": {
           "kind": {

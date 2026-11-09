@@ -51,8 +51,12 @@ never write them.
 - **Status lines, not prose:** `DAY <date> rows=<n>` → `PROMOTE <id>
   "<gist>"` per promotion (`MERGE <new-id> replaces=<k> "<gist>"` per
   derived merge) → `DAY <date> done judged=<n> promoted=<k>` →
-  `SWEEP removed=<n>` → `FIX <id> <field>=<new> (was <old>) "<why>"`
-  per scope/index/summary fix → one final totals sentence. Never print a
+  `SWEEP removed=<n>` → `SETTLE <issue-id> [<kind>] merged|kept "<why>"`
+  per item the audit settled itself → `QUEUE <issue-id> [<kind>]
+  "<question>"` per item left for the user → `FIX <id> <field>=<new>
+  (was <old>) "<why>"` per scope/index/summary fix → one final totals
+  sentence (settled and queued counts included). These lines are the
+  run's record of every change it made on its own. Never print a
   status line for a call you didn't make.
 
 ## Before any dream — where it runs
@@ -187,66 +191,76 @@ someone remembers it. Safe to call anytime; `--dry-run` previews.
 
 ## Audit (after the sweep, clean-worklist runs only)
 
-Confidence decides what happens to long-term staleness: solve what you
-can prove, queue the rest for the user. Two capped passes:
+**Settle it yourself; queue only what needs the user.** Every item the
+audit would queue, it first tries to settle the way solve does —
+evidence first, then the fix. Main run only: no Task or subagents,
+this run is the only writer. Three capped passes:
 
-1. **Condense cited chains** —
-   `ling-mem chains --kind cited --derived-only --limit 10`.
+1. **Condense cited chains** — `{"verb":"chains","kind":"cited","limit":10,"derived_only":true}`
+   (CLI: `ling-mem chains --kind cited --derived-only --limit 10`).
    Pre-confirmed id-citation chains of your own notes: collapse each
-   into ONE current-truth row (`replace_ids` over MCP; CLI: `--replace` on add). See `references/condense-flow.md`
-   for drafting rules.
-2. **Markers — merge the provable, queue the rest** —
-   `ling-mem chains --kind marker --limit 5` (no `--derived-only`:
-   user-voice candidates still need queueing). The daemon excludes
-   rows a review issue already names (`queued_skipped` reports how
-   many), so every candidate is fresh. Per candidate, in order:
-   - **MERGE on the completion bar** — every clause required: row AND
-     neighbor are agent notes (`from=derived`, `tier=semantic`); the
-     neighbor is strictly newer; same subject (the same work, not
-     merely the same project); and it asserts completion of the
-     marked work (SHIPPED / FIXED / DONE / VERIFIED /
-     committed-and-pushed). The store already holds the answer —
-     collapse per `references/condense-flow.md` drafting rules,
-     `replace_ids` = the marker row + every qualifying neighbor
-     (`replace_ids` over MCP; CLI: `--replace` on add). In doubt on ANY clause (partial completion, subject
-     drift, a user-voice row in the cluster) the bar is NOT met —
-     queue instead. A bad queue wastes a click; a bad merge loses a
-     row.
+   into ONE current-truth row via `replace_ids`. See
+   `references/condense-flow.md` for drafting rules.
+2. **Markers** — `{"verb":"chains","kind":"marker","limit":5}` (no
+   `derived_only`: user-voice candidates still need judging). The
+   daemon excludes rows any review issue names, open or closed
+   (`queued_skipped` reports how many). Per candidate, in order:
+   - **MERGE on the completion bar** — row AND neighbor are agent
+     notes (`from=derived`, `tier=semantic`); the neighbor is strictly
+     newer, the same subject (the same work, not merely the same
+     project), and asserts the marked work done (SHIPPED / FIXED /
+     DONE / VERIFIED / committed-and-pushed). Collapse per
+     `references/condense-flow.md`, `replace_ids` = the marker row +
+     every qualifying neighbor. Any clause in doubt → the next lane.
    - Skip rows younger than ~14 days (write-time supersede gets
      first chance).
-   - Otherwise queue via
-     `ling-mem issue-add --kind <k> --row <id> [--row <id>] "<note>"` —
-     `chain` for an uncertain merge (note: subject + both gists),
-     `stale-status` for a provisional claim with no completing
-     neighbor (note: the claim + "verify against git/files at solve
-     time"), `contradiction` when user-voice rows disagree. `already
-     queued` is success — the daemon dedups per (kind, row_ids).
-     Write every note in plain words — it is the solver's whole
-     starting context and may become the user's question.
+   - **Settle from evidence.** `memory_get` each row in full,
+     `memory_search` the subject for a row that completes, overtakes
+     or contradicts it (any tier — recent episodic counts), and read
+     git history since the row's date, code and docs when this host
+     has those tools (Claude Code / Codex do; the Linggen nightly
+     mission is memory-only). Settled, and every row that would
+     change is `from=derived`:
+     - a change is due → ONE `memory_add` + `replace_ids` writing
+       current truth;
+     - nothing to change (still true, keep separate) → write nothing.
+
+     Record it either way: `memory_issue_add` (the kind, the row ids,
+     note = what you did + why, one plain line), then at once
+     `memory_issue_resolve` that id — `resolved` for a change,
+     `dismissed` for keep-as-is — same note. The closed item is the
+     record, and it stops the scan re-serving the rows.
+   - **Queue only when** a `from=user` row would change (needs the
+     user's consent), rows disagree and the user must pick
+     (`contradiction`), or the evidence is out of reach on this host
+     (permission declined, outside your grants, project not on this
+     machine, no tool to check). `memory_issue_add {"kind":"<k>","row_ids":[...],"note":"..."}`
+     (CLI: `ling-mem issue-add --kind <k> --row <id> "<note>"`). The
+     note is ONE plain-word question with your recommendation — it
+     may become the user's question as is. A deduped response
+     ("already queued") is success.
+
+   Never pass `user_directed:true` in a dream.
 
 3. **Digest the quiet** —
-   `ling-mem chains --kind subject --derived-only --limit 5`. The
-   daemon serves only QUIET clusters (newest member >30 days), only
-   your own notes, never rows a prior subject ruling covers. Per
-   cluster, exactly one of:
-   - **DIGEST** — confident the members (or a coherent 3+ subset)
-     share ONE subject: one digest row per the condense drafting
-     rules — `ling-mem add ... --tier semantic --replace <id>` per
-     member of the coherent subset only (a digest is known by the rows
-     whose `superseded_by` points at it — no tag); outliers untouched. Members
-     are archived, not deleted — a wrong digest is an unpack, which
-     is why this runs unattended.
-   - **QUEUE** — subject coherence doubtful:
-     `ling-mem issue-add --kind subject --row <id> [--row <id> …]
-     "<subject question + a gist per member>"` listing ALL member
-     ids (that is what stops the cluster re-forming around a
-     neighboring seed). The user rules in solve; keep-separate
-     becomes a permanent exclusion.
+   `{"verb":"chains","kind":"subject","limit":5,"derived_only":true}`
+   (CLI: `ling-mem chains --kind subject --derived-only --limit 5`).
+   The daemon serves only QUIET clusters (newest member >30 days),
+   only your own notes, never rows a prior subject ruling covers.
+   Read the members in full, then per cluster exactly one of:
+   - **DIGEST** — the members (or a coherent 3+ subset) share ONE
+     subject: one digest row per the condense drafting rules — `add`
+     with `"tier":"semantic"` + `replace_ids` = the coherent subset
+     only; outliers untouched. Members are archived, not deleted.
+   - **SETTLE kept** — clearly different stories: `issue-add --kind
+     subject` listing ALL member ids, note = "separate — <why>", then
+     resolve it `dismissed` at once. The dismissal is the ruling; the
+     cluster never re-forms.
+   - **QUEUE** — only when you genuinely cannot tell from the full
+     members: `issue-add --kind subject` listing ALL member ids, note
+     = one plain question + your guess.
 
-   Never merge below a bar you can defend, and never a marker
-   candidate below the completion bar — doubt always queues; solving
-   queued items is `/linggen solve` — the solver works evidence-first
-   and asks the user only when evidence cannot settle it.
+What stays open is the rare leftover for the attended `/linggen:solve`.
 
 ## Scope and index lane
 
@@ -278,4 +292,6 @@ No PageUpdate is needed: the memory page watches the tool stream and
 repaints tier counts + the calendar from the daemon's `days` rollup
 after your `Memory_write` calls land. End with the status lines and a
 one-line totals sentence — e.g. *"Remembered 2 days: 5 promoted, 31
-judged; sweep evicted 12."*
+judged; sweep evicted 12; audit settled 4, queued 1."* The closed
+review items (`memory_issues {"status":"resolved"}` / `"dismissed"`)
+keep each settled ruling with its why.
