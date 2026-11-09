@@ -364,12 +364,17 @@ with this session's model, tools, and user.
    "continue?" — only the final report summarizes. If the context gets
    heavy, finish the current item, report the counts and how many
    remain, and say the next `/linggen solve` continues from there.
+   **Main chat only:** solve never uses Task or subagents. This run
+   gathers every item's evidence itself (`memory_get`, Read, git via
+   Bash) and is the only writer (`memory_add`, `memory_issue_resolve`).
 2. **Per item, gather evidence at solve time — solve it yourself
    first.** Fetch the rows (`ling-mem get <row_id>`), then read
    whatever settles the question: git history
    (`git log --oneline --since=<row date>` in the named repo), the
    code, docs, files. The row was written before the world moved;
-   your evidence decides what's true now. Asking the user is the
+   your evidence decides what's true now. If this session lacks a
+   tool to check something, leave that item open with the reason and
+   include it in the end-of-run question. Asking the user is the
    last resort, not a step. **Evidence you can't read** — a
    permission prompt was declined, or the path is outside your
    grants: don't ask again and don't try it with another tool. Leave
