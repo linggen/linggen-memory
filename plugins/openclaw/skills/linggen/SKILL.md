@@ -358,6 +358,12 @@ with this session's model, tools, and user.
 1. **Back up, then list.** `ling-mem export` first (one snapshot per
    solve session), then `ling-mem issues --format json` (or the
    `memory_issues` MCP tool). Empty → say so, done.
+   **Work the whole queue in this run.** Every item ends solved,
+   dismissed, or left open with its reason. Go item by item without
+   pausing: don't stop early to report partial progress or ask
+   "continue?" — only the final report summarizes. If the context gets
+   heavy, finish the current item, report the counts and how many
+   remain, and say the next `/linggen solve` continues from there.
 2. **Per item, gather evidence at solve time — solve it yourself
    first.** Fetch the rows (`ling-mem get <row_id>`), then read
    whatever settles the question: git history
@@ -391,8 +397,10 @@ with this session's model, tools, and user.
 5. **Close as you go.** After each item:
    `ling-mem issue-resolve <id> --outcome resolved --note "<what you did>"`
    (or `memory_issue_resolve`). Not worth fixing → `--outcome dismissed`.
-6. **Report one line per item** — `SOLVED <id> <what changed>` /
-   `DISMISSED <id> <why>` / `SKIPPED <id> needs <dir>` — then a closing count.
+6. **Report once, at the end** — one line per item: `SOLVED <id> <what
+   changed>` / `DISMISSED <id> <why>` / `SKIPPED <id> needs <dir>` — then
+   the counts (solved / dismissed / left open) and the one plain question
+   for the items whose evidence you couldn't read.
 
 ### Chat-mode rules
 
