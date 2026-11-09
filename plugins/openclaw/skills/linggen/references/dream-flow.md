@@ -216,11 +216,19 @@ this run is the only writer. Three capped passes:
      first chance).
    - **Settle from evidence.** `memory_get` each row in full,
      `memory_search` the subject for a row that completes, overtakes
-     or contradicts it (any tier — recent episodic counts), and read
-     git history since the row's date, code and docs when this host
-     has those tools (Claude Code / Codex do; the Linggen nightly
-     mission is memory-only). Settled, and every row that would
-     change is `from=derived`:
+     or contradicts it (any tier — recent episodic counts). When the
+     claim names a project (the row's `scope` is its directory;
+     "proposal pending" → that repo's docs), check it there —
+     **look only**: Read files, `grep -rn` / `rg` / `cat` by absolute
+     path, and — where this host may run git — `git log` / `show` /
+     `diff` / `blame` in that repo. Never change a file or repo state
+     (no writes, redirects, commit / checkout / fetch / pull). On
+     Linggen the dream mission holds READ over the home directory:
+     the engine refuses any write, and git history of a project is
+     out of reach there (`cd` and `git -C` classify above read), so a
+     git-only claim queues. A refused call or a project not on this
+     machine = out of reach.
+     Settled, and every row that would change is `from=derived`:
      - a change is due → ONE `memory_add` + `replace_ids` writing
        current truth;
      - nothing to change (still true, keep separate) → write nothing.
