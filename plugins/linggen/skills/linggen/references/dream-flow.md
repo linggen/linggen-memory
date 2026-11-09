@@ -220,14 +220,13 @@ this run is the only writer. Three capped passes:
      claim names a project (the row's `scope` is its directory;
      "proposal pending" → that repo's docs), check it there —
      **look only**: Read files, `grep -rn` / `rg` / `cat` by absolute
-     path, and — where this host may run git — `git log` / `show` /
-     `diff` / `blame` in that repo. Never change a file or repo state
-     (no writes, redirects, commit / checkout / fetch / pull). On
-     Linggen the dream mission holds READ over the home directory:
-     the engine refuses any write, and git history of a project is
-     out of reach there (`cd` and `git -C` classify above read), so a
-     git-only claim queues. A refused call or a project not on this
-     machine = out of reach.
+     path, and git history with `git -C <dir>` `log` / `show` /
+     `diff` / `blame` / `grep`. Never change a file or repo state (no
+     writes, redirects, commit / checkout / fetch / pull). On Linggen
+     the dream mission holds READ over the home directory, so the
+     engine refuses any write — and never `cd` there: it moves the
+     run's directory, which later writes are filed by. A refused call
+     or a project not on this machine = out of reach.
      Settled, and every row that would change is `from=derived`:
      - a change is due → ONE `memory_add` + `replace_ids` writing
        current truth;

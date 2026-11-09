@@ -351,9 +351,8 @@ A dream settles review items itself from evidence and queues only
 what needs the user — so the open queue is the rare leftover: a
 user-voice row that would change, rows the user must pick between
 (`contradiction`), or a `chain` / `stale-status` / `subject` item whose
-evidence the dream could not read (refused, a project not on that
-machine, or — on the Linggen mission, which reads files but not git —
-a claim only git history settles). Items the dream settled are already
+evidence the dream could not read (refused, or a project not on that
+machine — the dream looks at code, docs and git history read-only). Items the dream settled are already
 closed, with its why. Scope and index fixes are not queued — the dream
 applies them itself. The daemon only bookkeeps; **you are the solver**,
 with this session's model, tools, and user.
