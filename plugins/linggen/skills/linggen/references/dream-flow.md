@@ -232,6 +232,10 @@ this run is the only writer. Three capped passes:
      - a change is due → ONE `memory_add` + `replace_ids` writing
        current truth;
      - nothing to change (still true, keep separate) → write nothing.
+       No newer row is not evidence a status still holds: "still
+       true" on a status claim needs a file, doc or row showing it
+       pending now — otherwise it is out of reach: queue it (a kept
+       ruling takes the rows out of every later scan).
 
      Record it either way: `memory_issue_add` (the kind, the row ids,
      note = what you did + why, one plain line), then at once
