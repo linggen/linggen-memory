@@ -77,11 +77,11 @@ hit_count="$(printf '%s\n' "$hits" | grep -c .)"
 [ -n "$hits" ] && printf '%s\n' "$hits"
 
 # Memory-upkeep nudge — undreamed days + open review items, from ONE
-# `memory_days` call. Cached (default 30 min) so the recall path stays
-# fast; upkeep state moves slowly. Thresholds: ≥2 undreamed days (the
+# `memory_days` call. Cached (default 5 min, so a solve or dream shows within minutes) so the recall path stays
+# fast. Thresholds: ≥2 undreamed days (the
 # engine's own 3am cron usually covers yesterday; nagging about one day
 # is noise) and ≥1 open review item.
-upkeep_ttl_min="${LING_MEM_UPKEEP_CACHE_MIN:-30}"
+upkeep_ttl_min="${LING_MEM_UPKEEP_CACHE_MIN:-5}"
 upkeep_cache="${TMPDIR:-/tmp}/ling-mem-upkeep-$(id -u)"
 upkeep=""
 if [ -f "$upkeep_cache" ] && [ -n "$(find "$upkeep_cache" -mmin "-$upkeep_ttl_min" 2>/dev/null)" ]; then
