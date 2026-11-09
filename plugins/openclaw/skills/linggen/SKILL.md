@@ -364,7 +364,12 @@ with this session's model, tools, and user.
    (`git log --oneline --since=<row date>` in the named repo), the
    code, docs, files. The row was written before the world moved;
    your evidence decides what's true now. Asking the user is the
-   last resort, not a step.
+   last resort, not a step. **Evidence you can't read** — a
+   permission prompt was declined, or the path is outside your
+   grants: don't ask again and don't try it with another tool. Leave
+   that item open, move on, and at the end ask the user ONE plain
+   question covering all of them (e.g. "The <project> items — want me
+   to check them?"). On a yes, go read.
 3. **Apply the confidence rule.** Evidence settles it AND every
    affected row is your own note (`from=derived`) → solve directly, no
    ask: one `memory_add` with `replace_ids` (CLI: `add --replace <id>`)
@@ -387,7 +392,7 @@ with this session's model, tools, and user.
    `ling-mem issue-resolve <id> --outcome resolved --note "<what you did>"`
    (or `memory_issue_resolve`). Not worth fixing → `--outcome dismissed`.
 6. **Report one line per item** — `SOLVED <id> <what changed>` /
-   `DISMISSED <id> <why>` — then a closing count.
+   `DISMISSED <id> <why>` / `SKIPPED <id> needs <dir>` — then a closing count.
 
 ### Chat-mode rules
 
