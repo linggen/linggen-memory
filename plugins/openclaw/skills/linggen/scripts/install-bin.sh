@@ -226,12 +226,68 @@ if [ "$actual" != "$expected" ]; then
 fi
 say "verified SHA-256"
 
-# Replace any legacy symlink (older plugins symlinked ~/.local/bin/ling-mem to
-# a per-plugin data-dir copy) with a real file, so tar doesn't write through it.
-rm -f "$BIN"
-tar -xzf "$TMP/$ASSET" -C "$DEST" ling-mem
-chmod +x "$BIN"
+# A fresh inode renamed into place: writing over the old file (or a running
+# daemon's binary) keeps macOS's cached code signature for that inode and the
+# new binary is killed on launch, silently. The rename also replaces a legacy
+# symlink (older plugins linked ~/.local/bin/ling-mem to a per-plugin copy)
+# rather than writing through it.
+tar -xzf "$TMP/$ASSET" -C "$TMP" ling-mem
+STAGED="$DEST/.ling-mem.new.$$"
+cp "$TMP/ling-mem" "$STAGED" && chmod +x "$STAGED" && mv -f "$STAGED" "$BIN" \
+  || { rm -f "$STAGED"; echo "install-bin: could not install $BIN" >&2; exit 1; }
 say "installed $BIN"
+
+# A daemon already serving keeps running the old binary until restarted.
+# Restart it on the new one the way the plugin's SessionStart hook does
+# (`ling-mem restart`, same port and bind address) — only when it is older, so
+# a daemon another host already moved forward is never taken back.
+json_field() { # key — the first "key": value in the JSON on stdin (no jq on a fresh Mac)
+  { tr -d '\n' | grep -oE "\"$1\"[[:space:]]*:[[:space:]]*(\"[^\"]*\"|[0-9]+)" | head -n1 \
+    | sed -E 's/^"[^"]*"[[:space:]]*:[[:space:]]*"?([^"]*)"?$/\1/'; } || true
+}
+older_than() { [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -n1)" = "$1" ]; }
+bind_host_of() { # pid → the --host it was started with (none: the saved setting binds)
+  { ps -o args= -p "$1" 2>/dev/null | sed -nE 's/.*--host[ =]([^ ]+).*/\1/p' | head -n1; } || true
+}
+listener_pid() { # port → pid listening there (never a client of it)
+  command -v lsof >/dev/null 2>&1 || return 0
+  { lsof -nP -ti "tcp:$1" -sTCP:LISTEN 2>/dev/null | head -n1; } || true
+}
+
+restart_running_daemon() {
+  local st state running port pid host
+  st="$("$BIN" status --format json 2>/dev/null || true)"
+  state="$(printf '%s' "$st" | json_field state)"
+  if [ "$state" = "running" ]; then
+    running="$(printf '%s' "$st" | json_field version)"
+    port="$(printf '%s' "$st" | json_field port)"
+    pid="$(printf '%s' "$st" | json_field pid)"
+  else
+    # No live pidfile, yet something may serve the port: an older ling-mem
+    # started some other way. Only a ling-mem listener is ours to restart.
+    port="${LING_MEM_PORT:-9528}"
+    pid="$(listener_pid "$port")"
+    [ -n "$pid" ] || return 0
+    case "$(ps -o args= -p "$pid" 2>/dev/null || true)" in *ling-mem*) ;; *) return 0 ;; esac
+    running="$(curl -fsS -m 3 "http://127.0.0.1:$port/api/health" 2>/dev/null | json_field version || true)"
+  fi
+  [ -n "$running" ] && ! older_than "$running" "$EXPECTED" && return 0
+  host="$(bind_host_of "$pid")"
+  say "restarting the ling-mem daemon on :$port (v${running:-?} → v$EXPECTED)"
+  if [ "$state" != "running" ]; then
+    # An old daemon can hang on its way out after it stopped serving (1.9.1
+    # did, with a warm embedder): 10 s for SIGTERM, then SIGKILL.
+    kill "$pid" 2>/dev/null || true
+    for _ in 1 2 3 4 5 6 7 8 9 10; do kill -0 "$pid" 2>/dev/null || break; sleep 1; done
+    if kill -0 "$pid" 2>/dev/null; then
+      kill -KILL "$pid" 2>/dev/null || true
+      for _ in 1 2 3; do kill -0 "$pid" 2>/dev/null || break; sleep 1; done
+    fi
+  fi
+  "$BIN" restart --port "${port:-9528}" ${host:+--host "$host"} >/dev/null 2>&1 \
+    || echo "install-bin: the ling-mem daemon did not restart on the new binary — run: ling-mem restart" >&2
+}
+restart_running_daemon
 
 # Install-source marker. `ling-mem` reads this on its first launch and reports
 # `via` once, so we learn which door a machine came through. This script is the

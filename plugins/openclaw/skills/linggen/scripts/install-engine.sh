@@ -48,6 +48,14 @@ if [ -n "${LINGGEN_AGENT:-}" ]; then
   export LING_MEM_AGENT
 fi
 
+# Every download is checked against its published SHA-256 before install;
+# a missing or mismatched one aborts. LINGGEN_RELEASE_BASE=<url> replaces
+# GitHub and linggen.dev/dl — the release gate's local copy of a draft, laid
+# out <url>/<owner>/<repo>/<asset>. ling's SHA-256 then comes from that
+# manifest.json; install-bin.sh (ling-mem) honours the same variable.
+RELEASE_BASE="${LINGGEN_RELEASE_BASE:-}"
+RELEASE_BASE="${RELEASE_BASE%/}"
+
 LOCAL_PATH=""
 VERSION_ARG=""
 
@@ -61,9 +69,11 @@ Options:
 
 Environment:
   LING_MEM_VERSION   ling-mem version spec — exact tag or range (default: ${LING_MEM_PIN_DEFAULT}).
+  LINGGEN_RELEASE_BASE  release mirror replacing GitHub (<url>/<owner>/<repo>/<asset>).
 
 Installs the 'ling' CLI binary (Linggen AI coding agent) plus the
-pinned 'ling-mem' memory backend, both fetched from GitHub releases.
+pinned 'ling-mem' memory backend, both fetched from GitHub releases
+and checked against their published SHA-256.
 EOF
 }
 
@@ -124,9 +134,42 @@ install_binary() {
     return 1
   fi
 
-  cp "$binpath" "$dest_dir/"
-  chmod +x "$dest_dir/$binary_name"
+  # A fresh inode, renamed into place: `cp` over an existing (or running)
+  # binary rewrites its inode, and macOS keeps the old code signature cached
+  # for it — the new binary is then killed on launch, silently.
+  local staged="$dest_dir/.$binary_name.new.$$"
+  cp "$binpath" "$staged" && chmod +x "$staged" && mv -f "$staged" "$dest_dir/$binary_name" \
+    || { rm -f "$staged"; rm -rf "$tmpdir"; echo "could not install $binary_name into $dest_dir" >&2; return 1; }
   rm -rf "$tmpdir"
+}
+
+# A running engine keeps the old binary until it restarts. Restart each engine
+# daemon this install just replaced — the `ling --web …` that bare `ling`
+# spawns, at this exact path — with its own arguments and working directory,
+# the way bare `ling` launched it (no browser this time). An engine at any
+# other path (Linggen.app carries its own) is left alone.
+restart_engine_daemon() {
+  local bin="$1" pid args cwd port i
+  command -v pgrep >/dev/null 2>&1 || return 0
+  for pid in $(pgrep -f -- "$bin --web" 2>/dev/null || true); do
+    args="$(ps -o args= -p "$pid" 2>/dev/null || true)"
+    case "$args" in "$bin --web"*) ;; *) continue ;; esac
+    port="$(printf '%s' "$args" | sed -nE 's/.*--port[ =]([0-9]+).*/\1/p')"
+    port="${port:-9527}"
+    cwd="$(lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -n1 || true)"
+    echo "Restarting the running Linggen engine (PID $pid, port $port) on the new binary..."
+    kill -TERM "$pid" 2>/dev/null || true
+    for i in 1 2 3 4 5 6 7 8 9 10; do kill -0 "$pid" 2>/dev/null || break; sleep 1; done
+    kill -0 "$pid" 2>/dev/null && kill -KILL "$pid" 2>/dev/null || true
+    mkdir -p "$HOME/.linggen"
+    # shellcheck disable=SC2086 # the daemon's own argv, split as ps printed it
+    (cd "${cwd:-$HOME}" 2>/dev/null || cd "$HOME"; nohup $args >"$HOME/.linggen/ling.log" 2>&1 </dev/null &)
+    for i in $(seq 1 30); do
+      curl -fsS -m 2 "http://127.0.0.1:${port}/api/health" >/dev/null 2>&1 && { echo "   Engine is back on port $port."; break; }
+      sleep 1
+    done
+  done
+  return 0
 }
 
 # GitHub is blocked or flaky in some regions (notably China); linggen.dev
@@ -148,6 +191,10 @@ mirror_url() {
 # curl with mirror fallback: try GitHub, then the linggen.dev mirror.
 fetch_url() {
   local url="$1" dest="$2" mirror
+  if [ -n "$RELEASE_BASE" ]; then
+    curl -fsSL "$url" -o "$dest"
+    return
+  fi
   curl -fsSL "$url" -o "$dest" && return 0
   mirror="$(mirror_url "$url")"
   if [ -n "$mirror" ]; then
@@ -170,6 +217,69 @@ download_tarball() {
   fi
 }
 
+# The sha256 a manifest.json (on stdin) lists for an asset (e.g.
+# ling-macos-aarch64). Plain text tools only — no jq on a fresh Mac.
+manifest_asset_sha256() {
+  local asset="$1"
+  tr -d ' \n\r\t' | tr '}' '\n' \
+    | grep "\"name\":\"${asset}\"" \
+    | grep -oE '"sha256":"[0-9a-fA-F]{64}"' \
+    | cut -d'"' -f4 | head -n1 || true
+}
+
+# The sha256 GitHub records for a release asset — the "digest" beside its
+# "name" in release JSON on stdin (e.g. ling-macos-aarch64.tar.gz).
+release_json_sha256() {
+  local file="$1"
+  tr -d ' \n\r\t' | tr ',{' '\n\n' \
+    | awk -v want="\"name\":\"${file}\"" '
+        /^"name":/ { hit = ($0 == want); next }
+        hit && /^"digest":"sha256:/ { print; exit }' \
+    | grep -oE '[0-9a-fA-F]{64}' | head -n1 || true
+}
+
+# ling's published sha256 on the default path: the release's manifest.json,
+# else GitHub's per-asset digest (manifests before 1.8.3 carry no sha256).
+# An empty tag means the /latest/ release. Either may come via the mirror —
+# the hash is checked against the tarball all the same.
+ling_release_sha256() {
+  local tag="$1" slug="$2" manifest_url api_url tmp sha=""
+  if [ -n "$tag" ]; then
+    manifest_url="https://github.com/linggen/linggen/releases/download/${tag}/manifest.json"
+    api_url="https://api.github.com/repos/linggen/linggen/releases/tags/${tag}"
+  else
+    manifest_url="https://github.com/linggen/linggen/releases/latest/download/manifest.json"
+    api_url="https://api.github.com/repos/linggen/linggen/releases/latest"
+  fi
+  tmp="$(mktemp)"
+  if fetch_url "$manifest_url" "$tmp" 2>/dev/null; then
+    sha="$(manifest_asset_sha256 "ling-${slug}" < "$tmp")"
+  fi
+  if [ -z "$sha" ] && fetch_url "$api_url" "$tmp" 2>/dev/null; then
+    sha="$(release_json_sha256 "ling-${slug}.tar.gz" < "$tmp")"
+  fi
+  rm -f "$tmp"
+  echo "$sha"
+}
+
+verify_sha256() {
+  local file="$1" expected="$2" label="${3:-$(basename "$1")}" actual
+  if [ -z "$expected" ]; then
+    echo "No published sha256 for ${label} — refusing to install." >&2
+    return 1
+  fi
+  if command -v shasum >/dev/null 2>&1; then
+    actual="$(shasum -a 256 "$file" | awk '{print $1}')"
+  else
+    actual="$(sha256sum "$file" | awk '{print $1}')"
+  fi
+  if [ "$(echo "$actual" | tr 'A-F' 'a-f')" != "$(echo "$expected" | tr 'A-F' 'a-f')" ]; then
+    echo "SHA-256 mismatch for ${label}: expected $expected, got $actual — refusing to install." >&2
+    return 1
+  fi
+  echo "Verified SHA-256"
+}
+
 resolve_latest_tag() {
   local repo="$1"
   local tag body
@@ -180,21 +290,13 @@ resolve_latest_tag() {
   echo "$tag"
 }
 
+# An empty tag means the /latest/download/ release.
 resolve_download_url() {
-  local repo="$1" binary="$2" slug="$3" version="$4"
-
-  if [ "$version" = "latest" ]; then
-    local tag
-    tag=$(resolve_latest_tag "$repo")
-    if [ -n "$tag" ]; then
-      echo "   Latest ${binary} version: ${tag}" >&2
-      echo "https://github.com/${repo}/releases/download/${tag}/${binary}-${slug}.tar.gz"
-    else
-      echo "   Falling back to /latest/download/ for ${binary}" >&2
-      echo "https://github.com/${repo}/releases/latest/download/${binary}-${slug}.tar.gz"
-    fi
+  local repo="$1" binary="$2" slug="$3" tag="$4"
+  if [ -n "$tag" ]; then
+    echo "https://github.com/${repo}/releases/download/${tag}/${binary}-${slug}.tar.gz"
   else
-    echo "https://github.com/${repo}/releases/download/${version}/${binary}-${slug}.tar.gz"
+    echo "https://github.com/${repo}/releases/latest/download/${binary}-${slug}.tar.gz"
   fi
 }
 
@@ -311,7 +413,8 @@ install_ling_mem() {
     echo "Skipping ling-mem install: no local installer beside this script" >&2
     echo "and LINGGEN_NO_REMOTE_SCRIPT=1 forbids fetching one." >&2
     return 0
-  elif ! { curl -fsSL "$LING_MEM_INSTALL_BIN_URL" \
+  elif ! { { [ -n "$RELEASE_BASE" ] && curl -fsSL "$RELEASE_BASE/install-bin.sh"; } \
+         || curl -fsSL "$LING_MEM_INSTALL_BIN_URL" \
          || curl -fsSL "https://linggen.dev/dl/install-bin.sh"; } | bash -s -- --version "$pin"; then
     echo "" >&2
     echo "Warning: couldn't install ling-mem (${pin})." >&2
@@ -350,10 +453,14 @@ install_bun() {
 
   echo ""
   echo "Bundling bun (JS runtime for skill actions)..."
-  local zipfile tmpdir
+  # Checked against bun's own SHASUMS256.txt; any failure skips bun.
+  local zipfile sums tmpdir base="https://github.com/oven-sh/bun/releases/latest/download"
   zipfile="$(mktemp)"
+  sums="$(mktemp)"
   tmpdir="$(mktemp -d)"
-  if curl -fsSL "https://github.com/oven-sh/bun/releases/latest/download/${bun_slug}.zip" -o "$zipfile" \
+  if curl -fsSL "$base/SHASUMS256.txt" -o "$sums" \
+      && curl -fsSL "$base/${bun_slug}.zip" -o "$zipfile" \
+      && verify_sha256 "$zipfile" "$(awk -v f="${bun_slug}.zip" '$2 == f { print $1; exit }' "$sums")" "${bun_slug}.zip" \
       && unzip -q -o "$zipfile" -d "$tmpdir"; then
     mkdir -p "$bin_dir"
     cp "$tmpdir/${bun_slug}/bun" "$bin_dir/bun"
@@ -362,7 +469,7 @@ install_bun() {
   else
     echo "Warning: couldn't fetch bun — skill scripts will fall back to node." >&2
   fi
-  rm -rf "$zipfile" "$tmpdir"
+  rm -rf "$zipfile" "$sums" "$tmpdir"
   return 0
 }
 
@@ -379,27 +486,53 @@ main() {
     mkdir -p "$dest"
   fi
 
-  # Clean up old linggen/linggen-server binaries
-  cleanup_legacy_install "$dest"
-
   # --- Install ling ---
   echo "Installing ling (Linggen)..."
 
-  local ling_url ling_tarball
+  local ling_url ling_tarball ling_tag="" expected=""
   if [ -n "$LOCAL_PATH" ]; then
     if [[ "$LOCAL_PATH" == file://* ]]; then
       ling_url="$LOCAL_PATH"
     else
       ling_url="file://$LOCAL_PATH"
     fi
+  elif [ -n "$RELEASE_BASE" ]; then
+    echo "Release source: $RELEASE_BASE (LINGGEN_RELEASE_BASE)" >&2
+    ling_url="$RELEASE_BASE/linggen/linggen/ling-${slug}.tar.gz"
   else
-    echo "Fetching latest release info from GitHub..." >&2
-    ling_url=$(resolve_download_url "linggen/linggen" "ling" "$slug" "$version")
+    if [ "$version" = "latest" ]; then
+      echo "Fetching latest release info from GitHub..." >&2
+      ling_tag="$(resolve_latest_tag "linggen/linggen")"
+      if [ -n "$ling_tag" ]; then
+        echo "   Latest ling version: ${ling_tag}" >&2
+      else
+        echo "   Falling back to /latest/download/ for ling" >&2
+      fi
+    else
+      ling_tag="$version"
+    fi
+    ling_url=$(resolve_download_url "linggen/linggen" "ling" "$slug" "$ling_tag")
   fi
 
   echo "Downloading $ling_url"
   ling_tarball="$(mktemp)"
   download_tarball "$ling_url" "$ling_tarball"
+  # Every download is checked against its published sha256 before anything
+  # installed is touched; only --local-path (a file already on this machine)
+  # skips it.
+  if [ -z "$LOCAL_PATH" ]; then
+    if [ -n "$RELEASE_BASE" ]; then
+      expected="$(curl -fsSL "$RELEASE_BASE/linggen/linggen/manifest.json" 2>/dev/null \
+        | manifest_asset_sha256 "ling-${slug}" || true)"
+    else
+      expected="$(ling_release_sha256 "$ling_tag" "$slug")"
+    fi
+    verify_sha256 "$ling_tarball" "$expected" "ling-${slug}.tar.gz" || { rm -f "$ling_tarball"; exit 1; }
+  fi
+
+  # Clean up old linggen/linggen-server binaries
+  cleanup_legacy_install "$dest"
+
   install_binary "$ling_tarball" "$dest" "ling"
   rm -f "$ling_tarball"
 
@@ -407,6 +540,7 @@ main() {
   ling_version=$("$dest/ling" --version | awk '{print $2}' || echo "unknown")
   echo "Installed ling v${ling_version} to $dest/ling"
   check_path_conflicts "ling" "$dest" "$ling_version"
+  restart_engine_daemon "$dest/ling"
 
   # Telemetry source marker — read by the engine on its first launch (or
   # after a version change) to record how this machine was reached. Writes
