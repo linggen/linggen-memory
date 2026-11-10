@@ -5,6 +5,16 @@
     ],
     "UserPromptSubmit": [
       { "hooks": [{ "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/recall.sh" }] }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "mcp__.*__memory_(add|search|session_start)",
+        "hooks": [{ "type": "command", "command": "LING_MEM_HOST=codex ${CLAUDE_PLUGIN_ROOT}/hooks/stamp-cwd.sh" }]
+      },
+      {
+        "matcher": "mcp__.*__agent_run",
+        "hooks": [{ "type": "command", "command": "LING_MEM_HOST=codex ${CLAUDE_PLUGIN_ROOT}/hooks/recall-on-delegate.sh", "timeout": 15 }]
+      }
     ]
   }
 }

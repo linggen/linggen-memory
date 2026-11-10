@@ -21,13 +21,15 @@
 # fell to 7 rows out of 1142, and `source_session`, which used to be asked of
 # the model every turn, sat at 44%. Anything mechanical belongs here.
 #
-# CLAUDE CODE ONLY, and not by choice: Codex's hook runner fires PreToolUse
-# for shell tools only and REJECTS `updatedInput` (openai/codex#18491), so
-# there is no seam between the model and the daemon there. On Codex the
-# per-turn recall is still scoped — recall.sh sends `scope_root` itself — but
-# the model's own memory calls go unstamped. When Codex ships input rewrite,
-# add the PreToolUse matcher to codex.hooks.json and this script serves both
-# hosts unchanged.
+# BOTH HOSTS. Claude Code registers it in hooks.json; Codex in codex.hooks.json
+# with LING_MEM_HOST=codex, which only changes the `host` stamp. Verified on
+# codex-cli 0.167.0 (2026-11-10): Codex fires PreToolUse for MCP tools and
+# applies `updatedInput` together with permissionDecision "allow" — the
+# rewritten arguments reach the tool. (The old note here, citing
+# openai/codex#18491, was stale.) The tool name there is normalised, e.g.
+# `mcp__ling_mem__memory_search`, which the suffix match below covers. Note
+# "allow" does not skip Codex's own MCP approval gate: a call that needed
+# approval still needs it.
 #
 # Bails silently on anything unexpected — a memory write must never fail
 # because attribution could not be worked out.
@@ -82,7 +84,7 @@ case "$verb" in
       add_field cwd "$cwd"
       add_field root "$root"
     fi
-    add_field host "claude-code"
+    add_field host "${LING_MEM_HOST:-claude-code}"
     ;;
   search)
     # A search the model makes itself is scoped only inside a project. At

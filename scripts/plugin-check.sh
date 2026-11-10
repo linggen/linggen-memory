@@ -86,8 +86,8 @@ expect "Codex hooks: nested map keyed by event" "$CX" \
   '(.hooks | type == "object") and (.hooks | keys | all(IN("SessionStart","UserPromptSubmit","PreToolUse","PostToolUse","Stop"))) and ([.hooks[][] | .hooks[] | .type] | all(. == "command"))' \
   "not {hooks:{Event:[{hooks:[{type:command}]}]}}"
 expect "Codex hooks: absolute \${CLAUDE_PLUGIN_ROOT} paths" "$CX" \
-  '[.hooks[][] | .hooks[].command] | all(startswith("${CLAUDE_PLUGIN_ROOT}/"))' "a relative command path"
-for cmd in $(printf '%s' "$CX" | jq -r '.hooks[][] | .hooks[].command' | sed 's|${CLAUDE_PLUGIN_ROOT}/||'); do
+  '[.hooks[][] | .hooks[].command | sub("^([A-Z_]+=[^ ]+ )+"; "")] | all(startswith("${CLAUDE_PLUGIN_ROOT}/"))' "a relative command path"
+for cmd in $(printf '%s' "$CX" | jq -r '.hooks[][] | .hooks[].command | sub("^([A-Z_]+=[^ ]+ )+"; "")' | sed 's|${CLAUDE_PLUGIN_ROOT}/||'); do
   [ -x "$CCP/$cmd" ] && pass "Codex hooks: $cmd executable" || fail "Codex hooks: $cmd executable" "missing or not +x"
 done
 CCH="$(cat "$CCP/hooks/hooks.json")"

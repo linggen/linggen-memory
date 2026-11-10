@@ -61,6 +61,9 @@ the store — the same screen-confirm flow the phone uses. Loopback needs none.
   Claude Code also recalls memory when delegating to Agent, Task, or `agent_run`.
   Set `LING_MEM_DELEGATE=0` to disable, or `LING_MEM_DELEGATE_REWRITE=0` for context only.
   Delegations are not auto-approved unless `LING_MEM_DELEGATE_DECISION=allow`.
+  Codex (0.167+) does the same for `agent_run`, and stamps memory calls with the directory, but its
+  rewrite needs `allow`, so that delegation is auto-approved. Its built-in `spawn_agent` is not covered
+  (the brief is encrypted). After an update, review the plugin's hooks again with `/hooks`.
   Delete is by-id only; rewrites of user-stated facts require the
   user's explicit direction — the daemon enforces it.
 - **Browser control** — `browser_navigate / read_page / click / type /
