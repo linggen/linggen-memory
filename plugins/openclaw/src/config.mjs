@@ -115,5 +115,9 @@ export function readSettings(env = ENV) {
     coreTimeoutMs: Number(env.LING_MEM_CORE_TIMEOUT ?? 5) * 1000,
     minScore: Number(env.LING_MEM_RECALL_MIN_SCORE ?? 0),
     upkeepCacheMinutes: Number(env.LING_MEM_UPKEEP_CACHE_MIN ?? 30),
+    // Recall on delegate: =0 off; REWRITE=0 tells the parent only.
+    delegateDisabled: env.LING_MEM_DELEGATE === "0",
+    delegateRewrite: env.LING_MEM_DELEGATE_REWRITE !== "0",
+    delegateLimit: Number(env.LING_MEM_DELEGATE_LIMIT ?? 3),
   };
 }

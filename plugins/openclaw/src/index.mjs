@@ -6,6 +6,7 @@
 //   SessionStart core block  → before_prompt_build → prependSystemContext
 //   UserPromptSubmit recall  → before_prompt_build → prependContext
 //   PreToolUse stamp-cwd     → before_tool_call    → params
+//   PreToolUse recall on delegate → before_tool_call → params + a note to the parent
 //
 // The fourth CC behaviour — installing the binary and starting the daemon —
 // deliberately does NOT come across. See health.mjs: this plugin diagnoses and
@@ -23,6 +24,7 @@ import { buildCoreContext } from "./core.mjs";
 import { memoryNotice } from "./health.mjs";
 import { ensureMcpServers } from "./mcp-config.mjs";
 import { buildRecallContext } from "./recall.mjs";
+import { recallOnDelegate, tellParent } from "./recall-on-delegate.mjs";
 import { stampCwd } from "./stamp-cwd.mjs";
 
 // The real helper is `import { definePluginEntry } from
@@ -151,19 +153,37 @@ const plugin = definePluginEntry({
     api.on("before_tool_call", async (event, ctx) => {
       try {
         const sessionKey = ctx?.sessionKey ?? ctx?.sessionId ?? "";
-        const params = stampCwd({
+        const cwd = workspaceBySession.get(sessionKey);
+        const stamped = stampCwd({
           toolName: event?.toolName,
           params: event?.params,
-          cwd: workspaceBySession.get(sessionKey),
+          cwd,
           sessionId: ctx?.sessionId ?? sessionKey,
         });
+        const delegated = await recallOnDelegate({
+          toolName: event?.toolName,
+          params: stamped ?? event?.params,
+          cwd,
+          client: resolveClient(),
+          settings: readSettings(),
+        });
+        if (delegated) {
+          // Best effort and after the rewrite is decided: a failed note never
+          // costs the rewrite.
+          await tellParent(
+            api,
+            { sessionKey: ctx?.sessionKey, agentId: ctx?.agentId, toolCallId: event?.toolCallId ?? ctx?.toolCallId },
+            delegated.note,
+          );
+        }
+        const params = delegated?.params ?? stamped;
         return params ? { params } : undefined;
       } catch {
         return undefined;
       }
     });
 
-    logger?.info?.("linggen: memory hooks registered (recall + core identity + cwd stamping)");
+    logger?.info?.("linggen: memory hooks registered (recall + core identity + cwd stamping + recall on delegate)");
   },
 });
 

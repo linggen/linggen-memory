@@ -46,8 +46,11 @@ turns it off.
 | **Core identity** | Who you are — name, role, timezone — added to the *system* prompt once per session, so providers cache it instead of paying for it every turn. |
 | **Per-turn recall** | The most relevant memories for what you just asked, scoped to the project you are working in. |
 | **Project scoping** | Every `memory_add` records where it came from and every `memory_search` asks what is in scope — stamped by the host, which knows, rather than the model, which would guess. |
+| **Recall on delegate** | When the agent hands work to a sub-agent (`sessions_spawn`) or the engine (`agent_run`), the memory that matches the brief is appended to it and shown to the parent. |
 | **Memory tools** | `memory_search`, `memory_add` and the rest over MCP from the local `ling-mem` daemon; browser control, X reads and `agent_run` from the Linggen engine. |
 | **Commands** | `/linggen-search`, `/linggen-status`, `/linggen-dream`, `/linggen-solve`, `/linggen-scan`, `/linggen-list`, `/linggen-config`. |
+
+Recall on delegate: `LING_MEM_DELEGATE=0` turns it off, `LING_MEM_DELEGATE_REWRITE=0` tells the parent without touching the brief, `LING_MEM_DELEGATE_LIMIT` sets the rows (default 3). Telling the parent the same turn needs OpenClaw 2026.11+ and `hooks.allowPromptInjection` not `false`; the brief itself is rewritten on 2026.5.6 too.
 
 ## Pointing this host at another machine
 
