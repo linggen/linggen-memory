@@ -58,6 +58,9 @@ the store — the same screen-confirm flow the phone uses. Loopback needs none.
   over the shared ling-mem store (same store across Claude Code, Codex,
   OpenClaw, Linggen). Auto-recall on every prompt via a
   `UserPromptSubmit` hook; core identity injected at session start.
+  Claude Code also recalls memory when delegating to Agent, Task, or `agent_run`.
+  Set `LING_MEM_DELEGATE=0` to disable, or `LING_MEM_DELEGATE_REWRITE=0` for context only.
+  Delegations are not auto-approved unless `LING_MEM_DELEGATE_DECISION=allow`.
   Delete is by-id only; rewrites of user-stated facts require the
   user's explicit direction — the daemon enforces it.
 - **Browser control** — `browser_navigate / read_page / click / type /

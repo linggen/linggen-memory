@@ -10,6 +10,10 @@
       {
         "matcher": "mcp__.*__memory_(add|search|session_start)",
         "hooks": [{ "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/stamp-cwd.sh" }]
+      },
+      {
+        "matcher": "Agent|Task|mcp__plugin_linggen_linggen__agent_run",
+        "hooks": [{ "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/recall-on-delegate.sh", "timeout": 15 }]
       }
     ]
   }
