@@ -1,5 +1,5 @@
 // Stamp where the session stands onto memory calls — the OpenClaw port of
-// `plugins/linggen/hooks/stamp-cwd.sh` (ling-mem doc/scope-index-spec.md):
+// `plugins/linggen/hooks/stamp-cwd.sh` (linggen-memory doc/scope-index-spec.md):
 //
 //   memory_add           cwd (the row's default scope), root (what a model's
 //                        `scope` resolves against), source_session, host

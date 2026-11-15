@@ -4,9 +4,9 @@
       "type": "http",
       "url": "http://127.0.0.1:9527/mcp"
     },
-    "ling-mem": {
+    "memory": {
       "type": "http",
-      "url": "http://127.0.0.1:9528/mcp"
+      "url": "http://127.0.0.1:9527/mcp/memory"
     }
   }
 }

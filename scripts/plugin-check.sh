@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
-# Host-plugin checks for ling-mem: install parity, the CC/Codex hooks, the
-# OpenClaw modules, and protocol-text alignment across every memory surface.
+# Host-plugin checks for Linggen's memory: install parity, the CC/Codex hooks,
+# the OpenClaw modules, one address everywhere, and protocol-text alignment
+# across every memory surface.
 #
 #   ./scripts/plugin-check.sh                      parity + Codex schema +
 #                                                  OpenClaw tests + text grep
 #   ./scripts/plugin-check.sh --sync               also copy drifted repo files
 #                                                  over each installed copy
 #   scripts/live-check.sh runs it with --port/--home/--project/--skill so the
-#   hooks run for real against its scratch daemon and fixture home.
+#   hooks run for real against its scratch Linggen and fixture home.
 #
 # Never writes the store; never `rsync --delete` into ~/.linggen/skills (that
 # wipes skills' data/). --sync copies file by file and deletes nothing.
@@ -92,29 +93,34 @@ for cmd in $(printf '%s' "$CX" | jq -r '.hooks[][] | .hooks[].command | sub("^([
 done
 CCH="$(cat "$CCP/hooks/hooks.json")"
 expect "CC hooks: PreToolUse stamps add/search/session_start" "$CCH" \
-  '.hooks.PreToolUse[0].matcher as $m | ("mcp__plugin_linggen_ling-mem__memory_add" | test($m)) and ("mcp__x__memory_search" | test($m)) and ("mcp__x__memory_session_start" | test($m)) and (("mcp__x__memory_delete" | test($m)) | not)' \
+  '.hooks.PreToolUse[0].matcher as $m | ("mcp__plugin_linggen_memory__memory_add" | test($m)) and ("mcp__x__memory_search" | test($m)) and ("mcp__x__memory_session_start" | test($m)) and (("mcp__x__memory_delete" | test($m)) | not)' \
   "matcher misses a verb"
 
-# ── 3. Hooks against the scratch daemon ─────────────────────────────────────
+# One address: every declaration names Linggen's port and nothing else; memory
+# is /mcp/memory beside the engine's /mcp. The retired port never appears.
+MJ="$(cat "$CCP/.mcp.json")"
+expect "CC .mcp.json: memory + linggen on one address" "$MJ" \
+  '(.mcpServers | keys) == ["linggen","memory"] and (.mcpServers.memory.url | endswith(":${LINGGEN_PORT:-9527}/mcp/memory")) and (.mcpServers.linggen.url | endswith(":${LINGGEN_PORT:-9527}/mcp")) and ((.mcpServers.memory.url | sub("/memory$"; "")) == .mcpServers.linggen.url)' \
+  "servers or URLs differ"
+CXM="$(cat "$CCP/.codex-plugin/mcp.json")"
+expect "Codex mcp.json: memory + linggen on one address" "$CXM" \
+  '(.mcpServers | keys) == ["linggen","memory"] and .mcpServers.memory.url == "http://127.0.0.1:9527/mcp/memory" and .mcpServers.linggen.url == "http://127.0.0.1:9527/mcp"' \
+  "servers or URLs differ"
+old="$(grep -rnIE '9528|LING_MEM_(HOST|PORT|TOKEN)|ling-mem (start|restart|status|upgrade)|install-bin' "$CCP/.mcp.json" "$CCP/.codex-plugin" "$CCP/hooks" "$CCP/scripts" "$OCP/src" 2>/dev/null \
+  | grep -vE 'retired|old memory|older file|legacy|_ling_pick|pick\(' || true)"
+[ -z "$old" ] && pass "no retired address or daemon verbs in code" \
+  || fail "no retired address or daemon verbs in code" "$(printf '%s' "$old" | head -3 | tr '\n' ' ')"
+
+# ── 3. Hooks against the scratch Linggen ────────────────────────────────────
 
 if [ -n "$PORT" ] && [ -n "$FHOME" ] && [ -n "$PROJ" ]; then
   WORKP="$(dirname "$FHOME")/plugin"
   mkdir -p "$WORKP/bin"
   # A PATH with jq/curl/git/node only — no `ling`, so autostart cannot start
-  # the real engine — and a stub ling-mem the hook sees as current, so it
-  # neither downloads nor restarts anything.
+  # the real engine; the proxy answers health, so it starts nothing anyway.
   for t in jq curl git node python3 bash; do ln -sf "$(command -v "$t")" "$WORKP/bin/$t"; done
-  cat >"$FHOME/.local/bin/ling-mem" <<'STUB'
-#!/bin/sh
-case "$1" in
-  --version) echo "ling-mem 99.0.0" ;;
-  status) echo '{"state":"running","version":"99.0.0"}' ;;
-esac
-exit 0
-STUB
-  chmod +x "$FHOME/.local/bin/ling-mem"
 
-  # A recording proxy in front of the daemon: every MCP body a hook sends
+  # A recording proxy in front of the scratch engine: every MCP body a hook sends
   # lands in $LOG, so the checks can see the args, not just the answers.
   PPORT=$((PORT + 10))
   LOG="$WORKP/mcp.log"
@@ -142,8 +148,8 @@ PY
   for _ in $(seq 1 30); do curl -s --max-time 1 "http://127.0.0.1:$PPORT/api/health" >/dev/null 2>&1 && break; sleep 0.2; done
 
   hook_env=(env -i HOME="$FHOME" PATH="$WORKP/bin:/usr/bin:/bin" TMPDIR="$WORKP" LC_ALL=en_US.UTF-8
-    LING_MEM_HOST=127.0.0.1 LING_MEM_PORT="$PPORT" LINGGEN_PORT=1 LINGGEN_NO_ENGINE_INSTALL=1
-    LING_MEM_VERSION=v99.0.0 LING_MEM_UPKEEP_CACHE_MIN=0)
+    LINGGEN_HOST=127.0.0.1 LINGGEN_PORT="$PPORT" LINGGEN_NO_ENGINE_INSTALL=1
+    LINGGEN_UPKEEP_CACHE_MIN=0)
   sent() { grep "\"$1\"" "$LOG" | tail -1 | jq -c '.params.arguments' 2>/dev/null; }
 
   # run_hooks HOST PLUGIN-ROOT RUN-DIR — the three hooks as HOST launches them.
@@ -180,7 +186,7 @@ PY
       | "${hook_env[@]}" ${STAMP_PROJECT:+CLAUDE_PROJECT_DIR="$STAMP_PROJECT"} bash "$CCP/hooks/stamp-cwd.sh" 2>&1
   }
   STAMP_PROJECT="$PROJ"
-  T=mcp__plugin_linggen_ling-mem__memory_add
+  T=mcp__plugin_linggen_memory__memory_add
   out="$(stamp "$T" '{"content":"x","scope":"~/workspace","summary":"s","indexed":false}' "$PROJ/story")"
   expect "stamp add: fills cwd/root/source_session/host" "$out" \
     '.hookSpecificOutput.permissionDecision == "allow" and (.hookSpecificOutput.updatedInput | .cwd == "'"$PROJ/story"'" and .root == "'"$PROJ"'" and .source_session == "pc-1" and .host == "claude-code")' \
@@ -198,14 +204,14 @@ PY
   expect "stamp add: foreign session keeps its own scope" "$out" \
     '.hookSpecificOutput.updatedInput | (has("cwd") | not) and (has("root") | not) and .source_session == "another-session"' \
     "this session's cwd stamped onto another session's row"
-  out="$(stamp mcp__plugin_linggen_ling-mem__memory_search '{"query":"q"}' "$PROJ/story")"
+  out="$(stamp mcp__plugin_linggen_memory__memory_search '{"query":"q"}' "$PROJ/story")"
   expect "stamp search: scope_root = root" "$out" '.hookSpecificOutput.updatedInput | .scope_root == "'"$PROJ"'" and (has("cwd_scope") | not)' "scope_root"
-  out="$(stamp mcp__plugin_linggen_ling-mem__memory_search '{"query":"q","scope_root":"/mine"}' "$PROJ")"
+  out="$(stamp mcp__plugin_linggen_memory__memory_search '{"query":"q","scope_root":"/mine"}' "$PROJ")"
   [ -z "$out" ] && pass "stamp search: caller scope_root kept" || fail "stamp search: caller scope_root kept" "$out"
   # A session started at $HOME (no project dir): a whole-store lookup.
-  out="$(STAMP_PROJECT="" stamp mcp__plugin_linggen_ling-mem__memory_search '{"query":"q"}' "$FHOME")"
+  out="$(STAMP_PROJECT="" stamp mcp__plugin_linggen_memory__memory_search '{"query":"q"}' "$FHOME")"
   [ -z "$out" ] && pass "stamp search: \$HOME stays a whole-store lookup" || fail "stamp search: \$HOME stays a whole-store lookup" "$out"
-  out="$(stamp mcp__plugin_linggen_ling-mem__memory_session_start '{}' "$PROJ/story")"
+  out="$(stamp mcp__plugin_linggen_memory__memory_session_start '{}' "$PROJ/story")"
   expect "stamp session_start: cwd + root" "$out" '.hookSpecificOutput.updatedInput | .cwd == "'"$PROJ/story"'" and .root == "'"$PROJ"'"' "session_start stamp"
   if [ -n "$SKILL" ]; then
     out="$(stamp "$T" '{"content":"x"}' "$SKILL/sub")"
@@ -223,7 +229,7 @@ PY
     out="$(STAMP_PROJECT="$WS" stamp "$T" '{"content":"x","scope":"workspace/lingjing"}' "$SIB")"
     expect "stamp add: nested repo keeps the session root" "$out" \
       '.hookSpecificOutput.updatedInput | .root == "'"$WS"'" and .cwd == "'"$SIB"'" and .scope == "workspace/lingjing"' "root = nested git root"
-    out="$(STAMP_PROJECT="$WS" stamp mcp__plugin_linggen_ling-mem__memory_search '{"query":"q"}' "$PROJ/story")"
+    out="$(STAMP_PROJECT="$WS" stamp mcp__plugin_linggen_memory__memory_search '{"query":"q"}' "$PROJ/story")"
     expect "stamp search: nested repo keeps the session root" "$out" \
       '.hookSpecificOutput.updatedInput.scope_root == "'"$WS"'"' "scope_root = nested git root"
     out="$(STAMP_PROJECT="$PROJ" stamp "$T" '{"content":"x"}' "$SIB")"
@@ -232,10 +238,10 @@ PY
   else
     skip "stamp add: nested repo keeps the session root" "no sibling repo under a non-git $WS"
   fi
-  out="$(stamp mcp__plugin_linggen_ling-mem__memory_delete '{"id":"x"}' "$PROJ")"
+  out="$(stamp mcp__plugin_linggen_memory__memory_delete '{"id":"x"}' "$PROJ")"
   [ -z "$out" ] && pass "stamp: other tools untouched" || fail "stamp: other tools untouched" "$out"
 
-  # OpenClaw modules against the same daemon (through the proxy).
+  # OpenClaw modules against the same engine (through the proxy).
   : >"$LOG"
   oc="$(cd / && "${hook_env[@]}" node --input-type=module -e '
     const root = process.argv[1], proj = process.argv[2];
@@ -246,7 +252,7 @@ PY
     const client = resolveClient();
     const core = await buildCoreContext(client, 8000, proj + "/story");
     const recall = await buildRecallContext({ client, prompt: "what is the central artifact in the nine bronze cauldrons novel?", cwd: proj, settings: { ...readSettings(), recallTimeoutMs: 8000 } });
-    const stamped = stampCwd({ toolName: "ling-mem__memory_add", params: { content: "x", scope: "~/workspace", indexed: false }, cwd: proj + "/story", sessionId: "oc-1" });
+    const stamped = stampCwd({ toolName: "memory__memory_add", params: { content: "x", scope: "~/workspace", indexed: false }, cwd: proj + "/story", sessionId: "oc-1" });
     console.log(JSON.stringify({ core, recall, stamped }));
   ' "$OCP" "$PROJ" 2>&1)"
   expect "OpenClaw core: core + candidates + index" "$oc" '.core | test("## Core memory") and test("Memory scopes here") and test("## Index — ")' "core block"
@@ -257,7 +263,7 @@ PY
     "stamp"
   kill "$PROXY" 2>/dev/null
 else
-  skip "hooks against a scratch daemon" "run via scripts/live-check.sh"
+  skip "hooks against a scratch Linggen" "run via scripts/live-check.sh"
 fi
 
 # ── 4. OpenClaw package ─────────────────────────────────────────────────────
@@ -282,14 +288,12 @@ fi
 
 ENGINE="$(cd "$REPO/.." && pwd)/linggen"
 SURFACES=(
-  "$REPO/src/http/mcp.rs"
   "$CCP/skills/linggen" "$CCP/commands" "$CCP/README.md" "$CCP/hooks"
   "$OCP/skills" "$OCP/commands" "$OCP/README.md" "$OCP/src"
-  "$SKP/SKILL.md" "$SKP/references" "$SKP/doc" "$SKP/README.md"
 )
 ENGINE_SURFACES=(
-  "$ENGINE/src/server/mcp.rs" "$ENGINE/src/engine/tools/memory_mcp.rs"
-  "$ENGINE/agents/memory.md"
+  "$ENGINE/src/server/mcp.rs" "$ENGINE/crates/linggen-engine/src/engine/tools/memory_mcp.rs"
+  "$ENGINE/crates/linggen-memory/src/http/mcp.rs" "$ENGINE/agents/memory.md"
 )
 for m in "$ENGINE"/missions/*dream* "$ENGINE"/agents/missions/*dream* "$(cd "$REPO/.." && pwd)"/skills/*/missions/*dream*; do
   [ -e "$m" ] && ENGINE_SURFACES+=("$m")
@@ -302,24 +306,34 @@ STALE=(
   '[Ss]tanding rules? (load|loaded|block|section)|## Standing rules'
   '[Rr]eview queue[^.]{0,80}(scope|index|summary|hook)( |,|\.)'
   'hook required|requires a hook|hook is required'
+  # The retired memory daemon, presented as current: its port, its verbs, its
+  # CLI name as the thing to run. (Lines that say it is retired are let through.)
+  '127\.0\.0\.1:9528|:9528/mcp|`ling-mem [a-z-]+|ling-mem (daemon|start|upgrade|console)|Bash ling-mem'
 )
-scan() { # label paths…
+scan() { # [--list] label paths… — --list: another repo owns these; print, don't fail
+  local verdict=fail
+  [ "$1" = --list ] && { verdict=list; shift; }
   local label="$1"; shift
   local hits="" p
   for p in "${STALE[@]}"; do
-    hits="$hits$(grep -rnIE "$p" "$@" 2>/dev/null | grep -vE 'not queued|no longer|retired|dropped|removed|was `?cwd|alias|Was `|first shipped as|Removed|replaced|not by|assert' || true)"$'\n'
+    hits="$hits$(grep -rnIE "$p" "$@" 2>/dev/null | grep -vE 'not queued|no longer|retired|dropped|removed|was `?cwd|alias|Was `|first shipped as|Removed|replaced|not by|assert|Historical|/scripts/install-engine\.sh:|/doc/shared-memory-design\.md:' || true)"$'\n'
   done
   hits="$(printf '%s' "$hits" | sed '/^$/d' | sort -u)"
   if [ -z "$hits" ]; then pass "text: $label" "no stale terms"
   else
-    fail "text: $label" "$(printf '%s\n' "$hits" | wc -l | tr -d ' ') stale line(s)"
+    if [ "$verdict" = list ]; then report LIST "text: $label" "$(printf '%s\n' "$hits" | wc -l | tr -d ' ') stale line(s) to change there"
+    else fail "text: $label" "$(printf '%s\n' "$hits" | wc -l | tr -d ' ') stale line(s)"; fi
     printf '%s\n' "$hits" | sed "s|$REAL_HOME|~|; s/^/        /" | head -20
   fi
 }
-scan "ling-mem + plugins + skill" "${SURFACES[@]}"
+scan "plugins + skill" "${SURFACES[@]}"
+SKS=()
+for p in "$SKP/SKILL.md" "$SKP/references" "$SKP/doc" "$SKP/README.md"; do [ -e "$p" ] && SKS+=("$p"); done
+if [ ${#SKS[@]} -gt 0 ]; then scan --list "shared-memory skill (the skills repo owns it)" "${SKS[@]}"
+else skip "text: shared-memory skill" "no repo copy at $SKP"; fi
 ENG=()
 for p in "${ENGINE_SURFACES[@]}"; do [ -e "$p" ] && ENG+=("$p"); done
-if [ ${#ENG[@]} -gt 0 ]; then scan "engine surfaces (list only; another agent owns them)" "${ENG[@]}"
+if [ ${#ENG[@]} -gt 0 ]; then scan --list "engine surfaces (the engine repo owns them)" "${ENG[@]}"
 else skip "text: engine surfaces" "no ../linggen checkout"; fi
 
 [ "$N_FAIL" -eq 0 ]

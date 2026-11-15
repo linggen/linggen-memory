@@ -3,20 +3,20 @@
 # memories for each turn. Bails silently on any failure — never blocks
 # the user.
 #
-# Talks to ling-mem over **MCP**, not the CLI. A hook can't *be* a model's
-# tool call, but it can *make* one: `tools/call` is a JSON-RPC POST, and
-# curl can post JSON. What that buys is the whole point — this hook now needs
-# a URL and (off-machine) a token, and **no `ling-mem` binary at all**. The
-# CLI resolves the daemon through `daemon.json`, which can only ever describe
-# a *local* daemon, so a second machine on CLI recall would need its own
-# binary, its own daemon and its own store: memory forked in two.
+# Talks to Linggen's memory over **MCP** (`/mcp/memory`), not the CLI. A hook
+# can't *be* a model's tool call, but it can *make* one: `tools/call` is a
+# JSON-RPC POST, and curl can post JSON. What that buys is the whole point —
+# this hook needs a URL and (off-machine) a token, and **no binary at all**.
+# `ling mem` can only ever reach *this* machine's store, so a machine with only
+# the plugin on CLI recall would need its own Linggen and its own store: memory
+# forked in two.
 #
-# Cost, accepted: the daemon must be up. The CLI could fall back to opening
-# the store directly; a URL cannot. The SessionStart hook starts it, and a
-# quiet turn is the correct failure — recall is an enhancement, never a gate.
+# Cost, accepted: Linggen must be up. The CLI could fall back to opening the
+# store directly; a URL cannot. The SessionStart hook starts it, and a quiet
+# turn is the correct failure — recall is an enhancement, never a gate.
 
 set -u
-[ "${LING_MEM_RECALL_DISABLE:-0}" = "1" ] && exit 0
+[ "${LINGGEN_RECALL_DISABLE:-0}" = "1" ] && exit 0
 
 command -v jq   >/dev/null 2>&1 || exit 0
 command -v curl >/dev/null 2>&1 || exit 0
@@ -27,16 +27,16 @@ cwd="$(printf '%s' "$input"   | jq -r '.cwd    // empty' 2>/dev/null || true)"
 
 [ "${#prompt}" -lt 8 ] && exit 0
 
-topk="${LING_MEM_RECALL_TOPK:-3}"
-limit="${LING_MEM_RECALL_LIMIT:-8}"
-to="${LING_MEM_RECALL_TIMEOUT:-3}"
-# No hardcoded floor: with no `min_score` the daemon applies its store-wide
+topk="${LINGGEN_RECALL_TOPK:-3}"
+limit="${LINGGEN_RECALL_LIMIT:-8}"
+to="${LINGGEN_RECALL_TIMEOUT:-3}"
+# No hardcoded floor: with no `min_score` memory applies its store-wide
 # `recall_min_score` (one selectivity shared by all hosts). Set
-# LING_MEM_RECALL_MIN_SCORE to tighten it per host — applied client-side,
+# LINGGEN_RECALL_MIN_SCORE to tighten it per host — applied client-side,
 # because `min_score` is deliberately absent from the MCP schema (a *model*
 # guessing a threshold narrows recall to zero). The rows carry their scores,
 # so filtering here costs nothing and needs no schema change.
-min_score="${LING_MEM_RECALL_MIN_SCORE:-0}"
+min_score="${LINGGEN_RECALL_MIN_SCORE:-0}"
 
 # Address + `mcp_call`, shared with autostart.sh. Located from this script's
 # own path rather than a plugin-root env var — Codex's hook runner doesn't set
@@ -48,9 +48,9 @@ min_score="${LING_MEM_RECALL_MIN_SCORE:-0}"
 # where the session started): rows under it, rows at its parents, and rows
 # about the person. A skill's own dir sees only its rows; $HOME, ~/.linggen
 # and temp dirs see rows about the person plus at most two strong
-# non-preference matches filed under a directory. The daemon applies it BEFORE
+# non-preference matches filed under a directory. Memory applies it BEFORE
 # ranking — a filter applied afterwards can only shrink a list that was
-# already the wrong N — and owns the rules (ling-mem doc/scope-index-spec.md).
+# already the wrong N — and owns the rules (linggen-memory doc/scope-index-spec.md).
 # shellcheck source=./scope.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scope.sh" 2>/dev/null || true
 scope=""
@@ -81,8 +81,8 @@ hit_count="$(printf '%s\n' "$hits" | grep -c .)"
 # fast. Thresholds: ≥2 undreamed days (the
 # engine's own 3am cron usually covers yesterday; nagging about one day
 # is noise) and ≥1 open review item.
-upkeep_ttl_min="${LING_MEM_UPKEEP_CACHE_MIN:-5}"
-upkeep_cache="${TMPDIR:-/tmp}/ling-mem-upkeep-$(id -u)"
+upkeep_ttl_min="${LINGGEN_UPKEEP_CACHE_MIN:-5}"
+upkeep_cache="${TMPDIR:-/tmp}/linggen-upkeep-$(id -u)"
 upkeep=""
 if [ -f "$upkeep_cache" ] && [ -n "$(find "$upkeep_cache" -mmin "-$upkeep_ttl_min" 2>/dev/null)" ]; then
   upkeep="$(cat "$upkeep_cache" 2>/dev/null || true)"
@@ -116,10 +116,10 @@ CAPTURE
 if [ "$hit_count" -ge 1 ]; then
   # Mirrors linggen/src/engine/prompt/core_block.rs:RECONCILE_FOOTER.
   # Fires on ANY hit: a single recalled row can still conflict with the
-  # user's current turn, and the daemon's user-voice guard needs the
+  # user's current turn, and memory's user-voice guard needs the
   # resolved write to carry user_directed:true.
   cat <<'NOTE'
 
-Note: If a recalled row above duplicates or conflicts with another row or with what the user just said AND the user's current turn is unrelated to memory itself (incidental recall hit), resolve it on the side — merge authority follows voice: memory_delete for exact dups; rows that are all your own notes (from=derived — built/fixed/tried/learned) merge freely into one current-truth row via memory_add with replace_ids listing the losers (atomic insert + delete), no ask; if any row is in the user's voice (from=user — preference/decision/identity), ask first via the host's ask-user primitive (AskUserQuestion on Claude Code; plain chat elsewhere), then write the winner via memory_add with replace_ids AND user_directed:true — the daemon BLOCKS user-voice replaces without that flag, and a hedged reflection ("X feels about right to me") never justifies it (never separate add + delete). If the user IS explicitly steering memory ("clean up", "remember X", "what's in memory", "ignore the hits"), follow their instruction and do NOT side-quest into dedup. Either way, keep memory in good shape.
+Note: If a recalled row above duplicates or conflicts with another row or with what the user just said AND the user's current turn is unrelated to memory itself (incidental recall hit), resolve it on the side — merge authority follows voice: memory_delete for exact dups; rows that are all your own notes (from=derived — built/fixed/tried/learned) merge freely into one current-truth row via memory_add with replace_ids listing the losers (atomic insert + delete), no ask; if any row is in the user's voice (from=user — preference/decision/identity), ask first via the host's ask-user primitive (AskUserQuestion on Claude Code; plain chat elsewhere), then write the winner via memory_add with replace_ids AND user_directed:true — memory BLOCKS user-voice replaces without that flag, and a hedged reflection ("X feels about right to me") never justifies it (never separate add + delete). If the user IS explicitly steering memory ("clean up", "remember X", "what's in memory", "ignore the hits"), follow their instruction and do NOT side-quest into dedup. Either way, keep memory in good shape.
 NOTE
 fi

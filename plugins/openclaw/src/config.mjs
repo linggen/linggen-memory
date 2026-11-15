@@ -7,16 +7,24 @@
 //
 // **This is the CLIENT declaration.** It says where to *connect*, which on a
 // second machine is somewhere else entirely — and it is deliberately NOT the
-// engine's `[server].url`. That file says where the daemon on THAT machine
-// binds; reading it to find a daemon on another host is how the two facts get
-// confused. A client that has no local daemon still needs an address.
+// engine's `[server].url`. That file says where the engine on THAT machine
+// binds; reading it to find an engine on another host is how the two facts get
+// confused. A machine with only the plugin still needs an address.
+//
+// One address: where Linggen lives (host + port) and, for another machine,
+// that machine's token. Memory is `<address>/mcp/memory`, the engine's tools
+// `<address>/mcp`.
 //
 // Authored in ONE file, `~/.linggen/client.json`, written by
 // `scripts/config.sh` (`/linggen:config`):
 //
-//   { "ling": "http://…:9527", "ling_mem": "http://…:9528", "token": "…" }
+//   { "ling": "http://…:9527", "token": "…", "device_id": "…" }
 //
-// Precedence is env > file > default.
+// Precedence is file > env (LINGGEN_HOST, LINGGEN_PORT, LINGGEN_TOKEN) >
+// default 127.0.0.1:9527 — the same rule as `hooks/mcp.sh`. An older file or
+// environment that names the retired memory daemon's address (`ling_mem`,
+// the old memory env LING_MEM_HOST / LING_MEM_TOKEN) is read as this address where that is
+// unambiguous; see `pick`.
 
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -24,50 +32,58 @@ import { join } from "node:path";
 
 const ENV = process.env;
 
-const DEFAULT_LING_HOST = "127.0.0.1";
-const DEFAULT_LING_PORT = "9527";
-const DEFAULT_LING_MEM_HOST = "127.0.0.1";
-const DEFAULT_LING_MEM_PORT = "9528";
+const DEFAULT_HOST = "127.0.0.1";
+const DEFAULT_PORT = "9527";
 
-/** One key out of the client config, or "". Absent file, bad JSON and missing
- *  key are all "nothing configured" — this runs in a hook that must never fail. */
-function clientGet(env, key) {
+/** The client config object, or {}. Absent file and bad JSON are both
+ *  "nothing configured" — this runs in a hook that must never fail. */
+function clientFile(env) {
   const dir = env.LINGGEN_DATA_DIR || join(homedir(), ".linggen");
   try {
     const parsed = JSON.parse(readFileSync(join(dir, "client.json"), "utf8"));
-    const value = parsed?.[key];
-    return typeof value === "string" ? value : "";
+    return parsed && typeof parsed === "object" ? parsed : {};
   } catch {
-    return "";
+    return {};
   }
 }
 
-/** Split `http://host:port` into host and port, tolerating a missing scheme. */
-function hostOf(url) {
-  const rest = url.includes("://") ? url.slice(url.indexOf("://") + 3) : url;
-  return rest.split(":")[0] ?? "";
+const str = (value) => (typeof value === "string" ? value : "");
+
+/** `http://host:port` → host / port, tolerating a missing scheme or path. */
+function hostPort(url) {
+  let rest = url.includes("://") ? url.slice(url.indexOf("://") + 3) : url;
+  rest = rest.split("/")[0] ?? "";
+  const colon = rest.lastIndexOf(":");
+  return colon < 0 ? { host: rest, port: "" } : { host: rest.slice(0, colon), port: rest.slice(colon + 1) };
 }
 
-function portOf(url) {
-  const rest = url.includes("://") ? url.slice(url.indexOf("://") + 3) : url;
-  const afterColon = rest.includes(":") ? rest.slice(rest.lastIndexOf(":") + 1) : "";
-  return afterColon.split("/")[0] ?? "";
-}
-
-function resolveOne(hostEnv, portEnv, fromFile, defaultHost, defaultPort) {
-  let host = hostEnv || "";
-  let port = portEnv || "";
-  if (!host && fromFile) host = hostOf(fromFile);
-  if (!port && fromFile) port = portOf(fromFile);
-  return { host: host || defaultHost, port: port || defaultPort };
-}
-
-/** Is this daemon on THIS machine? Installing a binary or starting a daemon only
- *  makes sense if it is: pointed at another host, a local daemon on the same port
- *  would answer from a DIFFERENT store and silently fork the user's memory in two
- *  — the one outcome this whole arrangement exists to prevent. */
-function isLocal(host) {
+/** Is Linggen on THIS machine? Installing or starting it — or opening the
+ *  store with `ling mem` — only makes sense if it is: pointed at another
+ *  machine, a local Linggen would hold a DIFFERENT store and silently fork the
+ *  user's memory in two — the one outcome this arrangement exists to prevent. */
+export function isLocal(host) {
   return host === "127.0.0.1" || host === "localhost" || host === "::1" || host === "";
+}
+
+/**
+ * The one address out of the engine address and an old memory address. The
+ * old one meant "the machine whose memory this host uses"; that machine's
+ * Linggen now serves memory on its engine port (9527).
+ *   only one given            → that one (the old one on port 9527)
+ *   both on the same host     → the engine address
+ *   engine local, memory not  → the memory machine (a local Linggen would
+ *                               open a second, empty store)
+ *   two different remotes     → the engine address (ambiguous)
+ */
+export function pick(ling, old) {
+  if (!old) return ling;
+  const oldHost = hostPort(old).host || DEFAULT_HOST;
+  const moved = `http://${oldHost}:${DEFAULT_PORT}`;
+  if (!ling) return moved;
+  const lingHost = hostPort(ling).host;
+  if (lingHost === oldHost) return ling;
+  if (isLocal(lingHost) && !isLocal(oldHost)) return moved;
+  return ling;
 }
 
 /**
@@ -76,29 +92,25 @@ function isLocal(host) {
  * takes effect without restarting the host. The file is a few hundred bytes.
  */
 export function resolveClient(env = ENV) {
-  const ling = resolveOne(
-    env.LINGGEN_HOST,
-    env.LINGGEN_PORT,
-    clientGet(env, "ling"),
-    DEFAULT_LING_HOST,
-    DEFAULT_LING_PORT,
-  );
-  const lingMem = resolveOne(
-    env.LING_MEM_HOST,
-    env.LING_MEM_PORT,
-    clientGet(env, "ling_mem"),
-    DEFAULT_LING_MEM_HOST,
-    DEFAULT_LING_MEM_PORT,
-  );
-  // Off-machine, ling-mem's LAN gate wants a paired device's token; loopback
-  // needs none, so a normal single-machine install sets nothing.
-  const token = env.LING_MEM_TOKEN || clientGet(env, "token");
+  const file = clientFile(env);
+  let address = pick(str(file.ling), str(file.ling_mem));
+  if (!address) {
+    const fromEnv =
+      env.LINGGEN_HOST || env.LINGGEN_PORT
+        ? `http://${env.LINGGEN_HOST || DEFAULT_HOST}:${env.LINGGEN_PORT || DEFAULT_PORT}`
+        : "";
+    address = pick(fromEnv, env.LING_MEM_HOST ? `http://${env.LING_MEM_HOST}` : "");
+  }
+  const { host, port } = hostPort(address);
+  const linggenUrl = `http://${host || DEFAULT_HOST}:${port || DEFAULT_PORT}`;
+  // Off-machine, the engine wants an approved machine's token; loopback needs
+  // none, so a normal single-machine install sets nothing.
+  const token = str(file.token) || env.LINGGEN_TOKEN || env.LING_MEM_TOKEN || ""; // last: the old memory token
   return {
-    // No `/mcp` on the engine URL — it is also the base for `/api/health`.
-    linggenUrl: `http://${ling.host}:${ling.port}`,
-    lingMemUrl: `http://${lingMem.host}:${lingMem.port}/mcp`,
-    linggenLocal: isLocal(ling.host),
-    lingMemLocal: isLocal(lingMem.host),
+    // No `/mcp` on the base URL — it is also the base for `/api/health`.
+    linggenUrl,
+    memoryUrl: `${linggenUrl}/mcp/memory`,
+    local: isLocal(host || DEFAULT_HOST),
     token,
   };
 }
@@ -107,17 +119,17 @@ export function resolveClient(env = ENV) {
  *  environment itself. */
 export function readSettings(env = ENV) {
   return {
-    recallDisabled: env.LING_MEM_RECALL_DISABLE === "1",
-    stampDisabled: env.LING_MEM_STAMP_CWD_DISABLE === "1",
-    topK: Number(env.LING_MEM_RECALL_TOPK ?? 3),
-    limit: Number(env.LING_MEM_RECALL_LIMIT ?? 8),
-    recallTimeoutMs: Number(env.LING_MEM_RECALL_TIMEOUT ?? 3) * 1000,
-    coreTimeoutMs: Number(env.LING_MEM_CORE_TIMEOUT ?? 5) * 1000,
-    minScore: Number(env.LING_MEM_RECALL_MIN_SCORE ?? 0),
-    upkeepCacheMinutes: Number(env.LING_MEM_UPKEEP_CACHE_MIN ?? 30),
+    recallDisabled: env.LINGGEN_RECALL_DISABLE === "1",
+    stampDisabled: env.LINGGEN_STAMP_CWD_DISABLE === "1",
+    topK: Number(env.LINGGEN_RECALL_TOPK ?? 3),
+    limit: Number(env.LINGGEN_RECALL_LIMIT ?? 8),
+    recallTimeoutMs: Number(env.LINGGEN_RECALL_TIMEOUT ?? 3) * 1000,
+    coreTimeoutMs: Number(env.LINGGEN_CORE_TIMEOUT ?? 5) * 1000,
+    minScore: Number(env.LINGGEN_RECALL_MIN_SCORE ?? 0),
+    upkeepCacheMinutes: Number(env.LINGGEN_UPKEEP_CACHE_MIN ?? 30),
     // Recall on delegate: =0 off; REWRITE=0 tells the parent only.
-    delegateDisabled: env.LING_MEM_DELEGATE === "0",
-    delegateRewrite: env.LING_MEM_DELEGATE_REWRITE !== "0",
-    delegateLimit: Number(env.LING_MEM_DELEGATE_LIMIT ?? 3),
+    delegateDisabled: env.LINGGEN_DELEGATE === "0",
+    delegateRewrite: env.LINGGEN_DELEGATE_REWRITE !== "0",
+    delegateLimit: Number(env.LINGGEN_DELEGATE_LIMIT ?? 3),
   };
 }

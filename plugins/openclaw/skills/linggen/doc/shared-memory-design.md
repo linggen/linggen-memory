@@ -10,6 +10,11 @@ guide: |
 
 # shared-memory — design
 
+> **Historical (2026-05).** Since Linggen 2.3 memory is hosted by the
+> Linggen engine (`ling`, `ling mem <verb>`, MCP at `/mcp/memory`); the
+> standalone `ling-mem` binary and its port 9528 named below are retired.
+> Kept as the record of the rename design.
+
 > **Status: content workstreams B/A/C/D/E LANDED (2026-05-20).**
 > Workstream F (distribution migration: rename roll-out + version-skew
 > handshake) is the remaining work and ships separately. Canonical

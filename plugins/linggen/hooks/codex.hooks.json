@@ -9,11 +9,11 @@
     "PreToolUse": [
       {
         "matcher": "mcp__.*__memory_(add|search|session_start)",
-        "hooks": [{ "type": "command", "command": "LING_MEM_HOST=codex ${CLAUDE_PLUGIN_ROOT}/hooks/stamp-cwd.sh" }]
+        "hooks": [{ "type": "command", "command": "LINGGEN_CLIENT=codex ${CLAUDE_PLUGIN_ROOT}/hooks/stamp-cwd.sh" }]
       },
       {
         "matcher": "mcp__.*__agent_run",
-        "hooks": [{ "type": "command", "command": "LING_MEM_HOST=codex ${CLAUDE_PLUGIN_ROOT}/hooks/recall-on-delegate.sh", "timeout": 15 }]
+        "hooks": [{ "type": "command", "command": "LINGGEN_CLIENT=codex ${CLAUDE_PLUGIN_ROOT}/hooks/recall-on-delegate.sh", "timeout": 15 }]
       }
     ]
   }

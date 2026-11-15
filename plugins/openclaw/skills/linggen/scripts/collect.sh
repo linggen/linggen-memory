@@ -5,7 +5,7 @@
 # ~/.linggen/sessions/) and writes a manifest to a LOCAL output dir.
 # No network calls. No data leaves the machine. Output is consumed by
 # the agent in-process to extract durable preferences, which are then
-# written back to the LOCAL ling-mem database.
+# written back to the LOCAL memory store.
 #
 # collect.sh — dream mission entry script.
 #

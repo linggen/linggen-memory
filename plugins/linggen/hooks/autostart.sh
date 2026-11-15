@@ -2,43 +2,36 @@
 #
 # SessionStart hook for the linggen plugin.
 #
-# 1. Bootstrap the ling-mem binary on first run (or after a plugin update
-#    that bumped VERSION) into the ONE canonical, cross-host location
-#    ~/.local/bin/ling-mem — a real file shared by every host/channel, not
-#    a per-plugin copy. install-bin resolves the (range) pin, won't
-#    downgrade a newer shared binary, and replaces any legacy symlink.
-#    SKIPPED when LING_MEM_HOST points off this machine: the store lives
-#    elsewhere, and a local binary + daemon would be a SECOND store — the
-#    forked memory this whole arrangement exists to prevent. Such a host
-#    needs a URL and a token, nothing installed.
-# 2. Start the daemon idempotently (restart only if it's older than the
-#    on-disk binary — never downgrade a daemon another host started).
-# 3. Ensure the Linggen daemon is up where client.json says — the plugin's
-#    MCP server (browser control, x reads, agent_run) lives there.
-#    Starts the daemon when the `ling` binary exists; when it doesn't,
-#    installs the engine in the BACKGROUND (detached — session start never
-#    blocks on the ~100MB download) and discloses that in the context line.
-#    Both binaries are required components of this plugin. Opt out of the
-#    engine auto-install with LINGGEN_NO_ENGINE_INSTALL=1.
-# 4. Emit what a session loads at start (one `memory_session_start` call
-#    with the session's cwd and root): core memory, the "Memory scopes here"
-#    candidates line, and the index of standing rows filed for this
-#    directory and its parents — as `hookSpecificOutput.additionalContext`
-#    so the host injects it into the agent's system prompt. Claude Code has
-#    no cd hook, so the index is this directory's at start; recall covers
-#    the rest.
-#    Read over MCP, so it works the same whether the store is on this
-#    machine or another one.
-#    CC honors the field natively; Codex ignores unknown JSON and just
-#    keeps the side-effect (daemon start). Either way the session never
-#    breaks.
+# One program, one address. Linggen (`ling`, the engine) hosts memory; the
+# plugin reaches it at the one address mcp.sh resolves (default
+# 127.0.0.1:9527): memory at /mcp/memory, the engine's tools at /mcp.
+#
+# 1. Address on THIS machine: make sure Linggen is up. Running → nothing to
+#    do. `ling` installed → start it (`ling --web`) and give it a few seconds.
+#    Not installed → install it in the BACKGROUND (detached — session start
+#    never blocks on the ~100MB download) and disclose that in the context
+#    line. Linggen is a required component of this plugin; opt out of the
+#    auto-install with LINGGEN_NO_ENGINE_INSTALL=1.
+# 2. Address on ANOTHER machine (a machine with only the plugin): install
+#    nothing, start nothing. A local Linggen would open a second, empty store
+#    — the forked memory this whole arrangement exists to prevent. Such a host
+#    needs the address and that machine's token, nothing more.
+# 3. Emit what a session loads at start (one `memory_session_start` call with
+#    the session's cwd and root): core memory, the "Memory scopes here"
+#    candidates line, and the index of standing rows filed for this directory
+#    and its parents — as `hookSpecificOutput.additionalContext` so the host
+#    injects it into the agent's system prompt. Claude Code has no cd hook, so
+#    the index is this directory's at start; recall covers the rest. Read over
+#    MCP, so it works the same whether memory is on this machine or another.
+#    CC honors the field natively; Codex ignores unknown JSON and keeps the
+#    side effect (Linggen started). Either way the session never breaks.
 #
 # Bails silently on any failure — never blocks the session.
 
 set -u
 
 # Read the hook's stdin first (the session's cwd rides in it), so
-# install-bin and the daemon start below never inherit an open pipe.
+# the engine start below never inherits an open pipe.
 hook_input=""
 [ -t 0 ] || hook_input="$(cat 2>/dev/null || true)"
 
@@ -51,117 +44,82 @@ PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-${PLUGIN_ROOT:-}}"
 
 # If neither host injects a plugin-root env var (e.g. Codex's hook runner
 # doesn't expand ${PLUGIN_ROOT} when launching shell hooks), we have no
-# stable place to read VERSION or scripts/install-bin.sh from. Bail
-# silently — the daemon may still be reachable on whatever the user has
-# already installed; nothing here can do useful work blind.
+# stable place to read the installer from. Bail silently — Linggen may still
+# be reachable on whatever the user has already installed.
 [ -z "$PLUGIN_ROOT" ] && exit 0
 
 # Which host is running this hook — observed from where the plugin actually
-# lives, never asserted. Feeds the install-source markers' agent= field.
+# lives, never asserted. Feeds the install-source marker's agent= field.
 case "$PLUGIN_ROOT" in
   */.claude/*) PLUGIN_AGENT=cc ;;
   */.codex/*)  PLUGIN_AGENT=codex ;;
   *)           PLUGIN_AGENT="" ;;
 esac
 
-# Everything in the next block is about a daemon on THIS machine. A host
-# pointed at another machine's store skips it entirely — see the header.
-if [ "$LING_MEM_LOCAL" = 1 ]; then
-
-# ONE canonical, cross-host binary path. Every channel (CC/Codex plugin,
-# OpenClaw, skills.sh, Linggen engine) installs/upgrades this same real file —
-# never a per-plugin copy or symlink — so there's one binary, one daemon, one
-# store. ~/.local/bin (not /usr/local) because plugins/skills install without
-# sudo. install-bin.sh defaults to this dir too.
-DEST="$HOME/.local/bin"
-BIN="$DEST/ling-mem"
-# Range-pin the shared binary to the latest 1.x so patch/minor releases reach
-# users without a plugin update — matches the engine's LING_MEM_PIN=^1 and the
-# SKILL.md first-use gate. Overridable via $LING_MEM_VERSION. The VERSION file
-# records the exact release this bundle was built against; autostart floats
-# within the major so the one shared cross-host binary stays current.
-# (`^1` resolves to the highest v1.x.x; `~1` is NOT valid — install-bin's `~`
-# needs X.Y like `~1.0`.)
-PIN="${LING_MEM_VERSION:-^1}"
-mkdir -p "$DEST" 2>/dev/null || true
-
-# Install/upgrade the shared binary. install-bin resolves the range pin, verifies
-# SHA-256, won't downgrade a newer shared binary, and replaces a legacy symlink
-# with a real file. Idempotent and cheap when already satisfied.
-LING_MEM_SOURCE="${LING_MEM_SOURCE:-plugin}" \
-LING_MEM_AGENT="${LING_MEM_AGENT:-$PLUGIN_AGENT}" \
-bash "$PLUGIN_ROOT/scripts/install-bin.sh" \
-  --version "$PIN" --dest "$DEST" --quiet >/dev/null 2>&1 || true
-
-if [ -x "$BIN" ]; then
-  HAVE="$("$BIN" --version 2>/dev/null | awk '{print $2}')"
-
-  # Reconcile the RUNNING daemon with the on-disk binary: start if down;
-  # restart only if the daemon is OLDER than the binary on disk (so a
-  # stale-pinned host never downgrades a daemon another host already started —
-  # we only move forward). $BIN is used by absolute path to dodge stale PATH
-  # caching.
-  _st="$("$BIN" status --format json 2>/dev/null)"
-  _state="$(printf '%s' "$_st" | jq -r '.state // empty' 2>/dev/null)"
-  _running="$(printf '%s' "$_st" | jq -r '.version // empty' 2>/dev/null)"
-  if [ "$_state" != "running" ]; then
-    "$BIN" start >/dev/null 2>&1 || true
-  elif [ -n "$HAVE" ] && [ -n "$_running" ] && [ "$_running" != "$HAVE" ] && \
-       [ "$(printf '%s\n%s\n' "$_running" "$HAVE" | sort -V | head -n1)" = "$_running" ]; then
-    "$BIN" restart >/dev/null 2>&1 || true
-  fi
-fi
-fi  # LING_MEM_LOCAL
-
-# ── Ensure the Linggen daemon (the plugin's MCP server) is up ────────────────
+# ── Make sure Linggen is up (this machine only) ─────────────────────────────
 #
-# The engine is a required component of this plugin — when the `ling` binary is
-# absent, install it here, but DETACHED in the background: session start
-# never blocks on the ~100MB download, and the context line below discloses
-# the install (README + plugin description disclose it up front). A lock dir
-# keeps parallel session starts from racing; a crashed install's stale lock
-# is cleared after 30 minutes. LINGGEN_NO_ENGINE_INSTALL=1 opts out.
-
 # `LINGGEN_URL` and `LINGGEN_LOCAL` come from mcp.sh, which resolves them from
-# `~/.linggen/client.json` (env > file > default) — ONE authored address for
+# `~/.linggen/client.json` (file > env > default) — ONE authored address for
 # every hook. `.mcp.json` still needs the same values as environment variables,
 # because Claude Code expands it at startup before any hook runs; `config.sh`
 # mirrors them there when it writes the file.
-#
-# The address used to be an independent literal here, and it drifted: the
-# 2026-07 migration flipped .mcp.json to 9527 and left this at 9898, so every
-# session start probed a port nothing served and launched a SECOND daemon there
-# — one the plugin never talked to, which registered the same relay instance as
-# the real one and split a paired phone's traffic between them.
+
+healthy() { curl -fsS --max-time 2 "${LINGGEN_URL}/api/health" >/dev/null 2>&1; }
+
+# Where `ling` is: LINGGEN_BIN (an explicit binary), else PATH, else the
+# installer's fallback dir.
+find_ling() {
+  if [ -n "${LINGGEN_BIN:-}" ]; then
+    [ -x "$LINGGEN_BIN" ] && printf '%s' "$LINGGEN_BIN"
+    return 0
+  fi
+  local l
+  l="$(command -v ling 2>/dev/null || true)"
+  [ -z "$l" ] && [ -x "$HOME/.local/bin/ling" ] && l="$HOME/.local/bin/ling"
+  printf '%s' "$l"
+}
 
 install_hint=""
-if ! curl -fsS --max-time 2 "${LINGGEN_URL}/api/health" >/dev/null 2>&1 \
-   && [ "$LINGGEN_LOCAL" = 1 ]; then
-  LING_BIN="$(command -v ling || true)"
-  [ -z "$LING_BIN" ] && [ -x "$HOME/.local/bin/ling" ] && LING_BIN="$HOME/.local/bin/ling"
+if [ "$LINGGEN_LOCAL" = 1 ] && ! healthy; then
+  LING_BIN="$(find_ling)"
   if [ -n "$LING_BIN" ]; then
     # No `--port`: the engine binds from its own `[server].url`. Passing a
     # port here would override the user's config with this hook's reading of
-    # it, which is how a daemon ends up somewhere its own config denies.
-    (nohup "$LING_BIN" --web >/dev/null 2>&1 &) || true
+    # it, which is how an engine ends up somewhere its own config denies.
+    # (A plain command, not `a && b &`: that backgrounds a whole subshell,
+    # which then lingers as the engine's parent.)
+    (cd "$HOME" || exit 0; nohup "$LING_BIN" --web >/dev/null 2>&1 &) || true
+    # Memory opens with the engine; wait briefly so this session's core block
+    # comes from it rather than from nothing.
+    for _ in $(seq 1 "${LINGGEN_START_WAIT:-10}"); do healthy && break; sleep 1; done
   elif [ -n "${LINGGEN_NO_ENGINE_INSTALL:-}" ]; then
-    install_hint="Linggen engine not installed (auto-install disabled via LINGGEN_NO_ENGINE_INSTALL) — browser/x/agent MCP tools are offline. Install: curl -fsSL https://linggen.dev/install.sh | bash"
+    install_hint="Linggen is not installed (auto-install disabled via LINGGEN_NO_ENGINE_INSTALL) — memory and the browser/x/agent tools are offline. Install: curl -fsSL https://linggen.dev/install.sh | bash"
   else
+    # The installer that ships in this plugin (skills/linggen/scripts/
+    # install-engine.sh, the linggen.dev installer vendored verbatim) — never
+    # a remotely fetched script. LINGGEN_NO_REMOTE_SCRIPT=1 also keeps it from
+    # fetching anything but the release binary. LINGGEN_INSTALL_SH names
+    # another local installer (tests stand one in for the download).
+    INSTALLER="${LINGGEN_INSTALL_SH:-$PLUGIN_ROOT/skills/linggen/scripts/install-engine.sh}"
     LOCK="$HOME/.linggen/.engine-install.lock"
     LOG="$HOME/.linggen/engine-install.log"
     mkdir -p "$HOME/.linggen" 2>/dev/null || true
     [ -d "$LOCK" ] && find "$LOCK" -maxdepth 0 -mmin +30 -exec rmdir {} \; 2>/dev/null
-    if mkdir "$LOCK" 2>/dev/null; then
-      (nohup bash -c '
-        curl -fsSL https://linggen.dev/install.sh | LINGGEN_SOURCE="${LINGGEN_SOURCE:-plugin}" LINGGEN_AGENT="${LINGGEN_AGENT:-'"$PLUGIN_AGENT"'}" bash >>"$1" 2>&1
-        LING="$(command -v ling || true)"
-        [ -z "$LING" ] && [ -x "$HOME/.local/bin/ling" ] && LING="$HOME/.local/bin/ling"
-        [ -n "$LING" ] && nohup "$LING" --web >/dev/null 2>&1 &
-        rmdir "$2" 2>/dev/null
-      ' _ "$LOG" "$LOCK" >/dev/null 2>&1 &) || true
-      install_hint="Installing the Linggen engine in the background (one-time, ~100MB; log: ~/.linggen/engine-install.log). Browser/x/agent MCP tools come online when it finishes — memory already works via the ling-mem CLI."
+    if [ ! -f "$INSTALLER" ]; then
+      install_hint="Linggen is not installed and this plugin's installer is missing ($INSTALLER) — memory and the browser/x/agent tools are offline. Install: curl -fsSL https://linggen.dev/install.sh | bash"
+    elif mkdir "$LOCK" 2>/dev/null; then
+      (cd "$HOME" || exit 0; LINGGEN_NO_REMOTE_SCRIPT=1 \
+        LINGGEN_SOURCE="${LINGGEN_SOURCE:-plugin}" LINGGEN_AGENT="${LINGGEN_AGENT:-$PLUGIN_AGENT}" \
+        nohup bash -c '
+          bash "$1" >>"$2" 2>&1
+          LING="${LINGGEN_BIN:-$(command -v ling || true)}"
+          [ -z "$LING" ] && [ -x "$HOME/.local/bin/ling" ] && LING="$HOME/.local/bin/ling"
+          if [ -n "$LING" ]; then nohup "$LING" --web >/dev/null 2>&1 & fi
+          rmdir "$3" 2>/dev/null
+        ' _ "$INSTALLER" "$LOG" "$LOCK" >/dev/null 2>&1 &) || true
+      install_hint="Installing Linggen in the background (one-time, ~100MB; log: ~/.linggen/engine-install.log). Memory and the browser/x/agent tools come online when it finishes."
     else
-      install_hint="Linggen engine install already in progress (log: ~/.linggen/engine-install.log) — browser/x/agent MCP tools come online when it finishes."
+      install_hint="Linggen install already in progress (log: ~/.linggen/engine-install.log) — memory and the browser/x/agent tools come online when it finishes."
     fi
   fi
 fi
@@ -176,7 +134,7 @@ mirror_hint=""
 if [ "$PLUGIN_AGENT" = cc ] && [ -r "$_ling_client_file" ]; then
   # Exit 0: the env was out of step and is now rewritten; 10: already matched.
   if bash "$PLUGIN_ROOT/scripts/config.sh" --mirror >/dev/null 2>&1; then
-    mirror_hint="ling-mem address changed — restart Claude Code to apply."
+    mirror_hint="Linggen address changed — restart Claude Code to apply."
   fi
 fi
 
@@ -184,9 +142,9 @@ fi
 #
 # One call: `memory_session_start` with this session's cwd and root returns
 # the core rows (who the user is), the scope candidates line and the index,
-# already rendered as `block`. The daemon renders it so every host injects the
+# already rendered as `block`. Linggen renders it so every host injects the
 # same text. Everything else surfaces through per-turn recall (recall.sh).
-# Over MCP, like recall — a host whose store is on another machine gets the
+# Over MCP, like recall — a host whose memory is on another machine gets the
 # same block with no binary of its own. Empty store (fresh install) emits
 # nothing.
 
@@ -205,8 +163,8 @@ start_args="$(jq -nc --arg c "$session_cwd" --arg r "$session_root" '
 ' 2>/dev/null || printf '{}')"
 
 # A slightly longer budget than a per-turn recall: this runs once, at session
-# start, and a cold daemon has just been asked to open LanceDB.
-to="${LING_MEM_CORE_TIMEOUT:-5}"
+# start, and an engine that just started may still be opening the store.
+to="${LINGGEN_CORE_TIMEOUT:-5}"
 start_out="$(mcp_call memory_session_start "$start_args" "$to")"
 
 # Defensive guard: a malformed payload would make the pipeline below fail
@@ -219,21 +177,6 @@ if [ -n "$start_out" ]; then
     core_block="$(printf '%s' "$start_out" | jq -r '.block // empty' 2>/dev/null || true)"
   else
     printf 'linggen autostart: memory_session_start returned non-JSON; skipping memory injection\n' >&2
-  fi
-else
-  # A daemon older than session_start (ling-mem < 1.9) answers with an
-  # error: fall back to the core rows alone, as before.
-  core_rows="$(mcp_call memory_list '{"tier":"core","limit":100}' "$to")"
-  if [ -n "$core_rows" ] && printf '%s' "$core_rows" | jq -e '.' >/dev/null 2>&1; then
-    core_block="$(printf '%s' "$core_rows" | jq -r '
-      (if type == "array" then . else [] end)
-      | map(select(.content))
-      | if length == 0 then empty
-        else
-          "## Core memory — who the user is\n\n"
-          + (map("- \(.content) (id=\(.id))") | join("\n"))
-        end
-    ' 2>/dev/null || true)"
   fi
 fi
 

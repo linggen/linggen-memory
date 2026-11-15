@@ -5,11 +5,10 @@
 // `before_prompt_build` hook, which returns `{ prependContext }`. Same payload,
 // same order, same failure policy: any failure is silence, never a blocked turn.
 //
-// Talks to ling-mem over MCP, not the CLI — so this needs a URL and (off-machine)
-// a token, and **no `ling-mem` binary at all**. The CLI resolves the daemon
-// through `daemon.json`, which can only ever describe a *local* daemon, so a
-// second machine on CLI recall would need its own binary, its own daemon and its
-// own store: memory forked in two.
+// Talks to Linggen's memory over MCP (`/mcp/memory`), not the CLI — so this
+// needs a URL and (off-machine) a token, and **no binary at all**. `ling mem`
+// can only ever reach *this* machine's store, so a machine with only the plugin
+// on CLI recall would need its own Linggen and its own store: memory forked in two.
 
 import { readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir, userInfo } from "node:os";
@@ -26,11 +25,11 @@ const CAPTURE_NUDGE =
 // ask primitive named for THIS host: OpenClaw has no structured ask widget, so
 // the resolution question is asked in plain chat.
 const RECONCILE_NOTE =
-  "Note: If a recalled row above duplicates or conflicts with another row or with what the user just said AND the user's current turn is unrelated to memory itself (incidental recall hit), resolve it on the side — merge authority follows voice: memory_delete for exact dups; rows that are all your own notes (from=derived — built/fixed/tried/learned) merge freely into one current-truth row via memory_add with replace_ids listing the losers (atomic insert + delete), no ask; if any row is in the user's voice (from=user — preference/decision/identity), ask first — on this host that is a plain chat question, not a widget — then write the winner via memory_add with replace_ids AND user_directed:true — the daemon BLOCKS user-voice replaces without that flag, and a hedged reflection (\"X feels about right to me\") never justifies it (never separate add + delete). If the user IS explicitly steering memory (\"clean up\", \"remember X\", \"what's in memory\", \"ignore the hits\"), follow their instruction and do NOT side-quest into dedup. Either way, keep memory in good shape.";
+  "Note: If a recalled row above duplicates or conflicts with another row or with what the user just said AND the user's current turn is unrelated to memory itself (incidental recall hit), resolve it on the side — merge authority follows voice: memory_delete for exact dups; rows that are all your own notes (from=derived — built/fixed/tried/learned) merge freely into one current-truth row via memory_add with replace_ids listing the losers (atomic insert + delete), no ask; if any row is in the user's voice (from=user — preference/decision/identity), ask first — on this host that is a plain chat question, not a widget — then write the winner via memory_add with replace_ids AND user_directed:true — memory BLOCKS user-voice replaces without that flag, and a hedged reflection (\"X feels about right to me\") never justifies it (never separate add + delete). If the user IS explicitly steering memory (\"clean up\", \"remember X\", \"what's in memory\", \"ignore the hits\"), follow their instruction and do NOT side-quest into dedup. Either way, keep memory in good shape.";
 
 /**
  * The recall scope for a session at `cwd`: its root (see `memoryRoot`), which
- * the daemon reads — a project root sees rows under it, at its parents and
+ * memory reads — a project root sees rows under it, at its parents and
  * about the person; a skill's dir only its own rows; `$HOME`, `~/.linggen`
  * and temp dirs rows about the person plus at most two strong
  * non-preference matches filed under a directory. "" when there is no cwd.
@@ -62,7 +61,7 @@ async function upkeepLine(client, ttlMin, timeoutMs) {
   } catch {
     /* fall through to the shared name */
   }
-  const cache = join(tmpdir(), `ling-mem-upkeep-${uid}`);
+  const cache = join(tmpdir(), `linggen-upkeep-${uid}`);
 
   try {
     const age = (Date.now() - statSync(cache).mtimeMs) / 60000;
@@ -101,9 +100,9 @@ async function upkeepLine(client, ttlMin, timeoutMs) {
  * empty string.
  */
 export async function buildRecallContext({ client, prompt, cwd, settings } = {}) {
-  // No hardcoded score floor: with no `min_score` the daemon applies its
+  // No hardcoded score floor: with no `min_score` memory applies its
   // store-wide `recall_min_score` (one selectivity shared by all hosts). Set
-  // LING_MEM_RECALL_MIN_SCORE to tighten it per host — applied client-side,
+  // LINGGEN_RECALL_MIN_SCORE to tighten it per host — applied client-side,
   // because `min_score` is deliberately absent from the MCP schema (a *model*
   // guessing a threshold narrows recall to zero).
   const { recallDisabled, topK, limit, recallTimeoutMs, minScore, upkeepCacheMinutes } =
@@ -111,8 +110,8 @@ export async function buildRecallContext({ client, prompt, cwd, settings } = {})
   if (recallDisabled) return "";
   if (typeof prompt !== "string" || prompt.length < 8) return "";
 
-  // Scope the search to where this session stands (its root). Sent to the
-  // daemon rather than applied to its answer: the scope has to shape the
+  // Scope the search to where this session stands (its root). Sent to
+  // memory rather than applied to its answer: the scope has to shape the
   // ranking, because a filter applied afterwards can only shrink a list that
   // was already the wrong N.
   const scope = scopeOf(cwd);
@@ -141,7 +140,7 @@ export async function buildRecallContext({ client, prompt, cwd, settings } = {})
   // never asked of the model).
 
   // Fires on ANY hit: a single recalled row can still conflict with the user's
-  // current turn, and the daemon's user-voice guard needs the resolved write to
+  // current turn, and memory's user-voice guard needs the resolved write to
   // carry user_directed:true.
   if (hits.length >= 1) sections.push(RECONCILE_NOTE);
 

@@ -1,7 +1,7 @@
 // Where a session stands, for memory — the OpenClaw port of
-// `plugins/linggen/hooks/scope.sh` (ling-mem doc/scope-index-spec.md).
+// `plugins/linggen/hooks/scope.sh` (linggen-memory doc/scope-index-spec.md).
 //
-// Hosts hand the daemon paths; the daemon owns the rules (which dirs can hold
+// Hosts hand memory paths; memory owns the rules (which dirs can hold
 // rows, what a root sees). Node builtins only.
 
 import { existsSync } from "node:fs";
@@ -11,7 +11,7 @@ import { dirname, join } from "node:path";
 /**
  * Can rows be about this dir? Not `$HOME` (no particular work), not
  * `~/.linggen` outside a skill's own dir (the engine's state), not a temp dir.
- * Same rule as the daemon's `memory::scope::is_scope_dir`.
+ * Same rule as memory's `memory::scope::is_scope_dir`.
  */
 export function isProjectDir(dir) {
   if (!dir) return false;

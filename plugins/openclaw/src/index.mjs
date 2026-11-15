@@ -8,12 +8,12 @@
 //   PreToolUse stamp-cwd     → before_tool_call    → params
 //   PreToolUse recall on delegate → before_tool_call → params + a note to the parent
 //
-// The fourth CC behaviour — installing the binary and starting the daemon —
+// The fourth CC behaviour — installing and starting Linggen —
 // deliberately does NOT come across. See health.mjs: this plugin diagnoses and
 // the agent acts, through its own shell tool and OpenClaw's approval flow.
 //
 // Nothing here may block or break a turn. Every hook is wrapped, every failure
-// is silence, and a host whose daemon is down simply gets no memory that turn.
+// is silence, and a host whose Linggen is down simply gets no memory that turn.
 
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -61,14 +61,14 @@ function registerSetupCli(api, logger) {
         .command("linggen")
         .description("Configure and inspect the Linggen plugin")
         .command("setup")
-        .description("Point this host's MCP config at the Linggen daemons")
+        .description("Point this host's MCP config at Linggen")
         .action(async () => {
           const client = resolveClient();
           const added = await ensureMcpServers({ api, client, logger });
           process.stdout.write(
             [
-              `  linggen   ${client.linggenUrl}/mcp`,
-              `  ling-mem  ${client.lingMemUrl}`,
+              `  linggen  ${client.linggenUrl}/mcp`,
+              `  memory   ${client.memoryUrl}`,
               added.length ? `Added: ${added.join(", ")}` : "Already configured — nothing changed.",
               "Restart OpenClaw, then: openclaw mcp list",
               "",
@@ -123,7 +123,7 @@ const plugin = definePluginEntry({
 
           // Core identity goes in ONCE per session, as system context: providers
           // cache the system prompt, so an always-on block costs its tokens once
-          // rather than once per turn. A dead daemon yields instructions for
+          // rather than once per turn. A Linggen that is down yields instructions for
           // bringing it back instead.
           if (!coreSent.has(sessionKey)) {
             remember(coreSent, sessionKey);

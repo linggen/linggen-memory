@@ -9,14 +9,18 @@ a recall window; condense cures what no recall ever touches.
   agent (ships cron-disabled, monthly once enabled). Trigger from the
   memory app / mission API.
 - **Claude Code / Codex / OpenClaw** — no mission runtime; the host
-  agent runs the steps below via the `ling-mem` CLI (or the
+  agent runs the steps below via the `ling mem` CLI (or the
   `memory_chains` / `memory_add` MCP tools), on demand.
 
 ## Before the first run — back up
 
 ```bash
-ling-mem export ~/condense-backup-$(date +%F).ndjson
+ling mem export ~/condense-backup-$(date +%F).ndjson
 ```
+
+Run it on the machine that runs Linggen. If it answers that the engine has
+the store open, stop Linggen for the backup (`ling stop`), or go on without
+it and say so.
 
 Condense retires rows (atomically, via `replace_ids`), and the first
 runs should be supervised: watch the `MERGE` lines, spot-check a few
@@ -25,9 +29,9 @@ survivors, keep the export until you trust the pass.
 ## The scan — `chains`
 
 ```bash
-ling-mem chains --derived-only --limit 3                  # cited chains
-ling-mem chains --kind marker --derived-only --limit 5    # marker candidates
-ling-mem chains --kind subject --derived-only --limit 2   # subject clusters (v2)
+ling mem chains --derived-only --limit 3                  # cited chains
+ling mem chains --kind marker --derived-only --limit 5    # marker candidates
+ling mem chains --kind subject --derived-only --limit 2   # subject clusters (v2)
 ```
 
 (MCP: `memory_chains {"kind":"cited","derived_only":true,"limit":3}`.)
@@ -69,10 +73,10 @@ memory_add {
 }
 ```
 
-No `cwd` / `scope`: with `replace_ids` the daemon files the survivor
+No `cwd` / `scope`: with `replace_ids` memory files the survivor
 under the members' common directory (none when any member has none).
 Pass `indexed` and `summary` only when a member was indexed.
-CLI: `ling-mem add "<survivor>" --tier semantic --replace <id>` per
+CLI: `ling mem add "<survivor>" --tier semantic --replace <id>` per
 member — the same atomic call.
 
 Drafting rules (same as the memory agent's):

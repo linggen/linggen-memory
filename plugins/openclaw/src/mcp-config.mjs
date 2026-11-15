@@ -4,16 +4,14 @@
 // API and no manifest field, and a directory holding `openclaw.plugin.json`
 // alongside bundle markers is loaded as native with the bundle side ignored. So
 // the servers are written into the user's config, once, the same two addresses
-// the Claude Code plugin declares in `.mcp.json`.
-//
-// Each tool is served in exactly one place: memory comes from ling-mem, browser
-// and X and agent tools from the engine. The engine does not proxy memory.
+// the Claude Code plugin declares in `.mcp.json`: one Linggen, memory at
+// `/mcp/memory` and the engine's browser, X and agent tools at `/mcp`.
 //
 // Idempotent and non-destructive: an id already present is left exactly as it
-// is. A user who moved a daemon, added headers, or disabled a server keeps their
+// is. A user who moved Linggen, added headers, or disabled a server keeps their
 // edit — this only ever fills a gap.
 
-export const SERVER_IDS = { engine: "linggen", memory: "ling-mem" };
+export const SERVER_IDS = { engine: "linggen", memory: "memory" };
 
 /**
  * Mutate an `openclaw.json` draft in place. Returns the ids actually added, so
@@ -23,7 +21,7 @@ export const SERVER_IDS = { engine: "linggen", memory: "ling-mem" };
 export function configureLinggenMcp(draft, client) {
   const wanted = {
     [SERVER_IDS.engine]: { url: `${client.linggenUrl}/mcp` },
-    [SERVER_IDS.memory]: { url: client.lingMemUrl },
+    [SERVER_IDS.memory]: { url: client.memoryUrl },
   };
 
   const mcp = draft.mcp && typeof draft.mcp === "object" ? draft.mcp : {};
@@ -33,9 +31,9 @@ export function configureLinggenMcp(draft, client) {
   for (const [id, spec] of Object.entries(wanted)) {
     if (servers[id]) continue;
     const entry = { url: spec.url, transport: "streamable-http", enabled: true };
-    // Off-machine, ling-mem's LAN gate wants a paired device's token; loopback
+    // Off-machine, the engine wants an approved machine's token; loopback
     // needs none, so a normal single-machine install sets no header.
-    if (id === SERVER_IDS.memory && client.token && !client.lingMemLocal) {
+    if (client.token && !client.local) {
       entry.headers = { "x-linggen-device": client.token };
     }
     servers[id] = entry;

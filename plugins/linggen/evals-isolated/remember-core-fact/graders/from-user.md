@@ -1,5 +1,5 @@
 ---
 type: tool_used
-tool: mcp__plugin_linggen_ling-mem__memory_add
+tool: mcp__plugin_linggen_memory__memory_add
 input_match: '"from"\s*:\s*"user"'
 ---

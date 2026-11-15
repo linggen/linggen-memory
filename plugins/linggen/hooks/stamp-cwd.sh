@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # PreToolUse hook installed by the linggen plugin. Stamps where the session
 # stands onto every memory call — the facts a host knows and a model would
-# only copy by hand (ling-mem doc/scope-index-spec.md):
+# only copy by hand (linggen-memory doc/scope-index-spec.md):
 #
 #   memory_add           cwd (the row's default scope), root (what a model's
 #                        `scope` resolves against), source_session, host
@@ -9,10 +9,10 @@
 #                        its parents, and about the person)
 #   memory_session_start cwd, root
 #
-# The daemon owns the rules — which dirs can hold rows, which a root sees —
+# Memory owns the rules — which dirs can hold rows, which a root sees —
 # so this hook only hands it paths. `root` is the SESSION's root (scope.sh
 # session_root), not the shell cwd's: the candidates were shown against it. The model picks a row's `scope` from the
-# candidates the SessionStart hook showed; the daemon checks it against
+# candidates the SessionStart hook showed; memory checks it against
 # `root` and falls back to `cwd`.
 #
 # WHY A HOOK AND NOT THE MODEL. These are facts about the session, not
@@ -22,12 +22,12 @@
 # the model every turn, sat at 44%. Anything mechanical belongs here.
 #
 # BOTH HOSTS. Claude Code registers it in hooks.json; Codex in codex.hooks.json
-# with LING_MEM_HOST=codex, which only changes the `host` stamp. Verified on
+# with LINGGEN_CLIENT=codex, which only changes the `host` stamp. Verified on
 # codex-cli 0.167.0 (2026-11-10): Codex fires PreToolUse for MCP tools and
 # applies `updatedInput` together with permissionDecision "allow" — the
 # rewritten arguments reach the tool. (The old note here, citing
 # openai/codex#18491, was stale.) The tool name there is normalised, e.g.
-# `mcp__ling_mem__memory_search`, which the suffix match below covers. Note
+# `mcp__memory__memory_search`, which the suffix match below covers. Note
 # "allow" does not skip Codex's own MCP approval gate: a call that needed
 # approval still needs it.
 #
@@ -35,7 +35,7 @@
 # because attribution could not be worked out.
 
 set -u
-[ "${LING_MEM_STAMP_CWD_DISABLE:-0}" = "1" ] && exit 0
+[ "${LINGGEN_STAMP_CWD_DISABLE:-0}" = "1" ] && exit 0
 command -v jq >/dev/null 2>&1 || exit 0
 
 # shellcheck source=./scope.sh
@@ -48,7 +48,7 @@ cwd="$(printf '%s' "$input"  | jq -r '.cwd // empty'       2>/dev/null || true)"
 sid="$(printf '%s' "$input"  | jq -r '.session_id // empty' 2>/dev/null || true)"
 
 # Suffix match, because the tool arrives namespaced by server
-# (`mcp__plugin_linggen_ling-mem__memory_add`) and that prefix is the user's
+# (`mcp__plugin_linggen_memory__memory_add`) and that prefix is the user's
 # to choose.
 case "$tool" in
   *memory_add)           verb="add" ;;
@@ -84,7 +84,7 @@ case "$verb" in
       add_field cwd "$cwd"
       add_field root "$root"
     fi
-    add_field host "${LING_MEM_HOST:-claude-code}"
+    add_field host "${LINGGEN_CLIENT:-claude-code}"
     ;;
   search)
     # A search the model makes itself is scoped only inside a project. At

@@ -14,24 +14,26 @@
 #
 # The suite lives in plugins/linggen/evals-isolated/, deliberately not evals/:
 # a bare `claude plugin eval .` finds no cases, because a run outside this
-# script would point the plugin's hooks at the real 9528.
+# script would point the plugin's hooks at the real 9527.
 #
 # ISOLATION. An eval run gets a temp HOME and only an allowlisted environment
-# (LING_MEM_PORT is not on it), so neither the plugin's .mcp.json nor its hooks
-# can be pointed away from 9528 by env. Instead:
-#   - MCP: the ling-mem and linggen servers are MOCKED (evals-isolated/mocks,
+# (LINGGEN_PORT is not on it), so neither the plugin's .mcp.json nor its hooks
+# can be pointed away from 9527 by env. Instead:
+#   - MCP: the memory and linggen servers are MOCKED (evals-isolated/mocks,
 #     per-case mocks/). Real plugin servers are never started — never pass
-#     --allow-real-servers or --mocks off: .mcp.json would then reach 9528.
+#     --allow-real-servers or --mocks off: .mcp.json would then reach 9527.
 #   - Hooks: each case's scaffold.sh writes the run's ~/.linggen/client.json
-#     pointing at the scratch daemon this script starts on 29548, seeded with
-#     invented rows. Hosts are written 0.0.0.0, so autostart.sh treats both
-#     daemons as remote and installs/starts nothing.
+#     pointing at the scratch Linggen this script starts on 29548 (a `ling`
+#     binary, LINGGEN_BIN), seeded with invented rows. The host is written
+#     0.0.0.0, so autostart.sh treats it as another machine and installs/starts
+#     nothing.
 #   - Afterwards the real store is checked READ-ONLY: no row may carry an eval
 #     session id or an eval temp path. Exit 3 if one does.
 #
-# The mocked server carries no MCP instructions, so each case appends the live
-# daemon's instructions as a system prompt; this script re-syncs them from the
-# scratch daemon before every run (a diff in prompt.md = the server text moved).
+# The mocked server carries no MCP instructions, so each case appends the
+# scratch engine's memory instructions (/mcp/memory) as a system prompt; this
+# script re-syncs them before every run (a diff in prompt.md = the server text
+# moved).
 
 set -uo pipefail
 
@@ -39,14 +41,14 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PLUGIN="$REPO/plugins/linggen"
 SUITE="evals-isolated"
 REAL_HOME="$HOME"
-BIN="${LING_MEM_BIN:-$REAL_HOME/.local/bin/ling-mem}"
+BIN="${LINGGEN_BIN:-$(command -v ling || true)}"
 PORT=29548 # fixed: every case's scaffold.sh points the hooks here
-REAL_PORT=9528
+REAL_PORT=9527
 
 for tool in jq curl python3 claude; do
   command -v "$tool" >/dev/null || { echo "plugin-eval: needs $tool" >&2; exit 2; }
 done
-[ -x "$BIN" ] || { echo "plugin-eval: no ling-mem binary at $BIN" >&2; exit 2; }
+[ -x "$BIN" ] || { echo "plugin-eval: no ling binary (set LINGGEN_BIN)" >&2; exit 2; }
 for a in "$@"; do
   case "$a" in --allow-real-servers|--mocks|--mocks=*)
     echo "plugin-eval: $a would start the plugin's real MCP servers (.mcp.json → $REAL_PORT); refused" >&2; exit 2 ;;
@@ -59,9 +61,9 @@ DATA="$WORK/data"
 case "$WORK" in */target/plugin-eval) rm -rf "$WORK" ;; *) exit 2 ;; esac
 mkdir -p "$FHOME/.cache" "$DATA"
 [ -d "$REAL_HOME/.cache/huggingface" ] && ln -s "$REAL_HOME/.cache/huggingface" "$FHOME/.cache/huggingface"
-export LING_MEM_NO_TELEMETRY=1
+touch "$DATA/no-telemetry"
 
-# ── Scratch daemon ──────────────────────────────────────────────────────────
+# ── Scratch Linggen ──────────────────────────────────────────────────────────
 
 DPID=""
 KEPT=()
@@ -76,9 +78,13 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 if curl -s --max-time 1 "http://127.0.0.1:$PORT/api/health" >/dev/null 2>&1; then
-  echo "plugin-eval: port $PORT is taken (a stale scratch daemon?)" >&2; exit 2
+  echo "plugin-eval: port $PORT is taken (a stale scratch engine?)" >&2; exit 2
 fi
-HOME="$FHOME" "$BIN" --data-dir "$DATA" serve --port "$PORT" >"$WORK/daemon.log" 2>&1 &
+# Everything the engine keeps lives under $DATA; it binds loopback only, never
+# the old 127.0.0.1:9528, and announces nothing on the LAN.
+(cd "$FHOME" && exec env HOME="$FHOME" LINGGEN_HOME="$DATA" LINGGEN_DATA_DIR="$DATA" LINGGEN_PORT="$PORT" \
+  LINGGEN_LEGACY_MEMORY_PORT=0 LINGGEN_NO_BONJOUR=1 \
+  "$BIN" --web --port "$PORT" --host 127.0.0.1) >"$WORK/daemon.log" 2>&1 &
 DPID=$!
 for _ in $(seq 1 180); do
   curl -sf --max-time 1 "http://127.0.0.1:$PORT/api/health" >/dev/null 2>&1 && break
@@ -86,7 +92,7 @@ for _ in $(seq 1 180); do
   sleep 1
 done
 curl -sf --max-time 1 "http://127.0.0.1:$PORT/api/health" >/dev/null 2>&1 \
-  || { echo "plugin-eval: scratch daemon did not come up; log: $WORK/daemon.log" >&2; tail -5 "$WORK/daemon.log" >&2; exit 1; }
+  || { echo "plugin-eval: scratch engine did not come up; log: $WORK/daemon.log" >&2; tail -5 "$WORK/daemon.log" >&2; exit 1; }
 
 # Invented rows only (a person called Alex). Global rows: an eval workspace is
 # a temp dir, which sees rows about the person.
@@ -96,19 +102,19 @@ SEED='{"facts":[
  {"content":"Alex prefers short code reviews that lead with the riskiest change.","tier":"semantic","type":"preference","from":"user"},
  {"content":"The harbor ferry to Cacilhas leaves every twenty minutes from Cais do Sodre.","tier":"semantic","type":"fact","from":"derived"}
 ]}'
-curl -sf -H 'content-type: application/json' -d "$SEED" "http://127.0.0.1:$PORT/api/memory/add_batch" | jq -e '.ok' >/dev/null \
-  || { echo "plugin-eval: seeding the scratch daemon failed" >&2; exit 1; }
+curl -sf -H 'content-type: application/json' -d "$SEED" "http://127.0.0.1:$PORT/mem/api/memory/add_batch" | jq -e '.ok' >/dev/null \
+  || { echo "plugin-eval: seeding the scratch engine failed" >&2; exit 1; }
 
 # ── Server instructions → each case's append_system_prompt ──────────────────
 
 INIT='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"plugin-eval","version":"1"}}}'
-curl -sf -H 'content-type: application/json' -d "$INIT" "http://127.0.0.1:$PORT/mcp" \
+curl -sf -H 'content-type: application/json' -d "$INIT" "http://127.0.0.1:$PORT/mcp/memory" \
   | jq -r '.result.instructions // empty' >"$WORK/instructions.txt"
-[ -s "$WORK/instructions.txt" ] || { echo "plugin-eval: no MCP instructions from the scratch daemon" >&2; exit 1; }
+[ -s "$WORK/instructions.txt" ] || { echo "plugin-eval: no MCP instructions from the scratch engine" >&2; exit 1; }
 python3 - "$WORK/instructions.txt" "$PLUGIN/$SUITE" <<'PY'
 import pathlib, re, sys
 text = open(sys.argv[1]).read().rstrip("\n")
-body = "# MCP Server Instructions\n\n## plugin:linggen:ling-mem\n" + text
+body = "# MCP Server Instructions\n\n## plugin:linggen:memory\n" + text
 block = "append_system_prompt: |\n" + "\n".join(("  " + l) if l else "" for l in body.split("\n")) + "\n"
 for p in sorted(pathlib.Path(sys.argv[2]).glob("*/prompt.md")):
     s = p.read_text()
@@ -120,9 +126,9 @@ PY
 
 # ── Real store, before (read-only) ──────────────────────────────────────────
 
-real_rows() { # every row on the real daemon, all tiers, read-only
+real_rows() { # every row in the real store, all tiers, read-only
   { for q in '{"limit":100000}' '{"limit":100000,"episodic":true}' '{"limit":1000,"tier":"core"}'; do
-      curl -sf --max-time 20 -H 'content-type: application/json' -d "$q" "http://127.0.0.1:$REAL_PORT/api/memory/list" | jq -c '.data // []'
+      curl -sf --max-time 20 -H 'content-type: application/json' -d "$q" "http://127.0.0.1:$REAL_PORT/mem/api/memory/list" | jq -c '.data // []'
     done; } | jq -sc 'add | unique_by(.id)'
 }
 REAL_UP=0
@@ -132,7 +138,7 @@ curl -sf --max-time 2 "http://127.0.0.1:$REAL_PORT/api/health" >/dev/null 2>&1 &
 # ── Run ─────────────────────────────────────────────────────────────────────
 
 [ $# -eq 0 ] && set -- --runs 1 --ablation none --model haiku
-echo "plugin-eval: scratch ling-mem on $PORT (HOME=$FHOME); real store on $REAL_PORT checked read-only"
+echo "plugin-eval: scratch Linggen on $PORT (HOME=$FHOME); real store on $REAL_PORT checked read-only"
 cd "$PLUGIN" || exit 2
 # No tool grants: a Bash grant needs Claude Code's sandbox, which refuses to run
 # on a Mac whose ~/.docker credential store holds a symlink — cases are built
@@ -165,6 +171,6 @@ if [ "$REAL_UP" = 1 ]; then
   fi
   echo "isolation: PASS — no real-store row carries an eval session id or eval temp path"
 else
-  echo "isolation: real daemon on $REAL_PORT not running — nothing to check"
+  echo "isolation: real Linggen on $REAL_PORT not running — nothing to check"
 fi
 exit "$EVAL_RC"

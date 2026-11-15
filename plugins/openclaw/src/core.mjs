@@ -8,8 +8,8 @@
 // `prependSystemContext`: it joins the *system* prompt, which providers cache,
 // so an always-on block costs its tokens once rather than once per turn.
 //
-// Read over MCP, like recall — so a host whose store is on another machine gets
-// the same core identity as one whose store is local, with no binary of its own.
+// Read over MCP, like recall — so a host whose memory is on another machine gets
+// the same core identity as one whose memory is local, with no binary of its own.
 
 import { mcpCall } from "./rpc.mjs";
 import { memoryRoot } from "./scope.mjs";
@@ -19,11 +19,11 @@ import { memoryRoot } from "./scope.mjs";
  * the index for `cwd` — or "" when the store has nothing to say (a fresh
  * install gets a normal session with no injected block).
  *
- * One `memory_session_start` call: the daemon renders the block, so every host
+ * One `memory_session_start` call: Linggen renders the block, so every host
  * injects the same text. Everything else surfaces through per-turn recall.
  *
  * A slightly longer budget than a per-turn recall: this runs once per session,
- * and a cold daemon has just been asked to open LanceDB.
+ * and an engine that just started may still be opening the store.
  */
 export async function buildCoreContext(client, timeoutMs = 5000, cwd = "") {
   const args = cwd ? { cwd, root: memoryRoot(cwd) } : {};
@@ -31,12 +31,5 @@ export async function buildCoreContext(client, timeoutMs = 5000, cwd = "") {
   if (start && typeof start === "object" && !Array.isArray(start)) {
     return typeof start.block === "string" ? start.block : "";
   }
-
-  // A daemon older than session_start (ling-mem < 1.9) answers with an error:
-  // fall back to the core rows alone, as before.
-  const rows = await mcpCall(client, "memory_list", { tier: "core", limit: 100 }, timeoutMs);
-  if (!Array.isArray(rows)) return "";
-  const lines = rows.filter((row) => row?.content).map((row) => `- ${row.content} (id=${row.id})`);
-  if (!lines.length) return "";
-  return `## Core memory — who the user is\n\n${lines.join("\n")}`;
+  return "";
 }

@@ -6,10 +6,10 @@ scan is standalone; the nightly dream is remember + forget only).
 `scan.sh` already produced a clean, secret-filtered, byte-capped
 transcript per session and wrote them to
 `~/.linggen/memory/.scan-output.jsonl`; you are about to read those
-transcripts and stage durable signal to the daemon.
+transcripts and stage durable signal to memory.
 
 > **Single source.** The contract below mirrors the engine's
-> `linggen/agents/ling-mem.md` **ENCODE phase** verbatim — that file
+> `linggen/agents/memory.md` **ENCODE phase** verbatim — that file
 > is the source of truth (memory-spec §2/§4). When the engine prompt
 > drifts, this file is the one that should change, not the other way
 > around. Do **not** hand-restate; if a discrepancy appears, treat
@@ -20,7 +20,7 @@ transcripts and stage durable signal to the daemon.
 You are the memory worker — an in-host maintenance process, not a
 conversational assistant. You never talk to the user during this
 phase, never ask questions, never explain your reasoning. You run
-`ling-mem` commands and emit one final status line.
+`ling mem` commands and emit one final status line.
 
 Input: lines 2..N of `.scan-output.jsonl`, one cleaned session per
 line. Each row has a `transcript` field with the flattened
@@ -74,7 +74,7 @@ Three destinations, picked from the utterance itself:
    tech gotchas. Use this when the user **explicitly** asked to
    remember it (*"remember X"*, *"记住 X"*) or used commitment language.
 
-3. **`--episodic`** — uncertain-durability signal: useful-looking but not
+3. **episodic** (no `--tier`) — uncertain-durability signal: useful-looking but not
    clearly worth a permanent core/semantic row. This is the default
    capture lane (an add with no tier lands here) (the live agent also appends here every turn). The dream
    (consolidate) clusters near-dups, promotes the durable, and evicts the
@@ -94,11 +94,11 @@ shipped artifact tied to user identity or a trajectory-level pattern.
 
 ## Read before you write — every row
 
-You have `Bash` + the `ling-mem` CLI; check existing memory before
+You have `Bash` + the `ling mem` CLI; check existing memory before
 adding each candidate:
 
-1. `ling-mem search "<candidate gist>" --format json | jq -c 'del(.vector)'`
-   (and also `--episodic`) to find rows on the same subject.
+1. `ling mem search "<candidate gist>" --format json | jq -c 'del(.vector)'`
+   to find rows on the same subject (search covers long-term and episodic).
 2. **Already there** (exact, or a reworded restatement of the same
    value) → **skip the write.** Don't add a duplicate. Decide sameness
    by *reading the content*, not the similarity score.
@@ -107,10 +107,10 @@ adding each candidate:
    - **If you can ask the user** (a user-triggered `dream` with `AskUser`
      available): surface the existing row, the candidate, and the resolve
      options; on their pick, write the winner with `replace_ids` listing each loser
-     (`ling-mem add "<winner>" --type <t> --from <f> --replace <loser-id>
+     (`ling mem add "<winner>" --type <t> --from <f> --replace <loser-id>
      --user-directed` — one atomic call; losers are archived).
    - **If you're headless** (the nightly cron, no user present): **defer.**
-     Leave the candidate in `--episodic` and **don't touch the live
+     Leave the candidate in episodic and **don't touch the live
      semantic row** — the contradiction is resolved at recall time when
      the user is present. Episodic is staging; deferring there is safe.
 4. **New / unrelated** → write normally.
@@ -122,20 +122,20 @@ another directory than the session's, `--global` when it is about the
 person, `--summary` + `--indexed` on standing rules):
 
 ```
-ling-mem add "<content>" --tier semantic --type <fact|preference|decision|learned> --from <user|agent|derived> [--scope <dir>|--global] [--summary "<one line>" --indexed]
+ling mem add "<content>" --tier semantic --type <fact|preference|decision|learned> --from <user|agent|derived> [--scope <dir>|--global] [--summary "<one line>" --indexed]
 ```
 
 Core write (always-loaded universals about the person; no scope):
 
 ```
-ling-mem add "<content>" --type fact --from user --tier core
+ling mem add "<content>" --type fact --from user --tier core
 ```
 
 Episodic write (uncertain-durability signal, awaits consolidation — the
 default when `--tier` is omitted):
 
 ```
-ling-mem add "<content>" --episodic --type <type> --from <from> [--scope <dir>]
+ling mem add "<content>" --type <type> --from <from> [--scope <dir>]
 ```
 
 ## Forbidden — what extraction must NOT do

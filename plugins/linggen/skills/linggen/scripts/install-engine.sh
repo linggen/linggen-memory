@@ -99,7 +99,14 @@ detect_slug() {
     darwin)
       case "$arch" in
         arm64|aarch64) echo "macos-aarch64" ;;
-        x86_64|amd64)  echo "macos-x86_64" ;;
+        x86_64|amd64)
+          # No Intel macOS build is published; say so instead of a 404.
+          # --local-path still installs a binary someone built themselves.
+          if [ -z "$LOCAL_PATH" ]; then
+            echo "Linggen does not support Intel Macs yet — it needs a Mac with Apple silicon (M1 or later)." >&2
+            exit 1
+          fi
+          echo "macos-x86_64" ;;
         *) echo "Unsupported architecture: $arch" >&2; exit 1 ;;
       esac
       ;;

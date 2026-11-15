@@ -1,19 +1,35 @@
 #!/usr/bin/env bash
-# bootstrap.sh — ensure the ling-mem CLI and the Linggen engine are installed.
-# Run from SKILL.md's first-use gate; each install is a no-op when the binary
-# is already present.
+# bootstrap.sh — ensure Linggen (`ling`, the engine that also hosts memory) is
+# installed. Run from SKILL.md's first-use gate; a no-op when `ling` is present.
+#
+# Only when Linggen lives on THIS machine. A host pointed at another machine's
+# Linggen (~/.linggen/client.json, or LINGGEN_HOST) installs nothing: a local
+# Linggen would open a second, empty store — memory forked in two.
 #
 # Install-channel labels: this script derives via/agent from WHERE THIS FILE
 # IS RUNNING FROM — the skill dir's path is a fingerprint of the channel that
 # delivered it, measured at run time. Never hardcode a channel here: this one
 # file ships through ClawHub, the CC/Codex plugin, and skills.sh, so any
 # static label would be wrong on the other channels. An unrecognized path
-# labels nothing and the installers use their own defaults. The labels only
-# reach a local marker file (~/.linggen/.*-install-source) that the binary
-# reports once on first launch; this script never POSTs anywhere.
+# labels nothing and the installer uses its own defaults. The labels only
+# reach a local marker file (~/.linggen/.linggen-install-source) that the
+# binary reports once on first launch; this script never POSTs anywhere.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Where Linggen lives, read the way the plugin hooks read it (client.json's
+# `ling`, else LINGGEN_HOST). Plain text tools only — no jq on a fresh Mac.
+client="${LINGGEN_DATA_DIR:-$HOME/.linggen}/client.json"
+addr=""
+[ -r "$client" ] && addr="$(tr -d '\n' <"$client" | sed -n 's/.*"ling"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
+host="${addr#*://}"; host="${host%%/*}"; host="${host%:*}"
+[ -n "$host" ] || host="${LINGGEN_HOST:-127.0.0.1}"
+case "$host" in
+  127.0.0.1|localhost|::1) ;;
+  *) echo "bootstrap: this host uses the Linggen on $host — nothing to install here."; exit 0 ;;
+esac
+
 via="" agent=""
 case "$here" in
   */.openclaw/workspace/skills/*) via=clawhub  agent=openclaw ;;
@@ -29,25 +45,15 @@ case "$here" in
   */.agents/skills/*)             via=skills-sh ;;   # shared dir — host unknowable
   */.claude/skills/*)             agent=cc ;;        # manual stub — door unknowable
 esac
-[ -n "$via" ]   && export LING_MEM_SOURCE="$via" LINGGEN_SOURCE="$via"
-[ -n "$agent" ] && export LING_MEM_AGENT="$agent" LINGGEN_AGENT="$agent"
+[ -n "$via" ]   && export LINGGEN_SOURCE="$via"
+[ -n "$agent" ] && export LINGGEN_AGENT="$agent"
 
-# Both installers ship IN this bundle and LINGGEN_NO_REMOTE_SCRIPT=1 makes
-# install-engine.sh refuse its curl fallback outright — this flow never
-# executes a remotely fetched script. What does come over the network are
-# the release BINARIES: ling-mem is SHA-256-verified by install-bin.sh; the
-# engine and bun binaries are fetched from GitHub releases over TLS without
-# a checksum yet (release-manifest verification is on the roadmap).
+# The installer ships IN this bundle and LINGGEN_NO_REMOTE_SCRIPT=1 makes it
+# refuse any curl fallback outright — this flow never executes a remotely
+# fetched script. What does come over the network is the release binary,
+# checked against its published SHA-256 (and bun, against bun's own sums).
 export LINGGEN_NO_REMOTE_SCRIPT=1
 
-# ling-mem — the memory backend. Installs to ~/.local/bin.
-if ! command -v ling-mem >/dev/null 2>&1; then
-  bash "$here/install-bin.sh" --version '^1'
-fi
-
-# Linggen engine — powers the browser/x/agent MCP tools. Optional: memory
-# works with ling-mem alone, so a failure here is reported, not fatal.
 if ! command -v ling >/dev/null 2>&1 && [ ! -x "$HOME/.local/bin/ling" ]; then
-  bash "$here/install-engine.sh" \
-    || echo "bootstrap: engine install failed (memory still works via ling-mem)" >&2
+  bash "$here/install-engine.sh"
 fi

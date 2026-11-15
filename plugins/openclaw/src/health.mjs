@@ -1,6 +1,6 @@
-// Is the memory store reachable, and if not, what should be done about it.
+// Is Linggen reachable, and if not, what should be done about it.
 //
-// The Claude Code plugin installs the binary and starts the daemon itself, from
+// The Claude Code plugin installs and starts Linggen itself, from
 // `autostart.sh`. This plugin deliberately does neither: OpenClaw's installer
 // blocks any plugin that spawns processes, and a memory plugin that can
 // only be installed with `--dangerously-force-unsafe-install` is not a plugin
@@ -14,46 +14,45 @@
 
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 
 import { alive } from "./rpc.mjs";
 
-/** ling-mem's health endpoint sits beside its MCP route. */
-function baseOf(mcpUrl) {
-  return mcpUrl.replace(/\/mcp\/?$/, "");
+/** Is `ling` installed — on PATH or in the installer's fallback dir? */
+function lingInstalled(env = process.env) {
+  const dirs = [...String(env.PATH ?? "").split(delimiter), join(homedir(), ".local", "bin")];
+  return dirs.some((dir) => dir && existsSync(join(dir, "ling")));
 }
 
 /**
- * Returns "" when memory is healthy, or a block of instructions for the agent
- * when it is not. Delivered once per session as system context, so it must read
- * as guidance rather than an error.
+ * Returns "" when Linggen is reachable, or a block of instructions for the
+ * agent when it is not. Delivered once per session as system context, so it
+ * must read as guidance rather than an error.
  */
 export async function memoryNotice(client, pluginRoot) {
-  if (await alive(baseOf(client.lingMemUrl))) return "";
+  if (await alive(client.linggenUrl)) return "";
 
-  // A host pointed at another machine installs nothing: a local daemon would
-  // answer from a DIFFERENT store and silently fork the user's memory in two.
-  if (!client.lingMemLocal) {
+  // A host pointed at another machine installs and starts nothing: a local
+  // Linggen would open a DIFFERENT store and silently fork the user's memory.
+  if (!client.local) {
     return [
       "## Linggen memory is unreachable",
       "",
-      `This host is configured to use the memory store at ${client.lingMemUrl}, and that address is not answering.`,
-      "Nothing should be installed here — the store lives on another machine, and a second local daemon would be a second store.",
-      "Tell the user their Linggen host looks down or unreachable on the network, and that `~/.linggen/client.json` holds the address this host is trying.",
+      `This host is configured to use the Linggen at ${client.linggenUrl}, and that address is not answering.`,
+      "Nothing should be installed or started here — memory lives on that machine, and a local Linggen would be a second store. Do not run `ling mem` here either.",
+      "Tell the user their Linggen machine looks down or unreachable on the network, and that `~/.linggen/client.json` holds the address this host is trying.",
     ].join("\n");
   }
 
-  const installed = existsSync(join(homedir(), ".local", "bin", "ling-mem"));
   const bootstrap = join(pluginRoot, "skills", "linggen", "scripts", "bootstrap.sh");
-
-  const fix = installed
-    ? "The `ling-mem` binary is installed but its daemon is not running. Start it with your shell tool: `ling-mem start`"
-    : `The \`ling-mem\` binary is not installed yet. ASK the user first — one line: "Linggen needs its two local binaries (ling-mem ~30MB, the engine ~100MB, both SHA-verified to ~/.local/bin) — install now?" Only on their yes, run with your shell tool: \`bash ${bootstrap}\`. The installers ship inside this plugin; no remotely fetched script is executed.`;
+  const fix = lingInstalled()
+    ? "Linggen (`ling`) is installed but not running. Start it with your shell tool: `ling --web` (in the background), or ask the user to open Linggen.app."
+    : `Linggen is not installed yet. ASK the user first — one line: "Linggen needs its local engine (~100MB, SHA-verified, to /usr/local/bin or ~/.local/bin) — install now?" Only on their yes, run with your shell tool: \`bash ${bootstrap}\`. The installer ships inside this plugin; no remotely fetched script is executed.`;
 
   return [
     "## Linggen memory is offline this session",
     "",
-    `Nothing is answering at ${client.lingMemUrl}, so automatic recall and the \`memory_*\` tools are unavailable right now.`,
+    `Nothing is answering at ${client.linggenUrl}, so automatic recall and the \`memory_*\` tools are unavailable right now.`,
     fix,
     "Once it is up, the memory tools appear after the next gateway restart.",
   ].join("\n");

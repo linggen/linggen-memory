@@ -5,7 +5,7 @@
 # flattened, secret-filtered transcript to stdout. No network calls.
 # No data leaves the machine. The agent reads stdout in-process to
 # extract durable user preferences, which it writes back to the LOCAL
-# ling-mem database.
+# memory store.
 #
 # extract_session.sh — Print a flattened [role]: text transcript for one session.
 #
@@ -163,7 +163,7 @@ apply_max() {
 }
 
 # Emit a one-line [SESSION_CWD] header so the agent can pass --cwd
-# through to ling-mem writes. Source-specific extraction.
+# through to memory writes. Source-specific extraction.
 emit_cwd_header_cc() {
   local session_cwd
   session_cwd=$(jq -r 'select(.cwd != null) | .cwd' "$FILEPATH" 2>/dev/null \

@@ -2,7 +2,7 @@
 //
 // When the model hands work to another agent, the brief it writes is all that
 // agent sees: the mid-turn agent misses memory, and a stale claim in the brief
-// goes uncorrected. So the delegated brief's text is searched in ling-mem and
+// goes uncorrected. So the delegated brief's text is searched in memory and
 // the hits are appended to it; the parent model is told the same block.
 //
 //   Claude Code / Codex  PreToolUse    → updatedInput + additionalContext
@@ -23,7 +23,7 @@ import { memoryRoot } from "./scope.mjs";
 /** One heading, shared by the block, the already-recalled check and the shell
  *  hook (`plugins/linggen/hooks/recall-on-delegate.sh` carries the same text). */
 export const DELEGATE_HEADING =
-  "From memory (ling-mem) — recalled for this task; newer rows win over what the brief says:";
+  "From Linggen's memory — recalled for this task; newer rows win over what the brief says:";
 
 /** Delegation tool (base name) → the parameter that carries the brief. */
 const BRIEF_FIELD = {
@@ -111,7 +111,7 @@ export async function recallOnDelegate({ toolName, params, cwd, client, settings
  */
 export async function tellParent(api, { sessionKey, agentId, toolCallId }, text) {
   if (!sessionKey || !text) return "";
-  const key = `ling-mem-delegate:${toolCallId ?? Date.now()}`;
+  const key = `linggen-delegate:${toolCallId ?? Date.now()}`;
   const workflow = api?.session?.workflow;
   try {
     if (typeof workflow?.steerActiveRun === "function") {

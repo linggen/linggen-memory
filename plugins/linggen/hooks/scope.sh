@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Shared by autostart.sh, recall.sh and stamp-cwd.sh: where a session stands,
-# for memory (ling-mem doc/scope-index-spec.md). Hosts hand the daemon paths;
-# the daemon owns the rules (which dirs can hold rows, what a root sees).
+# for memory (linggen-memory doc/scope-index-spec.md). Hosts hand memory paths;
+# memory owns the rules (which dirs can hold rows, what a root sees).
 #
 # memory_root <cwd> — the session's root: the git root above <cwd> (never
 # $HOME, which is a dotfiles repo at most), else CLAUDE_PROJECT_DIR (where a
@@ -31,7 +31,7 @@ memory_root() {
     esac
     root="$(git_root "$cwd")"
     # Never $HOME, and never a repo ABOVE it (a cwd under $HOME whose git
-    # root is outside it): the daemon's find_root stops at $HOME too.
+    # root is outside it): memory's find_root stops at $HOME too.
     [ "$root" = "$HOME" ] && root=""
     case "$cwd" in "$HOME"|"$HOME"/*) case "$root" in "$HOME"/*) ;; *) root="" ;; esac ;; esac
     [ -n "$root" ] || root="${CLAUDE_PROJECT_DIR:-}"
@@ -62,8 +62,8 @@ session_root() {
 }
 
 # is_project_dir <dir> — can rows be about this dir? Not $HOME, not
-# ~/.linggen outside a skill's own dir, not a temp dir. Same rule as the
-# daemon's memory::scope::is_scope_dir and the engine's is_project_dir.
+# ~/.linggen outside a skill's own dir, not a temp dir. Same rule as
+# memory's memory::scope::is_scope_dir and the engine's is_project_dir.
 is_project_dir() {
     local d="$1" tmp="${TMPDIR:-/tmp}"
     case "$d" in

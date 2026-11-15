@@ -42,8 +42,8 @@ Use the Linggen engine's MCP agent tools for delegated coding work:
 Global <br>
 
 ## Known Risks and Mitigations: <br>
-Risk: On first use the skill installs two binaries by piping remote shell scripts to bash — `install-bin.sh` from the linggen-memory GitHub repo and `install.sh` from linggen.dev — and SKILL.md instructs the agent to run them without asking first. Each is a no-op when the binary is already present. <br>
-Mitigation: Read both installer scripts at their published URLs before installing this skill, or install `ling-mem` and `ling` yourself beforehand so the checks short-circuit. `ling-mem` lands in `~/.local/bin`, pinned to the 1.x line and SHA-256 verified. Later upgrades (`ling-mem upgrade --yes`) do ask before swapping the binary. <br>
+Risk: On first use the skill installs the Linggen engine (`ling`, ~100MB) with the installer bundled in the skill (`scripts/install-engine.sh`, run by `scripts/bootstrap.sh`). SKILL.md tells the agent to ask the user before the first install; the bootstrap is a no-op when `ling` is already present or this host uses another machine's Linggen. <br>
+Mitigation: Read the bundled installer before installing this skill, or install `ling` yourself beforehand so the check short-circuits. The release binary is SHA-256 verified and lands in `/usr/local/bin` (or `~/.local/bin` when that is not writable). Later updates (`ling update`) are asked before they run. <br>
 Risk: The local MCP server exposes `agent_run`, which starts a Linggen engine agent. This is broader than the memory-and-browser purpose the skill's name and summary suggest. <br>
 Mitigation: Treat `agent_run` as general agent-execution authority, not a memory tool. Do not install if your environment should not grant that; where your host supports per-tool allowlisting, exclude `agent_run` and keep only the `memory_*` tools. <br>
 Risk: The skill stores durable memory under `~/.linggen/memory`, saves personal facts (relationships, location, timezone, identity, goals) from ordinary conversation on the agent's own judgment rather than an explicit per-capture opt-in, and injects recalled facts into the prompts sent to your configured LLM provider. Records include `[SESSION_CWD]` project-path metadata. <br>
@@ -55,7 +55,7 @@ Mitigation: Back up the store before maintenance passes, and use the audit and r
 Risk: Browser and X-session access reads logged-in user context and can act in the browser through the local MCP server. <br>
 Mitigation: Use browser access only with the visible controlled tab and per-site permission prompts enabled; stop when permissions are declined, and require confirmation for credentials, payments, deletes, and posting. <br>
 Risk: A shared memory store can be affected by version or schema skew between installers and hosts. <br>
-Mitigation: Check Linggen and ling-mem status before maintenance operations, keep one source of truth for binary updates, and back up the memory store before maintenance passes. <br>
+Mitigation: Check Linggen's status before maintenance operations, keep one source of truth for updates (one `ling` per machine), and back up the memory store before maintenance passes. <br>
 
 
 ## Reference(s): <br>

@@ -7,7 +7,7 @@ import { DELEGATE_HEADING, briefField, recallOnDelegate, tellParent } from "../s
 import { stampCwd } from "../src/stamp-cwd.mjs";
 
 const SHELL_HOOK = new URL("../../linggen/hooks/recall-on-delegate.sh", import.meta.url);
-const CLIENT = { lingMemUrl: "http://127.0.0.1:9528/mcp", token: "" };
+const CLIENT = { memoryUrl: "http://127.0.0.1:9527/mcp/memory", token: "" };
 const BRIEF = "Refactor the sync module so it retries on a flaky network, then run the tests.";
 const ROW = { id: "abc123", type: "decision", created_at: "2026-11-02T10:00:00Z", content: "ZEBRA-MARKER retries are capped at 3" };
 
@@ -80,18 +80,18 @@ test("rows are cut to 400 chars and flattened to one line", async () => {
 });
 
 test("env switches", async () => {
-  assert.equal(await run({ settings: settings({ LING_MEM_DELEGATE: "0" }) }), null);
-  const noteOnly = await run({ settings: settings({ LING_MEM_DELEGATE_REWRITE: "0" }) });
+  assert.equal(await run({ settings: settings({ LINGGEN_DELEGATE: "0" }) }), null);
+  const noteOnly = await run({ settings: settings({ LINGGEN_DELEGATE_REWRITE: "0" }) });
   assert.equal(noteOnly.params, undefined);
   assert.ok(noteOnly.note.includes("ZEBRA-MARKER"));
   let limit;
-  await run({ settings: settings({ LING_MEM_DELEGATE_LIMIT: "5" }), search: async (_c, _n, a) => ((limit = a.limit), [ROW]) });
+  await run({ settings: settings({ LINGGEN_DELEGATE_LIMIT: "5" }), search: async (_c, _n, a) => ((limit = a.limit), [ROW]) });
   assert.equal(limit, 5);
 });
 
 test("stamp-cwd is unchanged by the delegate path", () => {
   assert.deepEqual(
-    stampCwd({ toolName: "ling-mem__memory_search", params: { query: "q" }, cwd: "/nonexistent/repo", sessionId: "s1" }),
+    stampCwd({ toolName: "memory__memory_search", params: { query: "q" }, cwd: "/nonexistent/repo", sessionId: "s1" }),
     { query: "q", scope_root: "/nonexistent/repo" },
   );
   assert.equal(stampCwd({ toolName: "sessions_spawn", params: { task: BRIEF }, cwd: "/nonexistent/repo", sessionId: "s1" }), null);
@@ -104,7 +104,7 @@ test("tellParent steers when it can, queues when it cannot, stays quiet otherwis
     session: { workflow: { steerActiveRun: async (p) => (calls.push(["steer", p]), { steered: true }) } },
   };
   assert.equal(await tellParent(steering, target, "note"), "steered");
-  assert.equal(calls[0][1].idempotencyKey, "ling-mem-delegate:t1");
+  assert.equal(calls[0][1].idempotencyKey, "linggen-delegate:t1");
 
   const notSteered = {
     session: {
@@ -130,5 +130,5 @@ test("tellParent steers when it can, queues when it cannot, stays quiet otherwis
 });
 
 test("the heading matches the Claude Code / Codex hook's", { skip: !existsSync(SHELL_HOOK) }, () => {
-  assert.ok(readFileSync(SHELL_HOOK, "utf8").includes(`heading='${DELEGATE_HEADING}'`));
+  assert.ok(readFileSync(SHELL_HOOK, "utf8").includes(`heading="${DELEGATE_HEADING}"`));
 });

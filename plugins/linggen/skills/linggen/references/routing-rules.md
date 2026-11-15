@@ -14,7 +14,7 @@ the measure.
 > 2. Would a future agent, starting cold, make better predictions about what this user wants and how they work because this memory exists?
 
 If both pass and the fact is about the **person** → core
-(`ling-mem add ... --tier core`).
+(`ling mem add ... --tier core`).
 If both pass and it's not about the person (goal, preference, decision,
 cross-project learning) → long-term (`tier=semantic`, written
 explicitly — an omitted tier lands episodic), scoped to the directory it
@@ -162,7 +162,7 @@ plain chat text + numbered options when neither exists.
 
 - Never delete a `semantic` row **silently** to resolve a contradiction.
   Ask first via AskUser; on the user's pick, write the winner with
-  `ling-mem add "<winner>" --type ... --from ... --replace <id>
+  `ling mem add "<winner>" --type ... --from ... --replace <id>
   --user-directed` (losers archived, one atomic call). Silent deletion
   is the floor violation.
 - Never write a contradicting pair as separate atoms hoping live recall
@@ -182,8 +182,8 @@ When a candidate emerges, route to one of two tiers or drop it.
 
 | tier | When | Action |
 |:---|:---|:---|
-| `core` | Universal about the person (no scope, never a preference) | `ling-mem add "..." --tier core --type fact ...` |
-| `semantic` | Intent / decision / preference / learning | `ling-mem add "..." --tier semantic --type <type> [--scope <dir>\|--global] [--summary "..." --indexed] ...` |
+| `core` | Universal about the person (no scope, never a preference) | `ling mem add "..." --tier core --type fact ...` |
+| `semantic` | Intent / decision / preference / learning | `ling mem add "..." --tier semantic --type <type> [--scope <dir>\|--global] [--summary "..." --indexed] ...` |
 | (skip) | Project-internal implementation detail / activity / session-arc / meta-feedback | Drop. The agent reads code or user-authored project files when needed. |
 
 Most candidates skip. The core tier grows slowly by design — a noisy
