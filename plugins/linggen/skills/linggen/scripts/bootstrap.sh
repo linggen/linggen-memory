@@ -20,15 +20,20 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Where Linggen lives, read the way the plugin hooks read it (client.json's
 # `ling`, else LINGGEN_HOST). Plain text tools only — no jq on a fresh Mac.
+# An old file's memory address (`ling_mem`) on another machine counts too:
+# this host used that machine's memory.
 client="${LINGGEN_DATA_DIR:-$HOME/.linggen}/client.json"
-addr=""
-[ -r "$client" ] && addr="$(tr -d '\n' <"$client" | sed -n 's/.*"ling"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
-host="${addr#*://}"; host="${host%%/*}"; host="${host%:*}"
-[ -n "$host" ] || host="${LINGGEN_HOST:-127.0.0.1}"
-case "$host" in
-  127.0.0.1|localhost|::1) ;;
-  *) echo "bootstrap: this host uses the Linggen on $host — nothing to install here."; exit 0 ;;
-esac
+key() { [ -r "$client" ] && tr -d '\n' <"$client" | sed -n 's/.*"'"$1"'"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p'; }
+host_of() { local h="${1#*://}"; h="${h%%/*}"; printf '%s' "${h%:*}"; }
+is_local() { case "$1" in 127.0.0.1|localhost|::1|"") return 0 ;; *) return 1 ;; esac; }
+host="$(host_of "$(key ling)")"
+[ -n "$host" ] || host="${LINGGEN_HOST:-}"
+old="$(host_of "$(key ling_mem)")"
+is_local "$host" && ! is_local "$old" && host="$old"
+if ! is_local "$host"; then
+  echo "bootstrap: this host uses the Linggen on $host — nothing to install here."
+  exit 0
+fi
 
 via="" agent=""
 case "$here" in

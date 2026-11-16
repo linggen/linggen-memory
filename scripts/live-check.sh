@@ -59,7 +59,7 @@ BIN="$(cd "$(dirname "$BIN")" && pwd)/$(basename "$BIN")"
 
 WORK="$REPO/target/live-check"
 FHOME="$WORK/home"
-DATA="$WORK/data"
+DATA="$FHOME/.linggen"   # where Linggen keeps everything for that HOME
 case "$WORK" in */target/live-check) rm -rf "$WORK" ;; *) exit 2 ;; esac
 mkdir -p "$FHOME" "$DATA"
 
@@ -89,7 +89,9 @@ PIDS=()
 cleanup() {
   for p in "${PIDS[@]+"${PIDS[@]}"}"; do kill "$p" 2>/dev/null; done
   wait 2>/dev/null
-  [ "$KEEP" = 1 ] || rm -rf "$WORK/data" "$WORK/copy" "$WORK/mig"
+  # Anything an engine spawned there (its runtime installs) goes with it.
+  pkill -f "$WORK/" 2>/dev/null
+  [ "$KEEP" = 1 ] || rm -rf "$DATA/memory" "$WORK/copy" "$WORK/mig"
 }
 trap cleanup EXIT INT TERM
 

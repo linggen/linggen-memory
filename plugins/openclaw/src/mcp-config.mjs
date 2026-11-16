@@ -13,6 +13,13 @@
 
 export const SERVER_IDS = { engine: "linggen", memory: "memory" };
 
+/** The entry an earlier version of this plugin wrote for the retired memory
+ *  daemon. Left in place it would put a second set of memory tools in front of
+ *  the model (the old address still answers on an upgraded machine), so it is
+ *  removed — but only while it still names the old port, i.e. it is ours. */
+const OLD_MEMORY_ID = "ling-mem";
+const isOldMemoryEntry = (entry) => typeof entry?.url === "string" && /:9528\/mcp\/?$/.test(entry.url); // the old memory port
+
 /**
  * Mutate an `openclaw.json` draft in place. Returns the ids actually added, so
  * the caller can log precisely what it changed rather than claiming credit for
@@ -27,6 +34,8 @@ export function configureLinggenMcp(draft, client) {
   const mcp = draft.mcp && typeof draft.mcp === "object" ? draft.mcp : {};
   const servers = mcp.servers && typeof mcp.servers === "object" ? mcp.servers : {};
   const added = [];
+
+  if (isOldMemoryEntry(servers[OLD_MEMORY_ID])) delete servers[OLD_MEMORY_ID];
 
   for (const [id, spec] of Object.entries(wanted)) {
     if (servers[id]) continue;
@@ -57,7 +66,7 @@ export async function ensureMcpServers({ api, client, logger }) {
   try {
     const current = api.runtime.config.current?.();
     const servers = current?.mcp?.servers ?? {};
-    if (Object.values(SERVER_IDS).every((id) => servers[id])) return [];
+    if (Object.values(SERVER_IDS).every((id) => servers[id]) && !isOldMemoryEntry(servers[OLD_MEMORY_ID])) return [];
   } catch {
     // Unreadable current config: fall through and let the mutation decide.
   }

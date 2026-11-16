@@ -105,6 +105,15 @@ test("MCP config leaves a user's own entry untouched", () => {
   assert.equal(draft.mcp.servers.memory.transport, "sse");
 });
 
+test("the retired memory entry this plugin wrote goes; a user's own stays", () => {
+  const draft = { mcp: { servers: { "ling-mem": { url: "http://127.0.0.1:9528/mcp", transport: "streamable-http" } } } };
+  assert.deepEqual(configureLinggenMcp(draft, CLIENT), ["linggen", "memory"]);
+  assert.equal(draft.mcp.servers["ling-mem"], undefined);
+  const own = { mcp: { servers: { "ling-mem": { url: "http://192.168.1.9:7000/mcp" } } } };
+  configureLinggenMcp(own, CLIENT);
+  assert.equal(own.mcp.servers["ling-mem"].url, "http://192.168.1.9:7000/mcp");
+});
+
 test("another machine's Linggen: both servers carry its token", () => {
   const draft = {};
   configureLinggenMcp(draft, {

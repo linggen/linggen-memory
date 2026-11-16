@@ -5,7 +5,7 @@ description: Linggen status — version + updates, memory size, upkeep (scan/dre
 Invoke the linggen skill (Skill tool) and treat this message as `/linggen status` — Status mode. Gather, then render ONE glanceable block. Two fetches, run them in parallel:
 
 1. `memory_dream_status` (MCP, `linggen` server) — firsts, `total_days`/`scanned_days`/`dreamed_days`, `open_issues`, `last_run`, `last_run_error`. Fallback when that server is unavailable: `memory_days` (MCP, `memory` server).
-2. One Bash call combining, all failure-tolerant (`|| true`, `--max-time 2`). Where Linggen lives: `A="$(jq -r '.ling // empty' ~/.linggen/client.json 2>/dev/null)"; A="${A:-http://127.0.0.1:9527}"`.
+2. One Bash call combining, all failure-tolerant (`|| true`, `--max-time 2`). Where Linggen lives (the address `/linggen:config` prints on its `linggen` line; by hand: `A="$(jq -r '.ling // empty' ~/.linggen/client.json 2>/dev/null)"; A="${A:-http://127.0.0.1:9527}"` — an old file that also names `ling_mem` on another machine means that machine, port 9527).
    - `curl -s --max-time 2 "$A/api/health"` — Linggen up, its `version`
    - only when `$A` is this machine (127.0.0.1 / localhost): `ling mem stats --format json` — per-tier row counts + `disk_bytes.total`, and `curl -s --max-time 2 "$A/api/bridge/status"` — is the browser extension connected (`connected`)
    - Linggen latest, 24h file cache (NEVER a fresh network hit when the cache is warm):

@@ -331,6 +331,9 @@ SKS=()
 for p in "$SKP/SKILL.md" "$SKP/references" "$SKP/doc" "$SKP/README.md"; do [ -e "$p" ] && SKS+=("$p"); done
 if [ ${#SKS[@]} -gt 0 ]; then scan --list "shared-memory skill (the skills repo owns it)" "${SKS[@]}"
 else skip "text: shared-memory skill" "no repo copy at $SKP"; fi
+# This repo's Rust crate still serves its own MCP text (the standalone
+# binary); its future is decided apart from the plugins, so it is listed.
+[ -e "$REPO/src/http/mcp.rs" ] && scan --list "this repo's crate (src/http/mcp.rs; decided apart from the plugins)" "$REPO/src/http/mcp.rs"
 ENG=()
 for p in "${ENGINE_SURFACES[@]}"; do [ -e "$p" ] && ENG+=("$p"); done
 if [ ${#ENG[@]} -gt 0 ]; then scan --list "engine surfaces (the engine repo owns them)" "${ENG[@]}"

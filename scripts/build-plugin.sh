@@ -7,9 +7,11 @@
 # longer a per-host `cc/` or `codex/` build output — the tree IS the artifact.
 #
 # Two DIFFERENT versions live here; do not conflate them:
-#   • Binary version (Cargo.toml) — the `ling-mem` crate/release the plugin
-#     fetches. The VERSION file drives the SessionStart binary bootstrap
-#     (autostart.sh / install-bin.sh), so it must track Cargo.
+#   • Binary version (Cargo.toml) — this repo's crate. Since plugin 1.8.0 the
+#     plugin installs only Linggen (`ling`, which hosts memory) and fetches no
+#     binary of this crate, so nothing in the plugin reads the VERSION file any
+#     more; it is kept as the record of the crate version the tree was stamped
+#     beside.
 #   • Plugin/skill CONTENT version — the manifests
 #     (`.claude-plugin/plugin.json`, `.codex-plugin/plugin.json`) and the
 #     ClawHub skill. This LEADS the binary version when skill/doc-only
@@ -17,7 +19,7 @@
 #     0.7.2). ClawHub versions are immutable, so doc fixes force a content
 #     bump independent of the binary.
 #
-# Therefore this script stamps ONLY the VERSION file (binary pin). The plugin
+# Therefore this script stamps ONLY the VERSION file. The plugin
 # manifest `version` fields are content-versioned BY HAND and must NOT be
 # overwritten from Cargo — doing so reverts intentional content bumps.
 #
@@ -30,8 +32,7 @@ cd "$(dirname "$0")/.."
 VERSION="$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"(.*)"/\1/')"
 ROOT="plugins/linggen"
 
-# VERSION file drives the SessionStart binary bootstrap (autostart.sh) — it
-# tracks the BINARY (Cargo) version, not the plugin content version.
+# VERSION records the crate (Cargo) version, not the plugin content version.
 printf 'v%s\n' "$VERSION" > "$ROOT/VERSION"
 
 echo "build-plugin: stamped binary VERSION=v$VERSION (manifest versions are content-versioned by hand, left untouched)"
