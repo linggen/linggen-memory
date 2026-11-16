@@ -74,7 +74,7 @@ has one.
 
 ## `dream` (no argument) — remember all undreamed days
 
-0. **Snapshot + in-flight check.** `ling mem export` once (on the machine that runs Linggen; if it answers that the engine has the store open, go on without it and say so in the report — losers are archived, never deleted) (a store
+0. **Snapshot + in-flight check.** `ling mem export` once (on the machine that runs Linggen; it works with Linggen running) (a store
    backup before any judged writes — the engine does the same before
    its mission runs). If the `memory_dream_status` MCP tool is
    reachable and reports `in_flight: true`, the Linggen engine is

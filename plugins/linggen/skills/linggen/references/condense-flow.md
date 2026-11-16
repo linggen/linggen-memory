@@ -18,9 +18,7 @@ a recall window; condense cures what no recall ever touches.
 ling mem export ~/condense-backup-$(date +%F).ndjson
 ```
 
-Run it on the machine that runs Linggen. If it answers that the engine has
-the store open, stop Linggen for the backup (`ling stop`), or go on without
-it and say so.
+Run it on the machine that runs Linggen; it works with Linggen running.
 
 Condense retires rows (atomically, via `replace_ids`), and the first
 runs should be supervised: watch the `MERGE` lines, spot-check a few

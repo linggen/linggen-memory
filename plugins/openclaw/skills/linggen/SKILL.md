@@ -361,7 +361,7 @@ closed, with its why. Scope and index fixes are not queued — the dream
 applies them itself. Memory only bookkeeps; **you are the solver**,
 with this session's model, tools, and user.
 
-1. **Back up, then list.** `ling mem export` first (on the machine that runs Linggen; if it answers that the engine has the store open, go on without it and say so in the report — losers are archived, never deleted) (one snapshot per
+1. **Back up, then list.** `ling mem export` first (on the machine that runs Linggen; it works with Linggen running) (one snapshot per
    solve session), then `ling mem issues --format json` (or the
    `memory_issues` MCP tool). Empty → say so, done.
    **Work the whole queue in this run.** Every item ends solved,
