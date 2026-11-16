@@ -10,49 +10,24 @@ fi
 INSTALL_DIR_DEFAULT="/usr/local/bin"
 FALLBACK_DIR="$HOME/.local/bin"
 
-# ling-mem binary version spec. Linggen depends on the ling-mem binary
-# (inline memory capture, dream mission, core inject, Memory_* tools).
-# A semver RANGE, not an exact tag: install-bin.sh resolves it to the
-# highest matching release, so patch/minor ling-mem upgrades flow without
-# a re-pin. The store's schema-version guard (linggen-memory/doc/
-# schema-versioning.md) makes that data-safe — a compatible subversion
-# opens the same store; an incompatible one refuses rather than corrupts.
-# Matches the engine's runtime auto-install pin (LING_MEM_PIN in
-# memory_tool.rs). `^1` = highest 1.x release (install-bin.sh's `~` form
-# needs X.Y, so a major range is `^1`/`1.x`, never `~1`). Override with
-# LING_MEM_VERSION (accepts an exact tag or a range).
-LING_MEM_PIN_DEFAULT="^1"
-
-# Canonical ling-mem installer — the same script the engine runtime
-# auto-install and the linggen skill use. Range-aware, no-downgrade,
-# installs a real binary to ~/.local/bin.
-LING_MEM_INSTALL_BIN_URL="https://raw.githubusercontent.com/linggen/linggen-memory/main/plugins/linggen/scripts/install-bin.sh"
-
 # Which door this machine came through. Recorded in the install-source
-# marker files below and reported once by each binary's first-launch
+# marker file below and reported once by the engine's first-launch
 # telemetry. The DEFAULT is `website`, because an un-overridden run of this
 # script means someone pasted the one-liner from linggen.dev — keeping the
 # published command clean of env-var noise is the point. Chained installers
 # override it: the ClawHub skill bundle sets `clawhub`, the Claude Code /
 # Codex plugin hook sets `plugin`, the VS Code extension sets
-# `vscode-extension`, Linggen.app writes its own `app` marker. ling-mem
-# inherits the same channel unless told otherwise, so one install reports
-# one door for both binaries.
+# `vscode-extension`, Linggen.app writes its own `app` marker.
 LINGGEN_SOURCE="${LINGGEN_SOURCE:-website}"
-LING_MEM_SOURCE="${LING_MEM_SOURCE:-$LINGGEN_SOURCE}"
-export LING_MEM_SOURCE
 # The host agent, when the caller knows it (skill bootstrap, plugin hook).
 # No default: a pasted one-liner has no agent, and we never guess.
-if [ -n "${LINGGEN_AGENT:-}" ]; then
-  LING_MEM_AGENT="${LING_MEM_AGENT:-$LINGGEN_AGENT}"
-  export LING_MEM_AGENT
-fi
+# LINGGEN_AGENT is read at the marker write below.
 
 # Every download is checked against its published SHA-256 before install;
 # a missing or mismatched one aborts. LINGGEN_RELEASE_BASE=<url> replaces
 # GitHub and linggen.dev/dl — the release gate's local copy of a draft, laid
 # out <url>/<owner>/<repo>/<asset>. ling's SHA-256 then comes from that
-# manifest.json; install-bin.sh (ling-mem) honours the same variable.
+# manifest.json.
 RELEASE_BASE="${LINGGEN_RELEASE_BASE:-}"
 RELEASE_BASE="${RELEASE_BASE%/}"
 
@@ -68,12 +43,10 @@ Options:
   --local-path <url> Install from a local file URL or local path. Skips network fetch.
 
 Environment:
-  LING_MEM_VERSION   ling-mem version spec — exact tag or range (default: ${LING_MEM_PIN_DEFAULT}).
   LINGGEN_RELEASE_BASE  release mirror replacing GitHub (<url>/<owner>/<repo>/<asset>).
 
-Installs the 'ling' CLI binary (Linggen AI coding agent) plus the
-pinned 'ling-mem' memory backend, both fetched from GitHub releases
-and checked against their published SHA-256.
+Installs the 'ling' binary (Linggen, memory included), fetched from
+GitHub releases and checked against its published SHA-256.
 EOF
 }
 
@@ -189,8 +162,6 @@ mirror_url() {
       echo "https://linggen.dev/dl/api/$(echo "$url" | sed -E 's|.*/repos/([^/]+/[^/]+)/.*|\1|')/releases/latest" ;;
     https://github.com/*/releases/download/*)
       echo "$url" | sed -E 's|https://github.com/([^/]+/[^/]+)/releases/download/|https://linggen.dev/dl/release/\1/|' ;;
-    https://raw.githubusercontent.com/*/install-bin.sh)
-      echo "https://linggen.dev/dl/install-bin.sh" ;;
     *) echo "" ;;
   esac
 }
@@ -350,7 +321,7 @@ cleanup_legacy_install() {
       if [ -f "$dir/$old" ]; then
         if [ "$found" = "false" ]; then
           echo ""
-          echo "Found legacy Linggen binaries (renamed: linggen -> ling, linggen-server -> ling-mem):"
+          echo "Found legacy Linggen binaries (replaced by ling):"
           found=true
         fi
         remove_old_binary "$dir/$old"
@@ -378,62 +349,6 @@ cleanup_legacy_install() {
     echo "   Legacy cleanup complete."
     echo ""
   fi
-}
-
-install_ling_mem() {
-  local pin="${LING_MEM_VERSION:-$LING_MEM_PIN_DEFAULT}"
-
-  echo ""
-  echo "Installing ling-mem (memory backend, ${pin})..."
-
-  # Delegate to the canonical installer — it resolves the range to the
-  # highest matching release, installs a real binary to ~/.local/bin,
-  # and refuses to downgrade a newer shared copy. One source of truth,
-  # shared with the engine runtime + shared-memory skill.
-  # LING_MEM_SOURCE is exported at the top of this script (inherited from
-  # LINGGEN_SOURCE), and install-bin.sh writes the marker itself — it is the
-  # canonical ling-mem installer, so every path that installs the binary
-  # records provenance, not just this wrapper. Prefer a LOCAL install-bin.sh
-  # shipped alongside this script — skill and plugin artifacts vendor both,
-  # so an installed bundle never executes a remotely fetched script. The
-  # curl path remains for the linggen.dev one-liner, where this script
-  # arrives alone through a pipe (BASH_SOURCE is unset there, so the local
-  # probe resolves to nothing and falls through). Mirror fallback: raw.
-  # githubusercontent is blocked in some regions; /dl/install-bin.sh serves
-  # the same file through linggen.dev.
-  local local_bin=""
-  if [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
-    local_bin="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/install-bin.sh"
-  fi
-  if [ -n "$local_bin" ] && [ -f "$local_bin" ]; then
-    if ! bash "$local_bin" --version "$pin"; then
-      echo "" >&2
-      echo "Warning: couldn't install ling-mem (${pin})." >&2
-      echo "         Linggen will install it automatically the first time a" >&2
-      echo "         memory feature is used, so this is non-fatal." >&2
-      return 0
-    fi
-  elif [ "${LINGGEN_NO_REMOTE_SCRIPT:-0}" = "1" ]; then
-    # A vendored caller (skill/plugin bootstrap) forbids remote script
-    # execution outright. It installs ling-mem itself from its own bundled
-    # installer before running this script, so skipping here loses nothing.
-    echo "Skipping ling-mem install: no local installer beside this script" >&2
-    echo "and LINGGEN_NO_REMOTE_SCRIPT=1 forbids fetching one." >&2
-    return 0
-  elif ! { { [ -n "$RELEASE_BASE" ] && curl -fsSL "$RELEASE_BASE/install-bin.sh"; } \
-         || curl -fsSL "$LING_MEM_INSTALL_BIN_URL" \
-         || curl -fsSL "https://linggen.dev/dl/install-bin.sh"; } | bash -s -- --version "$pin"; then
-    echo "" >&2
-    echo "Warning: couldn't install ling-mem (${pin})." >&2
-    echo "         Linggen will install it automatically the first time a" >&2
-    echo "         memory feature is used, so this is non-fatal." >&2
-    return 0
-  fi
-
-  local bin lm_version
-  bin="$(command -v ling-mem 2>/dev/null || echo "$HOME/.local/bin/ling-mem")"
-  lm_version=$("$bin" --version 2>/dev/null | awk '{print $2}' || echo "unknown")
-  echo "Installed ling-mem v${lm_version}"
 }
 
 install_bun() {
@@ -561,18 +476,6 @@ main() {
     printf 'installer_version=%s\n' "$ling_version"
     printf 'installed_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   } > "$HOME/.linggen/.linggen-install-source"
-
-  # --- Install ling-mem (pinned binary, direct from linggen-memory releases) ---
-  # ling-mem is mandatory: the engine's encoder, dream mission, core
-  # memory inject, and Memory_* tools all need it. We pull the binary
-  # tarball directly so the Linggen install owns its pinned version
-  # without depending on the install-shared-memory.sh wrapper's release
-  # cadence. The wrapper still ships the full shared-memory skill
-  # bundle (recall hook, dashboard, references) for users who want
-  # cross-host bridging — that install path remains separate. Soft-
-  # fails: a network blip shouldn't take down the whole install —
-  # re-runnable separately.
-  install_ling_mem
 
   # --- Bundle bun (JS runtime for skill action scripts) ---
   install_bun
