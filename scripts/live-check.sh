@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Live regression suite for ling-mem and its host plugins.
+# Live regression suite for Linggen's memory and its host plugins, against a
+# scratch Linggen engine (`ling`, which hosts memory: /mem/* and /mcp/memory).
 #
 #   ./scripts/live-check.sh                 fixture store (CI-safe; the default)
 #   ./scripts/live-check.sh --copy-live     fixture suite, then a copy of
@@ -8,16 +9,17 @@
 #                                           v1 → v2 migration of the backups)
 #   ./scripts/check.sh live [flags]         the same, from the check entry point
 #
-# Flags: --bin PATH (binary under test; default ~/.local/bin/ling-mem),
-#        --port N (scratch port; default 29528, the copy uses N+1),
+# Flags: --bin PATH (the `ling` under test; default $LINGGEN_BIN, else `ling` on PATH),
+#        --port N (scratch port; default 29537, the copy uses N+1, a migration N+2),
 #        --sync (plugin-check copies repo plugin files over drifted installs),
 #        --update-golden (re-record the --copy-live snapshots),
 #        --no-plugins (skip scripts/plugin-check.sh), --keep (leave the work dir).
 #
-# NEVER touches the real store or the 9528 daemon: every daemon here is a
-# scratch one, on a scratch port, over a scratch data dir, killed on exit. The
-# live store is only ever copied (read). The fixture HOME lives under
-# target/live-check — not a temp dir, because temp dirs can't hold rows.
+# NEVER touches the real store or the real engine (9527, and the old 9528):
+# every engine here is a scratch one, on a scratch port, with a scratch HOME and
+# a scratch LINGGEN_HOME, loopback only, killed on exit. The live store is only
+# ever copied (read). Everything is written under target/ — the fixture HOME
+# lives there, not in a temp dir, because temp dirs can't hold rows.
 #
 # Each case prints PASS/FAIL/SKIP with a short reason; exit status is non-zero
 # on any FAIL.
@@ -26,8 +28,8 @@ set -uo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REAL_HOME="$HOME"
-BIN="${LING_MEM_BIN:-$REAL_HOME/.local/bin/ling-mem}"
-PORT="${LIVE_CHECK_PORT:-29528}"
+BIN="${LINGGEN_BIN:-$(command -v ling 2>/dev/null || true)}"
+PORT="${LIVE_CHECK_PORT:-29537}"
 COPY_LIVE=0
 SYNC=0
 UPDATE_GOLDEN=0
@@ -52,7 +54,7 @@ done
 for tool in jq curl git; do
   command -v "$tool" >/dev/null || { echo "live-check: needs $tool" >&2; exit 2; }
 done
-[ -x "$BIN" ] || { echo "live-check: no binary at $BIN" >&2; exit 2; }
+[ -n "$BIN" ] && [ -x "$BIN" ] || { echo "live-check: no ling binary (set LINGGEN_BIN or --bin)" >&2; exit 2; }
 BIN="$(cd "$(dirname "$BIN")" && pwd)/$(basename "$BIN")"
 
 WORK="$REPO/target/live-check"
@@ -60,7 +62,6 @@ FHOME="$WORK/home"
 DATA="$WORK/data"
 case "$WORK" in */target/live-check) rm -rf "$WORK" ;; *) exit 2 ;; esac
 mkdir -p "$FHOME" "$DATA"
-export LING_MEM_NO_TELEMETRY=1
 
 # ── Reporting ───────────────────────────────────────────────────────────────
 
@@ -82,7 +83,7 @@ expect() {
   else fail "$1" "$4 — got: $(printf '%s' "$2" | head -c 240 | tr '\n' ' ')"; fi
 }
 
-# ── Scratch daemons ─────────────────────────────────────────────────────────
+# ── Scratch engines ─────────────────────────────────────────────────────────
 
 PIDS=()
 cleanup() {
@@ -94,37 +95,57 @@ trap cleanup EXIT INT TERM
 
 port_free() { ! curl -s --max-time 1 "http://127.0.0.1:$1/api/health" >/dev/null 2>&1; }
 
-# start_daemon HOME DATA PORT — background `serve`, wait for health.
+# The scratch world one engine runs in: HOME and LINGGEN_HOME are scratch, the
+# old loopback port and the LAN announcement are off.
+scratch_env() { # HOME DATA PORT — prints nothing; sets ENV_ARGS
+  ENV_ARGS=(env HOME="$1" LINGGEN_HOME="$2" LINGGEN_DATA_DIR="$2" LINGGEN_PORT="$3"
+    LINGGEN_LEGACY_MEMORY_PORT=0 LINGGEN_NO_BONJOUR=1)
+}
+
+# start_daemon HOME DATA PORT — a background `ling --web`, wait for memory.
 start_daemon() {
   local home="$1" data="$2" port="$3"
-  [ "$port" = 9528 ] && { echo "live-check: refusing port 9528" >&2; exit 2; }
+  case "$port" in 9527|9528) echo "live-check: refusing port $port" >&2; exit 2 ;; esac
   port_free "$port" || { echo "live-check: port $port is taken" >&2; exit 2; }
-  case "$data" in "$REAL_HOME/.linggen"|"$REAL_HOME/.linggen/"*) echo "live-check: refusing the real data dir" >&2; exit 2 ;; esac
-  HOME="$home" "$BIN" --data-dir "$data" serve --port "$port" >"$data.log" 2>&1 &
+  case "$home" in "$REPO/target/"*) ;; *) echo "live-check: refusing HOME=$home (not under target/)" >&2; exit 2 ;; esac
+  case "$data" in "$REPO/target/"*) ;; *) echo "live-check: refusing data dir $data (not under target/)" >&2; exit 2 ;; esac
+  mkdir -p "$data" && touch "$data/no-telemetry"
+  scratch_env "$home" "$data" "$port"
+  (cd "$home" && exec "${ENV_ARGS[@]}" "$BIN" --web --port "$port" --host 127.0.0.1) >"$data.log" 2>&1 &
   PIDS+=($!)
   local i
   for i in $(seq 1 180); do
-    curl -sf --max-time 1 "http://127.0.0.1:$port/api/health" >/dev/null 2>&1 && return 0
+    curl -sf --max-time 1 "http://127.0.0.1:$port/mem/api/health" >/dev/null 2>&1 && return 0
     kill -0 "${PIDS[${#PIDS[@]}-1]}" 2>/dev/null || break
     sleep 1
   done
-  echo "live-check: daemon on $port did not come up; log: $data.log" >&2
+  echo "live-check: engine on $port did not come up; log: $data.log" >&2
   tail -5 "$data.log" >&2
   exit 1
 }
 
-# api VERB JSON — the daemon envelope; apid — its data.
-api() { curl -sS --max-time 90 -H 'content-type: application/json' -d "$2" "http://127.0.0.1:$PORT/api/memory/$1" 2>&1; }
+# stop_daemon — the most recently started engine, and wait for it to go.
+stop_daemon() {
+  local p="${PIDS[${#PIDS[@]}-1]}" i
+  kill "$p" 2>/dev/null
+  for i in $(seq 1 20); do kill -0 "$p" 2>/dev/null || return 0; sleep 0.5; done
+  kill -KILL "$p" 2>/dev/null
+}
+
+# api VERB JSON — memory's envelope; apid — its data.
+api() { curl -sS --max-time 90 -H 'content-type: application/json' -d "$2" "http://127.0.0.1:$PORT/mem/api/memory/$1" 2>&1; }
 apid() { api "$@" | jq -c '.data' 2>/dev/null; }
 # mcp TOOL JSON — the JSON-RPC reply; mcpd — the tool's payload.
 mcp() {
   local body
   body="$(jq -nc --arg n "$1" --argjson a "$2" '{jsonrpc:"2.0",id:1,method:"tools/call",params:{name:$n,arguments:$a}}')"
-  curl -sS --max-time 90 -H 'content-type: application/json' -d "$body" "http://127.0.0.1:$PORT/mcp" 2>&1
+  curl -sS --max-time 90 -H 'content-type: application/json' -d "$body" "http://127.0.0.1:$PORT/mcp/memory" 2>&1
 }
 mcpd() { mcp "$@" | jq -c '.result.content[0].text | fromjson' 2>/dev/null; }
-# cli ARGS… — the CLI against the scratch daemon (it finds it by pidfile).
-cli() { HOME="$FHOME" "$BIN" --data-dir "$DATA" "$@" 2>&1; }
+# cli ARGS… — `ling mem` against the scratch engine (it finds it by the store lock).
+cli() { scratch_env "$FHOME" "$DATA" "$PORT"; "${ENV_ARGS[@]}" "$BIN" mem --data-dir "$DATA" "$@" 2>&1; }
+# store_cli DATA ARGS… — `ling mem` on a store no engine holds (opens it directly).
+store_cli() { local d="$1"; shift; scratch_env "$FHOME" "$d" 1; "${ENV_ARGS[@]}" "$BIN" mem --data-dir "$d" "$@" 2>/dev/null; }
 # Rows out of a list/search/CLI reply, whatever the wrapper.
 # The CLI prints one JSON object per row; the daemon one array.
 rows() { jq -sc 'if length == 1 and (.[0] | type) == "array" then .[0] else [.[] | if type == "array" then .[] else (.data // .facts // .) end] | flatten end' 2>/dev/null; }
@@ -178,10 +199,10 @@ seed_rows() {
 
 # ── Fixture suite ───────────────────────────────────────────────────────────
 
-section "Fixture daemon (port $PORT, HOME=$FHOME, $BIN)"
+section "Fixture engine (port $PORT, HOME=$FHOME, $BIN)"
 start_daemon "$FHOME" "$DATA" "$PORT"
 
-H="$(curl -s "http://127.0.0.1:$PORT/api/health")"
+H="$(curl -s "http://127.0.0.1:$PORT/mem/api/health")"
 expect "health" "$H" '.ok == true and .data.status == "healthy"' "unhealthy" "$(printf '%s' "$H" | jq -r '.data.version')"
 SV="$(cat "$DATA/memory/SCHEMA_VERSION" 2>/dev/null | tr -d '[:space:]')"
 [ "$SV" = 2 ] && pass "schema sidecar reads 2" || fail "schema sidecar reads 2" "SCHEMA_VERSION=$SV"
@@ -355,7 +376,7 @@ C2="$(cli list --limit 500 | rows | jq 'map(.id) | index("'"$LOSER"'") != null')
 [ "$C1" = true ] && [ "$C2" = false ] && pass "fix 7: CLI --include-expired forwarded" || fail "fix 7: CLI --include-expired forwarded" "with=$C1 without=$C2"
 
 section "MCP"
-TL="$(curl -sS -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' "http://127.0.0.1:$PORT/mcp")"
+TL="$(curl -sS -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' "http://127.0.0.1:$PORT/mcp/memory")"
 expect "tools/list: memory_add has scope/summary/indexed/from" "$TL" \
   '.result.tools[] | select(.name == "memory_add") | .inputSchema.properties | has("scope") and has("summary") and has("indexed") and has("from") and has("global")' "missing fields"
 expect "tools/list: host-filled fields marked" "$TL" \
@@ -375,7 +396,7 @@ expect "MCP add: CC's string-typed indexed:\"false\"" "$R" \
   '.result.content[0].text | fromjson | .fact.scope == "'"$L"'" and .fact.summary == "Shared sessions replace guest mode" and ((.fact.indexed // false) == false)' \
   "the known bug"
 STAMPED="$(jq -nc --argjson a "$(printf '%s' "$BUG" | jq -c '.content = "MCP probe: the same call through the CC stamp hook." | .indexed = false')" --arg c "$L/story" \
-  '{tool_name:"mcp__plugin_linggen_ling-mem__memory_add", session_id:"lc-sess", cwd:$c, tool_input:$a}' \
+  '{tool_name:"mcp__plugin_linggen_memory__memory_add", session_id:"lc-sess", cwd:$c, tool_input:$a}' \
   | HOME="$FHOME" CLAUDE_PROJECT_DIR="$L" bash "$REPO/plugins/linggen/hooks/stamp-cwd.sh" | jq -c '.hookSpecificOutput.updatedInput')"
 R="$(mcpd memory_add "$STAMPED")"
 expect "MCP add: through stamp-cwd.sh (scope ~, summary, indexed:false)" "$R" \
@@ -388,7 +409,7 @@ MID="$(printf '%s' "$R" | jq -r '.fact.id')"
 # root — and only no scope or a dir outside root falls back to cwd.
 via_hook() { # content cwd extra-json → stored scope
   jq -nc --arg t "$1" --arg c "$2" --argjson x "$3" \
-    '{tool_name:"mcp__plugin_linggen_ling-mem__memory_add", session_id:"lc-nest", cwd:$c, tool_input:({content:$t, skip_dedup:true} + $x)}' \
+    '{tool_name:"mcp__plugin_linggen_memory__memory_add", session_id:"lc-nest", cwd:$c, tool_input:({content:$t, skip_dedup:true} + $x)}' \
     | HOME="$FHOME" CLAUDE_PROJECT_DIR="$W" bash "$REPO/plugins/linggen/hooks/stamp-cwd.sh" \
     | jq -c '.hookSpecificOutput.updatedInput' | { read -r a; mcpd memory_add "$a"; } | jq -r '.fact.scope'
 }
@@ -453,16 +474,20 @@ fi
 # ── Copy of the live store ──────────────────────────────────────────────────
 
 migrate_check() { # name backup-dir
-  local name="$1" src="$2" mig="$WORK/mig/$1" before after a2
+  local name="$1" src="$2" mig="$WORK/mig/$1" before after a2 a3 again
   mkdir -p "$mig/memory"
   cp -R "$src/memory.lancedb" "$mig/memory/" && cp "$src/SCHEMA_VERSION" "$mig/memory/"
+  local dump='def keep: {id, content, type, tier, from, outcome, scope, summary, indexed, created_at, updated_at, occurred_at, source_session, host, superseded_by, expired_at, account_id};'
+  # `export` opens the store itself, so it runs while no engine holds it.
+  dump_rows() { { store_cli "$mig" export -; store_cli "$mig" --episodic export -; } | jq -sc "$dump"' map(keep) | sort_by(.id)'; }
   local saved_port="$PORT"
   PORT=$((saved_port + 2))
+  before="$(dump_rows)"
   start_daemon "$FHOME" "$mig" "$PORT"
-  local dump='def keep: {id, content, type, tier, from, outcome, scope, summary, indexed, created_at, updated_at, occurred_at, source_session, host, superseded_by, expired_at, account_id};'
-  before="$( { HOME="$FHOME" "$BIN" --data-dir "$mig" export - 2>/dev/null; HOME="$FHOME" "$BIN" --data-dir "$mig" --episodic export - 2>/dev/null; } | jq -sc "$dump"' map(keep) | sort_by(.id)')"
-  a2="$(curl -sS -H 'content-type: application/json' -d '{"confirm":true}' "http://127.0.0.1:$PORT/api/schema/apply")"
-  after="$( { HOME="$FHOME" "$BIN" --data-dir "$mig" export - 2>/dev/null; HOME="$FHOME" "$BIN" --data-dir "$mig" --episodic export - 2>/dev/null; } | jq -sc "$dump"' map(keep) | sort_by(.id)')"
+  a2="$(curl -sS -H 'content-type: application/json' -d '{"confirm":true}' "http://127.0.0.1:$PORT/mem/api/schema/apply")"
+  a3="$(curl -sS -H 'content-type: application/json' -d '{"confirm":true}' "http://127.0.0.1:$PORT/mem/api/schema/apply")"
+  stop_daemon
+  after="$(dump_rows)"
   local sv; sv="$(tr -d '[:space:]' <"$mig/memory/SCHEMA_VERSION")"
   local n; n="$(printf '%s' "$before" | jq length)"
   if [ "$sv" = 2 ] && [ "$n" -gt 0 ] && [ "$before" = "$after" ] && printf '%s' "$a2" | jq -e '.ok' >/dev/null 2>&1; then
@@ -470,34 +495,33 @@ migrate_check() { # name backup-dir
   else
     fail "migration $name → v2 keeps every value" "sidecar=$sv rows=$n same=$([ "$before" = "$after" ] && echo y || echo n) apply=$(printf '%s' "$a2" | head -c 160)"
   fi
-  local a3 again
-  a3="$(curl -sS -H 'content-type: application/json' -d '{"confirm":true}' "http://127.0.0.1:$PORT/api/schema/apply")"
-  again="$( { HOME="$FHOME" "$BIN" --data-dir "$mig" export - 2>/dev/null; HOME="$FHOME" "$BIN" --data-dir "$mig" --episodic export - 2>/dev/null; } | jq -sc "$dump"' map(keep) | sort_by(.id)')"
-  if printf '%s' "$a3" | jq -e '.ok' >/dev/null 2>&1 && [ "$again" = "$after" ] && [ "$(tr -d '[:space:]' <"$mig/memory/SCHEMA_VERSION")" = 2 ]; then
+  again="$after"
+  if printf '%s' "$a3" | jq -e '.ok' >/dev/null 2>&1 && [ "$again" = "$after" ] && [ "$sv" = 2 ]; then
     pass "migration $name: idempotent" "$(printf '%s' "$a3" | jq -c '.data' | head -c 80)"
   else
     fail "migration $name: idempotent" "second apply: $(printf '%s' "$a3" | head -c 160)"
   fi
-  kill "${PIDS[${#PIDS[@]}-1]}" 2>/dev/null
   PORT="$saved_port"
 }
 
 if [ "$COPY_LIVE" = 1 ]; then
-  section "Copy of the live store (port $((PORT + 1)), HOME=$REAL_HOME)"
+  # The engine over the copy runs in the scratch HOME like every other here;
+  # the real directories below are only paths handed to it.
+  section "Copy of the live store (port $((PORT + 1)), HOME=$FHOME)"
   LIVE="$REAL_HOME/.linggen/memory"
   CDATA="$WORK/copy"
   mkdir -p "$CDATA/memory"
   cp -R "$LIVE/memory.lancedb" "$CDATA/memory/" && cp "$LIVE/SCHEMA_VERSION" "$CDATA/memory/"
   FPORT="$PORT"
   PORT=$((FPORT + 1))
-  start_daemon "$REAL_HOME" "$CDATA" "$PORT"
+  start_daemon "$FHOME" "$CDATA" "$PORT"
   CSV="$(tr -d '[:space:]' <"$CDATA/memory/SCHEMA_VERSION")"
   [ "$CSV" = 2 ] && pass "live copy: schema sidecar reads 2" || fail "live copy: schema sidecar reads 2" "SCHEMA_VERSION=$CSV"
 
   SS="$(apid session_start "$(jq -nc --arg c "$REAL_HOME" '{cwd:$c}')")"
   expect "live copy: session_start \$HOME is core only" "$SS" '(.core | length) >= 1 and (.index | length) == 0 and ((.block | test("## Index|Memory scopes here")) | not)' "index/candidates at \$HOME"
 
-  GOLDEN="${LIVE_CHECK_GOLDEN:-$REAL_HOME/.linggen/cache/ling-mem-live-check}"
+  GOLDEN="${LIVE_CHECK_GOLDEN:-$REPO/target/live-check-golden}"
   mkdir -p "$GOLDEN"
   for dir in "$REAL_HOME/workspace/linggen/linggen-memory" "$REAL_HOME/workspace/linggen/skills/lingjing" "$REAL_HOME/workspace/linggen/linggen"; do
     [ -d "$dir" ] || { skip "live copy: golden $(basename "$dir")" "no such dir"; continue; }
@@ -534,7 +558,7 @@ if [ "$COPY_LIVE" = 1 ]; then
   R="$(search "what should I cook for dinner tonight" "$(jq -nc --arg r "$REAL_HOME" '{scope_root:$r, limit:10}')")"
   expect "live copy: no-root rule on real rows" "$R" \
     '[.[] | select(.scope != null)] | length <= 2 and all(.[]; .type != "preference" and .score >= 0.70)' "no-root rule broken"
-  kill "${PIDS[${#PIDS[@]}-1]}" 2>/dev/null
+  stop_daemon
   PORT="$FPORT"
 
   section "Schema migration on scratch copies"
