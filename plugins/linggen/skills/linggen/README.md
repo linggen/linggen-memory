@@ -17,7 +17,7 @@ A single-binary memory layer that remembers useful facts about you and your work
 
 Install from your agent's marketplace (pick one per host): Claude Code
 `/plugin install linggen@linggen-memory`, Codex `codex plugin add
-linggen@linggen-memory`, OpenClaw `clawhub install linggen`, any agent
+linggen@linggen-memory`, OpenClaw `openclaw plugins install clawhub:@linggen/linggen`, any agent
 `npx skills add linggen/linggen-memory@linggen`. The `ling-mem` binary
 auto-installs on first use.
 
