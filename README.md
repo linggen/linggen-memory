@@ -1,5 +1,25 @@
 # linggen-memory
 
+> **This repository is archived.** Since Linggen 2.3 (November 2026) the
+> memory is part of Linggen itself: one program, `ling`, on one port. Its
+> code, the plugin for Claude Code and Codex, and every new release are in
+> **[linggen/linggen](https://github.com/linggen/linggen)**
+> (`crates/linggen-memory`, `plugins/linggen`).
+>
+> - **New here?** Install Linggen from <https://linggen.dev>, then add the
+>   plugin:
+>   `claude plugin marketplace add linggen/linggen --sparse .claude-plugin plugins`
+>   and `claude plugin install linggen@linggen` (Codex:
+>   `codex plugin marketplace add linggen/linggen`).
+> - **Already running `ling-mem` 1.x?** Installing Linggen 2.3 or later
+>   takes over your store where it is — nothing to migrate. Afterwards
+>   replace the old plugin `linggen@linggen-memory` with `linggen@linggen`.
+> - `ling-mem` 1.13.0 is the last release from this repository. Its binaries
+>   stay in the releases here and get no further fixes.
+> - OpenClaw is no longer supported.
+>
+> Below is the README as it stood at 1.13.0.
+
 **One memory of you, shared by every agent you use** — Claude Code, Codex, OpenClaw, and Linggen's own Ling and Yinyue.
 
 Tell Claude Code something on Monday; Codex knows it on Tuesday. One local daemon, one store on your machine. No SaaS, no API key, no signup.
